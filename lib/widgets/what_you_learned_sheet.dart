@@ -1,0 +1,138 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+import 'package:optimeal/theme.dart';
+import 'package:optimeal/theme/app_design_tokens.dart';
+import 'package:optimeal/widgets/curriculum_drawer_content.dart';
+
+/// A compact recap sheet shown after Cook Mode when a recipe includes
+/// curriculum drawer keys.
+///
+/// If no keys resolve (common for recipes generated before this feature, or
+/// recipes whose title/prompt happened to match nothing), this sheet closes
+/// itself silently so the user never sees a blank bottom sheet.
+class WhatYouLearnedSheet extends StatelessWidget {
+  const WhatYouLearnedSheet({super.key, required this.curriculumLessonIds, this.confidenceLine});
+
+  final List<String> curriculumLessonIds;
+
+  /// Optional Confidence Climb line (e.g. "3rd time this month using
+  /// Braising — you're building real knife + heat control."). Deliberately
+  /// rare — only set when [ConfidenceClimbService] finds a real signal, not
+  /// shown on every cook. See CLAUDE.md Retention Features Backlog item 2.
+  final String? confidenceLine;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    debugPrint('WhatYouLearnedSheet: received ids=$curriculumLessonIds');
+
+    final matchedLessons = resolveDrawerEntries(curriculumLessonIds).toList(growable: false);
+    debugPrint('WhatYouLearnedSheet: received ids=$curriculumLessonIds, resolved ${matchedLessons.length} lessons');
+
+    final resolved = matchedLessons.take(2).toList(growable: false);
+    if (resolved.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        context.pop();
+      });
+      return const SizedBox.shrink();
+    }
+
+    return Material(
+      color: AppDesignTokens.surfaceCream,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+                  decoration: BoxDecoration(
+                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                  ),
+                  child: const Icon(Icons.lightbulb_outline_rounded, color: AppDesignTokens.deepForest, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'What you learned',
+                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'A couple technique notes you can reuse next time.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.78), height: 1.35, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 14),
+            for (final entry in resolved)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: DrawerCard(entry: entry),
+              ),
+            if (confidenceLine != null) ...[
+              const SizedBox(height: 4),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppDesignTokens.deepForest.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.16)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.trending_up_rounded, size: 18, color: AppDesignTokens.deepForest),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        confidenceLine!,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: AppDesignTokens.deepForest,
+                          fontWeight: FontWeight.w800,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            const SizedBox(height: 6),
+            Divider(height: 1, thickness: 1, color: scheme.outline.withValues(alpha: 0.12)),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: AppSizing.primaryButtonHeight,
+              child: FilledButton(
+                onPressed: () => context.pop(),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppDesignTokens.ctaTerracotta,
+                  foregroundColor: scheme.onTertiary,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                ),
+                child: Text(
+                  'Got it',
+                  style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -1,0 +1,4 @@
+[functions.ask-chef-harris]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/ask-chef-harris/index.ts"
