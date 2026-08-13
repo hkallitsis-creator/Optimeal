@@ -50,7 +50,16 @@ class EntitlementService {
   }
 
   /// True if the current user has active Pro entitlement.
+  ///
+  /// Debug-build bypass (CLAUDE.md roadmap item 12): every caller of
+  /// `isPro()` already gates usage caps AND the paywall behind
+  /// `if (!isPro) { ... }` (Fridge Clearer weekly cap, Chef Harris chat cap,
+  /// Custom AI Recipe Creator's 2-free-lifetime limit, upgrade prompts) — so
+  /// short-circuiting to `true` here in `kDebugMode` transparently unlocks
+  /// all of them at once, with zero effect on release builds, since
+  /// `kDebugMode` is a compile-time constant that's `false` there.
   Future<bool> isPro() async {
+    if (kDebugMode) return true;
     if (_hasRealKeys && _configured) {
       try {
         final info = await Purchases.getCustomerInfo();

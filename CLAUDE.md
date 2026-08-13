@@ -397,6 +397,20 @@ All of the following were confirmed applied and tested with real policies
 - `ai_precision_cache` — RLS enabled, **zero client-facing policies at all**
   (intentional — it's a server-only cache, only touched by edge functions
   using the service role key, which bypasses RLS)
+- `api_call_cost_log` (added 2026-08-13) — RLS enabled, zero
+  `authenticated`/`anon` policies or grants, same pattern as
+  `ai_precision_cache`. **Important nuance confirmed live this session**:
+  `service_role`'s `bypassrls` attribute only skips RLS *policies* — it does
+  NOT grant table-level SQL privileges on its own. The initial migration
+  correctly locked out `authenticated`/`anon` but forgot to explicitly grant
+  `service_role` INSERT/SELECT, so the `ask-chef-harris` edge function's
+  writes silently failed for one round of live testing (5 real generations,
+  0 rows landed) before a follow-up migration
+  (`20260813130000_fix_api_call_cost_log_service_role_grants.sql`) fixed it.
+  Same root-cause class as the `api_usage_daily` grants bug from 2026-08-11
+  — worth explicitly checking `service_role` grants (not just
+  `authenticated`/`anon`) on any future service-role-only table, not just
+  assuming `bypassrls` implies full access.
 
 Note: there are duplicate/redundant policies on a few tables (both an old
 broad "ALL" policy and newer granular per-command policies covering the same
@@ -843,7 +857,340 @@ complete and uses a standard, reliable Flutter API — high confidence.
     vs. production Supabase projects before real testers, privacy policy
     covering Swiss FADP + EU GDPR, Supabase Storage bucket policies (once
     profile photos/recipe images are added), duplicate RLS policy cleanup
-    (cosmetic, see RLS section above)
+    (cosmetic, see RLS section above). **Also pre-launch, added 2026-08-13**:
+    `ChefService.askChefHarris` (`lib/services/chef_service.dart`) catches
+    its own network/request errors internally and returns a friendly
+    fallback string rather than throwing — good UX, but it means
+    `UsageCapService.increment(...)` at all four call sites still fires even
+    on the rare call that fails before ever reaching OpenAI (Supabase
+    Functions invoke itself failing, e.g. a network blip), since the
+    increment happens unconditionally right as the call is fired, not
+    contingent on it actually succeeding. Harmless today — Harris is the
+    only user, so a failed call burning his own quota is a non-issue. Once
+    caps gate paying subscribers (Roadmap item 6), it becomes a real
+    problem: a failed call would burn a paying user's quota for nothing.
+    Same class of "does the counter accurately reflect real cost/value
+    delivered" question as the cache-hit-inflation check done the same
+    session (that one came back clean — see item 11 follow-up above; this
+    one hasn't been fixed, just flagged). Fix shape, not yet designed in
+    detail: distinguish "the edge function was reached and OpenAI was
+    actually called" from "the client got a usable response," and only
+    increment on the former — needs `askChefHarris` to expose that
+    distinction to callers first, which it currently doesn't.
+11. **OpenAI cost visibility and investigation — BUILT + investigated
+    2026-08-13** (Harris reported inconsistent OpenAI charges while testing,
+    most recently 0.11 CHF for one session, sometimes charged per session
+    and sometimes not). Confirmed current `gpt-4o` pricing before building
+    anything: $2.50/1M input tokens, $10.00/1M output (gpt-4o-mini:
+    $0.15/$0.60) — same rates already in use for the 2026-08-11
+    `gpt-4o`-vs-`gpt-4o-mini` trial, still current.
+    - **`ask-chef-harris` edge function** (`supabase/functions/ask-chef-harris/index.ts`)
+      now captures OpenAI's real `usage` field (`prompt_tokens`/
+      `completion_tokens` — actual counts, not an estimate) from every
+      response: logs `model`/tokens/`est_cost_usd` server-side via
+      `console.log` (visible in Dashboard → Edge Functions → Logs, no CLI
+      `logs` subcommand exists to pull this from the terminal — checked,
+      `supabase functions --help` lists no `logs` subcommand) and now also
+      returns `usage`+`model` in the JSON response body (additive — existing
+      `content` field unchanged, nothing else depends on the response shape
+      changing). **Deployed** via `supabase functions deploy ask-chef-harris
+      --project-ref xwugnhzlnfgmczkbbcbh --use-api` — confirmed live via
+      `supabase functions list` showing `version: 4` (was 3) with a matching
+      `updated_at`.
+    - **`ChefService.askChefHarris`** (`lib/services/chef_service.dart`) now
+      reads that real `usage`/`model` back and logs an accurate per-call
+      cost (`_logEstimatedCost`), replacing the old input-only char/4
+      estimate — falls back to that old estimate (clearly labeled
+      "INPUT ONLY, char-count estimate") only if a caller somehow still hits
+      a pre-deploy cached function version.
+    - **`ai-recipe-precision` cache hit/miss — now distinguishable, and
+      confirmed genuinely working.** `AiRecipeService.getPrecisionData`
+      (`lib/services/ai_recipe_service.dart`) already received a `source`
+      field ('cache'/'generated') from the edge function but never logged
+      it — now logs `CACHE HIT — no new OpenAI call, ~$0 marginal cost` vs
+      `CACHE MISS (generated)` explicitly. (Can't get real token counts here
+      the way `ask-chef-harris` now does — `ai-recipe-precision`'s edge
+      function source isn't in this repo, see Roadmap item 5 — so the
+      cache-miss case still only logs a rough char-count estimate of the
+      request payload, clearly labeled as such.) **Verified against real
+      live data** via `supabase db query --linked`: `ai_precision_cache` has
+      47 rows total, 12 of them reused at least once, 14 total cache hits
+      (sum of `hit_count`) — caching is real and working, saving roughly a
+      fifth of what would otherwise be new OpenAI calls, not dead/decorative.
+    - **Grants-bug cross-reference — checked, verdict: could NOT have caused
+      missing OpenAI charges.** Traced the actual code path first rather
+      than assuming: every usage-cap check (`UsageCapService.getUsageCount`
+      and its `getTodayCount`/`getRollingWeekCount`/`getLifetimeCount`
+      wrappers) fails open by returning `0` on any error — and all three
+      gate call sites (`fridge_clearer_screen.dart`,
+      `custom_ai_recipe_creator_sheet.dart`, `home_dashboard_screen.dart`)
+      only skip the AI call when the *cap is exceeded*, never when the
+      *check itself* errors. So even during the confirmed 2026-08-10 window
+      when `increment_api_usage`/`api_usage_daily` were 403ing (grants bug,
+      see monetization section), the fail-open design meant those 403s could
+      only ever cause **undercounted usage tracking**, never a **blocked AI
+      call** — the real `ask-chef-harris`/`ai-recipe-precision` calls (and
+      their real OpenAI cost) would have fired regardless. Confirmed this
+      empirically too, not just by code trace: queried the live
+      `api_usage_daily` table — it has real rows for 2026-08-11 (post-fix)
+      but **zero rows for 2026-08-10** (the day the 403s were live), which
+      is exactly the fail-open signature (tracking silently didn't happen
+      that day, calls still did). **So the grants bug is ruled out as the
+      explanation for inconsistent charges.** More likely explanations,
+      not yet confirmed: (a) not every test "session" actually triggers an
+      AI call at all (Cook Mode, Waste Ledger, and browsing are all free and
+      AI-free by design — see tier structure above); (b) OpenAI's own
+      billing-dashboard display can lag actual usage; (c) genuine token-count
+      variance between sessions (a longer conversation/recipe naturally
+      costs more) is expected, not a bug. The new per-call cost logging
+      above is the tool to actually pin this down next — watch the console
+      during a real test session and compare against what shows up on the
+      OpenAI billing page afterward.
+    - **Follow-up, same day (2026-08-13): the debug-mode bypass (item 12)
+      turned out to silently break usage tracking entirely.** Harris caught
+      this live: ran 5 real Fridge Clearer generations, `api_usage_daily`
+      showed nothing for that day. Root cause, confirmed by tracing before
+      changing anything: all four `UsageCapService.instance.increment(...)`
+      call sites were wrapped in `if (!isPro) { increment(...) }`, and
+      item 12's bypass makes `isPro()` always `true` in debug builds — so
+      the block never opened, in every debug session since item 12 shipped.
+      **Fixed**: un-nested `increment(...)` from `if (!isPro)` at all four
+      sites (`fridge_clearer_screen.dart`, `home_dashboard_screen.dart`,
+      `custom_ai_recipe_creator_sheet.dart`, `fridge_countdown_sheet.dart`)
+      — tracking now fires unconditionally; only the cap *check* (whether to
+      block/show an upgrade prompt) stays gated on `isPro`. Confirmed live
+      after the fix: `api_usage_daily.fridge_clearer_generation` = 6 for
+      2026-08-13 after 6 real generations.
+    - **Cache-hit-inflates-counter — checked, ruled out.** Grepped
+      `ai_recipe_service.dart` (owns the cached `ai-recipe-precision` path):
+      zero references to `UsageCapService` anywhere in it. The
+      `fridgeClearerGeneration` increment lives only in
+      `fridge_clearer_screen.dart`, tied to the `askChefHarris` call, which
+      is never cached — so the counter reflects one real attempted OpenAI
+      call per generation regardless of whether the separate, parallel
+      precision-data call was a cache hit or miss. Not overstating spend.
+      (Narrower, related gap flagged but not fixed: `askChefHarris` catches
+      its own network errors internally and returns a fallback string
+      instead of throwing, so the increment still fires even in the rare
+      case where the Supabase Functions invoke itself fails before ever
+      reaching OpenAI. See the new pre-launch item below.)
+    - **Durable per-call cost history — BUILT 2026-08-13 (Option A of three
+      considered).** Neither the edge function's `console.log` nor
+      `ChefService`'s `debugPrint` survive past their ephemeral log/console
+      — `api_usage_daily` only ever stored a count, no cost. Considered
+      writing the durable record from the client instead (rejected: would
+      inherit the exact "client-side state silently breaks tracking" failure
+      class this whole investigation started from) or extending
+      `api_usage_daily` with aggregate cost columns (rejected: only daily
+      totals, no per-call detail, same client-write-gap risk if the
+      increment stayed client-triggered). Went with a dedicated table
+      written server-side instead, fully decoupled from client entitlement/
+      debug logic:
+      - **`api_call_cost_log`** (migration
+        `20260813120000_create_api_call_cost_log.sql`): `user_id,
+        function_name, model, prompt_tokens, completion_tokens,
+        input_rate_per_million, output_rate_per_million, cost_usd,
+        created_at`. Storing the per-row rate alongside the computed cost
+        (not just the final number) means old rows stay individually
+        verifiable even after pricing constants are updated later. RLS
+        enabled, **zero policies or grants for `authenticated`/`anon`** —
+        this is pure observability for Harris, not a user-facing feature, so
+        it deliberately does NOT copy `api_usage_daily`'s owner-scoped grant
+        pattern; matches `ai_precision_cache`'s existing service-role-only
+        design instead (see Supabase RLS status section above).
+      - **`ask-chef-harris` redeployed** (`version: 5`) to write a row after
+        every real OpenAI response: decodes `user_id` from the `sub` claim
+        of the already-`verify_jwt`-validated Authorization header (no extra
+        network round-trip needed), inserts via a raw `fetch` to
+        `/rest/v1/api_call_cost_log` using the service role key (mirrors the
+        file's existing fetch-to-OpenAI style rather than adding a
+        `supabase-js` dependency for one insert), wrapped in try/catch so a
+        logging failure can never turn into a failed recipe response.
+      - **Pricing centralized, one named place per runtime** (can't
+        literally be one file across Dart/Deno): `OPENAI_PRICING_PER_MILLION_TOKENS`
+        in `supabase/functions/ask-chef-harris/index.ts` (authoritative —
+        this copy is what actually gets persisted) and
+        `_openAiPricingPerMillionTokens` in `chef_service.dart` (drives only
+        the client-side console fallback estimate). Both carry a "rates
+        checked 2026-08-13" dated comment and explicitly cross-reference
+        each other — update both together when rates change.
+      - **Deployment — confirmed, no Dashboard steps needed.** Both the
+        migration (`supabase db push`) and the function redeploy
+        (`supabase functions deploy ask-chef-harris --use-api`) used the
+        same CLI paths already proven earlier this session — nothing here
+        required manual Supabase Dashboard involvement.
+      - **Live-tested end to end, with one real bug caught along the way.**
+        First test (5 real generations after deploying): `api_usage_daily`
+        incremented correctly, but `api_call_cost_log` had **zero rows**.
+        Root cause: `service_role` had no INSERT/SELECT grant on the new
+        table — `bypassrls` only skips RLS *policies*, it does not grant
+        table-level SQL privileges on its own, and the migration correctly
+        locked out `authenticated`/`anon` but never explicitly granted
+        `service_role` either. **This is the exact same root-cause class as
+        the `api_usage_daily` grants bug from 2026-08-11**, which CLAUDE.md
+        already documented as a lesson to apply going forward — missed here
+        despite that. Fixed via a follow-up migration
+        (`20260813130000_fix_api_call_cost_log_service_role_grants.sql`,
+        `grant select, insert on public.api_call_cost_log to service_role`),
+        pushed, confirmed via `information_schema.role_table_grants`.
+        **Re-tested after the fix — confirmed working**: one real row
+        landed — `gpt-4o, prompt_tokens=3344, completion_tokens=627,
+        cost_usd=0.01463` — consistent with the ~0.11 CHF Harris had seen
+        across a multi-call session. **Updated lesson**: when locking a
+        table to service-role-only, explicitly check/grant `service_role`
+        itself, not just confirm `authenticated`/`anon` are locked out —
+        those are two independent things to verify, not one.
+12. **Debug-mode bypass for usage caps and paywall — BUILT 2026-08-13,
+    caused a real regression the same day (see item 11 follow-up above).**
+    Single-point fix: `EntitlementService.isPro()`
+    (`lib/services/entitlement_service.dart`) now returns `true`
+    immediately whenever `kDebugMode` is true, before any RevenueCat/mock
+    check. This works cleanly because every gate in the app already follows
+    the same `isPro = await EntitlementService.instance.isPro(); if
+    (!isPro) { check usage cap / show upgrade prompt }` pattern (confirmed
+    by reading all three real gate call sites — Fridge Clearer's weekly cap,
+    Custom AI Recipe Creator's 2-free-lifetime gate, Chef Harris chat's
+    daily cap — plus the post-cook upgrade nudge) — so one change at the
+    entitlement source transparently unlocks all of them at once, without
+    touching `UsageCapService` or any individual screen. Zero effect on
+    release builds: `kDebugMode` is a compile-time constant, `false` there,
+    so this entire branch is dead code in release. **What this missed**: the
+    same `if (!isPro)` blocks also gated `UsageCapService.increment(...)` at
+    all four call sites, not just the cap checks — so this bypass silently
+    stopped all usage tracking in debug builds too, not just the caps it was
+    meant to bypass. Fixed same day (item 11 follow-up) by un-nesting the
+    increment calls so tracking and gating no longer share a conditional.
+    `flutter analyze` clean. **Live-tested 2026-08-13**: confirmed the caps
+    themselves still bypass correctly in debug builds (6 Fridge Clearer
+    generations in one day, no upgrade prompt), and confirmed tracking now
+    survives the bypass too.
+13. **Recipe variety — BUILT 2026-08-13, follow-up fix same day after the
+    first pass failed live-testing.** First pass: root cause found by
+    reading the actual prompt-building code rather than assuming — neither
+    AI-generation flow ever told the model to avoid repeating past dishes.
+    `home_dashboard_screen.dart`'s `_buildHistoryAwarePrompt` used cook
+    history to find a *pattern* and explicitly asked the AI to build ON it
+    — the opposite of an anti-repeat instruction — and its only real
+    repeat-avoidance (`_previousSuggestions`) was in-memory, reset every
+    time the sheet closed. Fridge Clearer's `excludeTitle` only ever
+    excluded the immediately-previous "Try Another" title. Fix: an optional
+    `recentDishTitles` parameter on `ChefService.askChefHarris`, sourced
+    from `CookSessionStorageService().loadCookHistory()`.
+
+    **That first pass didn't work.** Harris ran 5 consecutive Fridge Clearer
+    generations with the same ingredients and got the same egg-and-potato
+    bake 5 times under different names (Frittata → Hash → Bake → Skillet →
+    Bake). Root cause, confirmed by tracing the actual call chain before
+    changing anything: `CookSessionStorageService.addRecentlyCooked()` (what
+    populates the history `recentDishTitles` read from) is only called from
+    `one_pan_cooking_roadmap_screen.dart:301`, inside Cook Mode's `initState`
+    — i.e. only when a recipe is actually *opened in Cook Mode*, never when
+    it's merely *generated*. Fridge Clearer's "Generate"/"Try Another"
+    buttons never touch that history at all unless the user proceeds into
+    Cook Mode. So across 5 generations in one sitting, `recentDishTitles`
+    had nothing from those 5 generations to exclude against. Second failure
+    mode, same test: even title-string exclusion wouldn't have been enough
+    on its own — the model was dodging it by renaming the same dish concept
+    each time.
+
+    **Follow-up fix, same day:**
+    - **`RecentGenerationsService`** (`lib/services/recent_generations_service.dart`,
+      new file) — an in-memory singleton (`instance` pattern, matching
+      `EntitlementService`/`UsageCapService`) tracking dish titles generated
+      this app session, most-recent-first, capped at 20, case-insensitive
+      dedup. Deliberately **not** stored in a screen's `State` (dies on
+      navigation, defeating the point) and deliberately **not** merged into
+      `CookSessionStorageService` (that service's persisted-cooked-only
+      semantics are a different lifetime/meaning — conflating the two would
+      just recreate the "two mechanisms drift" problem elsewhere). A
+      singleton was the only shape that satisfies both real constraints:
+      survives navigating away and back, and is shared across every surface
+      that generates recipes. Not persisted to disk — resets on a full app
+      restart, which is fine, its job is only to catch immediate repeats
+      within one running session.
+    - **Format-level exclusion.** Title exclusion alone can't stop a rename;
+      `ChefService` now also extracts known dish-format keywords (frittata,
+      bake, hash, skillet, casserole, stir-fry, curry, soup, salad, pasta,
+      pizza, roast, etc. — see `_knownDishFormats`) from the same recent-titles
+      list and, when found, adds a second explicit instruction naming the
+      *format* itself as off-limits, not just the literal title. This is a
+      hand-maintained keyword list, not a real classifier — considered and
+      rejected a model-returned `format` JSON field instead (see below).
+      Gated behind a new `excludeDishFormats` param (default `true`).
+    - **Considered and rejected: model-returned `format` field instead of a
+      keyword list.** Would need a schema change + defensive parsing (this
+      project has already seen JSON-mode schema-consistency slips from the
+      model, e.g. the 2026-08-11 gpt-4o-mini trial), doesn't help
+      retroactively against already-persisted cook-history titles, and —
+      decisively — home dashboard's Chef Harris Suggestion is deliberately
+      **non-JSON** (`forceJsonObject: false`, prose the user reads directly),
+      so a schema field can't cover that surface at all without a much
+      bigger redesign. Token cost was a wash either way (~5-10 tokens for a
+      field vs. negligible keyword-scan cost) so wasn't the deciding factor.
+    - **`_previousSuggestions` deleted, merged into `recentDishTitles`.**
+      `_ChefSuggestionSheetState` no longer keeps its own in-memory list or
+      appends a separate freeform "don't suggest again" text block — both
+      reading and writing now go through `RecentGenerationsService.instance`,
+      same as every other surface, so there's one mechanism instead of two
+      that could silently drift apart.
+    - **Scope: Fridge Clearer, home dashboard, and Weekly Planner's Deal
+      Meal fast path** (`weekly_planner_screen.dart` — the only
+      Weekly-Planner-owned generation call; its other 2 "Add meal" paths
+      delegate to Fridge Clearer/Custom AI Recipe Creator, which are wired
+      separately) **get both title AND format exclusion.** Weekly Planner's
+      Deal Meal makes 2 `askChefHarris` calls per generation — exclusion
+      only applies to the first (dish-selection) call, since the second
+      just builds Cook Mode steps for whatever dish the first already
+      picked; nothing left to vary there.
+    - **Custom AI Recipe Creator gets title exclusion only —
+      `excludeDishFormats: false` explicitly passed at its call site.**
+      Deliberate: a user typing "frittata" into that sheet is explicitly
+      requesting that format, and format-excluding it based on their own
+      recent history would fight their own input. It still both reads from
+      and writes to the shared `RecentGenerationsService` (so its outputs
+      count toward variety pressure on other surfaces, and vice versa) —
+      just without the format-level constraint applied to its own prompt.
+    - **Not wired, out of scope this round**: `fridge_countdown_sheet.dart`'s
+      "Use Tonight" — same underlying gap (shares Fridge Clearer's weekly
+      cap, generates via `askChefHarris` directly), flagged but not
+      requested.
+    - Debug logging now prints the full `recentDishTitles` array (not just
+      a count) plus the detected format list and the `excludeDishFormats`
+      flag on every call — `ChefService.askChefHarris variety: excluding N
+      recent dish title(s) from this prompt: [...] | excluding N dish
+      format(s): [...] (excludeDishFormats=...)`.
+    - `flutter analyze`: 0 errors project-wide (same 65 pre-existing
+      style-level infos/warnings as before this session, none new).
+      **Not yet live-tested against this specific failure mode** — next
+      step is re-running the same 5-in-a-row Fridge Clearer test Harris
+      just ran and confirming both the console log and the actual dishes
+      show real variety this time.
+14. **Investigate OpenAI prompt caching — added 2026-08-13, for a future
+    session, not urgent.** Real measured data from item 11's cost-log work:
+    one `ask-chef-harris` call logged 3344 prompt tokens against 627
+    completion tokens — input is roughly **5x** the completion size, so
+    input is the clear majority of per-call cost (at current pricing,
+    $2.50/1M input vs $10/1M output, this call's input alone cost more than
+    double its output despite being priced 4x cheaper per token: ~3344 ×
+    $2.50/1M ≈ $0.0084 input vs ~627 × $10/1M ≈ $0.0063 output). Much of
+    that ~3344-token input is very likely identical between calls — the
+    fixed system prompt (persona + curriculum core + difficulty rules,
+    already measured at ~1774 tokens in the Roadmap item 5 investigation)
+    doesn't change call to call. OpenAI's prompt caching automatically
+    discounts the **stable prefix** shared across consecutive requests, but
+    only if that stable content is placed at the very front of the prompt,
+    before anything request-specific — worth checking exactly how
+    `ChefService.askChefHarris` currently orders `systemPrompt` vs the
+    per-call curriculum addendum/user context (see Roadmap item 5:
+    "the curriculum addendum is injected into the user message, not the
+    system prompt" — so the ordering of the system message itself is the
+    main thing to verify/restructure) and whether restructuring so the
+    genuinely-fixed content sits first would let caching actually engage.
+    **Higher priority than streaming** (Roadmap item 5, step 3) — cheaper
+    to implement (a prompt-ordering change, not a transport-layer rework
+    touching every Supabase call) and it saves real money rather than
+    perceived latency. Not urgent enough for tonight's design-polish
+    session — next session that picks up cost/performance work.
 
 ## Retention Features Backlog
 
@@ -968,34 +1315,39 @@ below) — not just "not started yet," but a decision Harris hasn't made.
    "needs to feel instant since it's used mid-task." **Do not start until
    he explicitly says so.**
 
-## Design Polish Backlog (identified 2026-08-11 — none of it built yet)
+## Design Polish Backlog (identified 2026-08-11, re-audited 2026-08-13 — see status per item)
 
-Harris asked for a design/polish pass this session; findings were captured
-but the actual visual changes were deliberately NOT made — this was a
-wrap-up session, so this is a clean punch list for next time, not
-half-finished work. No `claude-in-chrome` available this session either
-(declined again) — so nothing here has a before/after screenshot yet; get
-one when this is actually picked up.
+Harris asked for a design/polish pass on 2026-08-11; findings were captured
+but the actual visual changes were deliberately NOT made that session — a
+clean punch list, not half-finished work. Re-verified against current
+source on 2026-08-13 (not assumed from the 2026-08-11 write-up) as part of
+a design-polish session — **items 1 and 2 turned out to already be fixed**,
+and **item 4's root cause turned out to be the reverse of what was
+originally written down**. Per this project's own working convention
+("verify current state, don't assume regression, don't assume the
+documented fix is stale") — check before concluding either way, which is
+exactly what caught both of these. No `claude-in-chrome` available on
+2026-08-13 either — nothing here has a before/after screenshot yet.
 
-1. **Technique of the Week card shows raw drawer text, not a teaser.**
-   It's currently rendering `chefTechniqueDrawers`/`chefReferenceDrawers`
-   content directly — that text is written in the
-   `RATIOS/HEAT/DONENESS`-style compact format meant for the AI prompt, not
-   for a person browsing Home. Fix the same way `WhatYouLearnedSheet`
-   already handles this exact content type: a short teaser (title + first
-   sentence) by default, full technical breakdown behind a tap-to-expand
-   disclosure. **Reuse the existing parsing** — `_parseDrawer` and the
-   `DrawerCard`/expand-on-tap pattern in
-   `lib/widgets/curriculum_drawer_content.dart` already solve this exact
-   problem; don't write new extraction logic.
-2. **Technique of the Week card has no green accent.** Every other card on
-   Home carries some of the app's actual brand green
-   (`AppDesignTokens.deepForest`, `#1E3A2B` — not a generic green) except
-   this one, which reads as visually disconnected from the rest of the
-   page. Add a touch of it (icon color, border tint, something restrained
-   — not a full recolor).
-3. **Home dashboard 6-card grid feels flat/corporate.** Small icon-in-a-box
-   on uniform cream, one generic description line each
+1. ~~**Technique of the Week card shows raw drawer text, not a teaser.**~~
+   **CLOSED 2026-08-13 — already fixed, verified against current source.**
+   `_TechniqueOfTheWeekCard` (`home_dashboard_screen.dart`) shows only
+   `entry.title` (e.g. "Simmering") — not raw drawer text. Tapping it opens
+   `_TechniqueOfTheWeekSheet`, which renders `DrawerCard(entry: entry,
+   initiallyOpen: true)` from `lib/widgets/curriculum_drawer_content.dart` —
+   exactly the teaser + tap-to-expand `FormattedDrawerBody` pattern this
+   item asked for, reusing `_parseDrawer`/`DrawerCard` exactly as
+   instructed. Nothing to do here. (Exact timing of the fix isn't
+   determinable — this repo has a single squashed initial commit, no finer
+   git history to check — but the code is unambiguously correct now.)
+2. ~~**Technique of the Week card has no green accent.**~~ **CLOSED
+   2026-08-13 — already fixed, verified alongside item 1.** Both
+   `_TechniqueOfTheWeekCard` and `_TechniqueOfTheWeekSheet` already use
+   `AppDesignTokens.deepForest` (via `HomeDashboardScreen._deepForest`) for
+   the icon background, icon color, and card border. Nothing to do here.
+3. **Home dashboard 6-card grid feels flat/corporate — still open, needs a
+   proposal before implementing (real visual direction, not mechanical).**
+   Small icon-in-a-box on uniform cream, one generic description line each
    ("Plan Mon–Sun & export shopping lists"). Two independent angles Harris
    flagged, either or both worth trying: (a) larger/bolder icons, and/or a
    subtle colored background wash on 1-2 of the most-used cards (Fridge
@@ -1004,53 +1356,200 @@ one when this is actually picked up.
    with more of Chef Harris's established personality, without making the
    functional copy confusing (people still need to know what tapping the
    card does).
-4. **Onboarding background doesn't match Home's background.** Home uses
-   `AppDesignTokens.backgroundSage` (`#E8EFEA`). Onboarding screens
-   currently read as a different/lighter green. **Not yet root-caused** —
-   next session, find wherever onboarding's background is actually defined
-   and confirm whether it's referencing a different token, a different
-   hardcoded value, or something theme-level, then point it at the same
-   `backgroundSage` token Home uses.
-5. **Post-cook share card (`PostCookShareCardSheet`) color sourcing needs
-   confirming.** The bold, high-contrast dark-green direction is correct
-   and intentional for a shareable social image — **don't change the
-   visual approach** — just confirm its dark green is actually pulled from
-   `AppDesignTokens` (presumably `deepForest`) rather than a separate
-   hardcoded hex value that happens to look similar. **Not yet checked.**
-6. **Paywall/upgrade sheet background falls back to an unstyled default.**
-   Root-caused this session: `PaywallScreen` itself (the full `/paywall`
-   route) is fine — its `Scaffold` correctly uses
-   `AppDesignTokens.backgroundSage` (`paywall_screen.dart:68`). The actual
-   problem is `UpgradePromptSheet`
-   (`lib/widgets/upgrade_prompt_sheet.dart`): its own content correctly
-   wraps in `Material(color: AppDesignTokens.surfaceCream, ...)`, but
-   `UpgradePromptSheet.show()` calls `AppBottomSheet.show(...)` **without**
-   passing a `backgroundColor` — so `AppBottomSheet`'s default
-   (`theme.colorScheme.surface`, a plain white/grey per its own
-   implementation in `lib/widgets/app_bottom_sheet.dart`) shows through as
-   the outer modal sheet's chrome (rounded corners, edges, drag-handle
-   area) around the correctly-cream inner content. Fix: pass
-   `backgroundColor: AppDesignTokens.surfaceCream` (or equivalent) at the
-   `AppBottomSheet.show` call site in `UpgradePromptSheet.show()`.
-7. **Chef Harris Suggestion sheet has the same root cause, but worse.**
-   `_ChefSuggestionSheet` (`home_dashboard_screen.dart`,
-   `_ChefSuggestionSheetState.build()`) returns a bare `Padding(...)` with
-   **no `Material` or background color wrapper anywhere in its own widget
-   tree** — unlike `UpgradePromptSheet`, which at least has a correctly-
-   colored inner `Material`. It is 100% dependent on `AppBottomSheet`'s
-   unstyled default, and the call site
-   (`HomeDashboardScreen._showChefSuggestion`) doesn't override it either.
-   Same fix shape: either pass `backgroundColor` at the `AppBottomSheet.show`
-   call site, or wrap the sheet's own content in a `Material`/`Container`
-   using `AppDesignTokens.surfaceCream`, matching the pattern every other
-   sheet in the app already uses.
+4. **Home's background — not onboarding's — is the actual mismatch. Root
+   cause reversed from the original 2026-08-11 write-up; still open,
+   mechanical, pre-approved to fix next session.** Original framing:
+   "onboarding doesn't match Home, point onboarding at `backgroundSage`."
+   **That was backwards.** Verified 2026-08-13: `onboarding_screen.dart`'s
+   `Scaffold` already correctly uses `AppDesignTokens.backgroundSage`
+   (`#E8EFEA`) — confirmed via `nav.dart` that `OnboardingScreen` is the
+   single real routed onboarding screen, no duplicate. The actual outlier is
+   `home_dashboard_screen.dart:237`: `Scaffold(backgroundColor:
+   HomeDashboardScreen._sageBackground, ...)`, where `_sageBackground` is a
+   **separate, private, hardcoded** `Color(0xFFC5D3C1)` (line 39) — visibly
+   darker/more saturated than the real `backgroundSage` token, not a
+   near-identical rounding difference. `_sageBackground` is used exactly
+   once in the file (only that Scaffold), so there's no other intentional
+   use of the darker shade to preserve. Fix: delete the private
+   `_sageBackground` constant and reference `AppDesignTokens.backgroundSage`
+   directly at line 237, matching onboarding (and everywhere else). Net
+   effect: Home's background gets *lighter* to match the shared token —
+   the opposite direction from what the original item description implied.
+5. **Post-cook share card (`PostCookShareCardSheet`) color sourcing —
+   CHECKED 2026-08-13, confirmed correct, no fix needed.** Its root
+   `build()` returns `Material(color: AppDesignTokens.surfaceCream, ...)` —
+   real token, not hardcoded. The bold dark-green gradient itself (a nested
+   preview card inside that cream sheet, not the sheet's own background) is
+   `colors: [AppDesignTokens.deepForest, Color(0xFF14261B)]` — the first
+   stop is the real token as suspected; the second stop is a deliberately
+   darker, hand-picked shade to give the gradient somewhere to go, which is
+   normal for a two-stop gradient and doesn't need to itself be a design
+   token. **Don't change anything here** — this is exactly the "don't
+   change the visual approach" case, and the token-sourcing question this
+   item asked comes back clean.
+6. **Bottom-sheet background falls back to an unstyled default — scope was
+   wrong in the original write-up. It's not 2 sheets, it's 18 call sites
+   across 8 files. Mechanical, pre-approved, ready to run next session —
+   see the full list below.** Root cause (confirmed 2026-08-11, still
+   accurate): `AppBottomSheet.show(...)` defaults its `backgroundColor` to
+   `theme.colorScheme.surface` (plain white/grey) when the caller doesn't
+   pass one — and even when the sheet's own inner widget correctly wraps
+   itself in `Material(color: AppDesignTokens.surfaceCream, ...)`, that
+   only covers the inner content; the outer modal chrome (rounded corners,
+   edges, drag-handle area) still shows the unstyled default around/behind
+   it. The original write-up flagged only `UpgradePromptSheet` and
+   `_ChefSuggestionSheet` and left "grep the rest" as a suggestion for next
+   time. **That grep is now done** (2026-08-13, read-only — no edits made,
+   per the "no code changes tonight" instruction this was captured under).
+   Full result: **18 of the app's ~20 `AppBottomSheet.show` call sites omit
+   `backgroundColor` entirely.** All 18 are missing it for the same reason
+   (never set, not a deliberate choice) and all 18 want the same fix:
+   `backgroundColor: AppDesignTokens.surfaceCream`. Verified each target
+   sheet's own root widget individually first, specifically to rule out any
+   sheet that might deliberately want a *different* color (like a dark
+   sheet) — none do; every one of the 18 either has no color wrapper at all
+   (bare `Padding`/`SafeArea`/`AnimatedPadding` — cream would be the
+   *effective* background either way) or already wraps in
+   `Material(color: AppDesignTokens.surfaceCream, ...)` itself (cream is
+   just missing from the outer chrome). By file:
+   - `lib/widgets/upgrade_prompt_sheet.dart:22` — `UpgradePromptSheet`
+     (original item, has its own cream `Material`)
+   - `lib/screens/home_dashboard_screen.dart:63` — `_ChefSuggestionSheet`
+     (original item, no color wrapper at all)
+   - `lib/screens/home_dashboard_screen.dart:72` — `_TechniqueOfTheWeekSheet`
+     (has its own cream `Material` — newly found; postdates the original
+     2-item write-up)
+   - `lib/screens/home_dashboard_screen.dart:145` — `FridgeCountdownSheet`
+     (no color wrapper)
+   - `lib/screens/home_dashboard_screen.dart:210` — `_RecentlyCookedSheet`
+     (no color wrapper)
+   - `lib/screens/fridge_clearer_screen.dart:369` — `WeekdayPickerSheet`
+     (no color wrapper)
+   - `lib/widgets/fridge_countdown_sheet.dart:61` — `_AddFridgeItemSheet`
+     (no color wrapper)
+   - `lib/widgets/fridge_countdown_sheet.dart:287` — `GeneratedRecipeActionsSheet`
+     (reused here; has its own cream `Material`, see next entry)
+   - `lib/widgets/generated_recipe_actions_sheet.dart:111` —
+     `WeekdayPickerSheet` (nested "Plan for which day?" picker; no color
+     wrapper)
+   - `lib/screens/one_pan_cooking_roadmap_screen.dart:421` —
+     `WasteLedgerCelebrationSheet` (has its own cream `Material`)
+   - `lib/screens/one_pan_cooking_roadmap_screen.dart:445` —
+     `WhatYouLearnedSheet` (has its own cream `Material`)
+   - `lib/screens/one_pan_cooking_roadmap_screen.dart:475` —
+     `PostCookShareCardSheet` (has its own cream `Material` — see item 5;
+     do NOT touch its nested dark gradient preview card, only the outer
+     `AppBottomSheet.show` chrome)
+   - `lib/screens/one_pan_cooking_roadmap_screen.dart:677` — `_ChefSosSheet`
+     (no color wrapper)
+   - `lib/screens/profile_screen.dart:357` — `_SecureAccountSheet` (no
+     color wrapper)
+   - `lib/screens/weekly_planner_screen.dart:106` — `_AddMealOptionsSheet`
+     (no color wrapper)
+   - `lib/screens/weekly_planner_screen.dart:276` —
+     `CustomAiRecipeCreatorSheet` (no color wrapper)
+   - `lib/screens/weekly_planner_screen.dart:832` —
+     `_DealMealSuggestionSheet` (no color wrapper)
+   - `lib/widgets/confidence_tier_up_sheet.dart:25` —
+     `ConfidenceTierUpSheet` (has its own cream `Material`)
 
-**Worth checking while in this area next session**: given items 6 and 7
-share the exact same root cause (an `AppBottomSheet.show()` call site
-omitting `backgroundColor`), it may be worth grepping all `AppBottomSheet.show`
-call sites in one pass rather than fixing these two in isolation — there
-could be other sheets with the same silent fallback that just haven't been
-flagged yet.
+   **Deliberately excluded from this batch fix — do NOT add
+   `backgroundColor: surfaceCream` to these**, confirmed intentional:
+   - `home_dashboard_screen.dart:88`, `:101-107`, `:191-197` — three
+     `GeneratedRecipeActionsSheet`/related call sites that already pass
+     `backgroundColor: isDark ? theme.colorScheme.surface :
+     LightModeColors.lightWarmCreamSurface` — correctly dark-mode-aware,
+     just via a different token name than the rest of the app. Leave as is.
+   - `weekly_planner_screen.dart:878` — passes `backgroundColor:
+     Colors.transparent` on purpose, per its own comment ("Keep the modal
+     container consistent with the app's primary card surfaces" — its
+     content draws its own full background). Leave as is.
+
+   Fix shape for all 18: add `backgroundColor: AppDesignTokens.surfaceCream`
+   to each `AppBottomSheet.show(...)` call. Purely additive — one named
+   parameter on an already-working call, can't change behavior, only the
+   chrome color — genuinely mechanical, no visual-direction judgment
+   needed. Check `AppDesignTokens` is imported before editing (as of
+   2026-08-13, NOT yet imported in: `fridge_countdown_sheet.dart`,
+   `one_pan_cooking_roadmap_screen.dart`, `generated_recipe_actions_sheet.dart`
+   — add the import alongside the fix in those three).
+
+### Next session starts here
+
+- **The 18-site `backgroundColor` batch fix above is pre-approved and ready
+  to run** — purely mechanical, no proposal needed, just do it (verify with
+  `flutter analyze` after, same as any other session).
+- **Item 4** (Home's `_sageBackground` → `AppDesignTokens.backgroundSage`)
+  is also pre-approved and mechanical — bundle it with the batch fix above.
+- **Item 3** (home dashboard grid feels flat/corporate) is real visual
+  direction — write up a proposal and show Harris where you're taking it
+  *before* touching any code, per his explicit instruction from the
+  2026-08-13 session.
+- Items 1, 2, and 5 are closed/confirmed — no action needed.
+
+## Pluralization Audit (2026-08-13 — mechanical, pre-approved, not yet applied)
+
+Triggered by Harris spotting "1 ingredients rescued so far" on Home.
+Audited every count-driven interpolated string in `lib/` (not just that one
+instance) via a full-codebase grep for `$variable` immediately followed by
+a plural noun, cross-checked against every spot that already handles this
+correctly (the `${count == 1 ? '' : 's'}` pattern, used consistently in
+`fridge_countdown_sheet.dart`, `post_cook_share_card.dart`,
+`your_month_card.dart`, and one line of `home_dashboard_screen.dart` itself
+— so the correct pattern already exists in this codebase, it's just not
+applied everywhere). Read-only audit — no fixes applied yet tonight.
+
+**3 genuine bugs** (wrong today, will show incorrect grammar for real users
+at count=1 — not hypothetical):
+1. `lib/screens/home_dashboard_screen.dart:320` —
+   `'$_weeklyIngredientsRescued ingredients rescued so far.'` — the exact
+   string Harris spotted.
+2. `lib/screens/home_dashboard_screen.dart:458` — `'Lifetime: $lifetimeCount
+   ingredients rescued'`.
+3. `lib/widgets/waste_ledger_celebration_sheet.dart:78` — `'Lifetime:
+   $lifetimeIngredientsRescued ingredients rescued'` — highest-visibility of
+   the three: every new user's very first-ever rescue will show "Lifetime: 1
+   ingredients rescued" the first time they ever see this sheet.
+
+**1 stylistic inconsistency** (not grammatically broken, but inconsistent
+with the correct pattern used elsewhere in the very same file):
+- `lib/screens/home_dashboard_screen.dart:420` — `'$weeklyCount
+  ingredient(s) rescued so far this week.'` — the "(s)" placeholder style
+  instead of true singular/plural. Reads oddly ("1 ingredient(s)") rather
+  than being outright wrong. Worth conforming to the real pattern while in
+  this area.
+
+**4 latent risks** (correct today only because their constants currently
+happen to be ≥2 — would silently break if ever tuned to 1, e.g. during
+pricing/limit A/B testing):
+- `lib/screens/fridge_clearer_screen.dart:527` — "...$kFridgeClearerFreeWeeklyLimit
+  Fridge Clearer generations a week..." (`kFridgeClearerFreeWeeklyLimit = 3`)
+- `lib/widgets/fridge_countdown_sheet.dart:239` — same constant, "...fridge-rescue
+  generations a week..."
+- `lib/screens/home_dashboard_screen.dart:1263` — "...$kChefHarrisChatFreeDailyLimit
+  Chef Harris suggestions a day..." (`kChefHarrisChatFreeDailyLimit = 5`)
+- `lib/widgets/custom_ai_recipe_creator_sheet.dart:239` — "...$kCustomAiRecipeCreatorFreeLifetimeUses
+  free tastes..." (`kCustomAiRecipeCreatorFreeLifetimeUses = 2`)
+
+**Confirmed a false positive while auditing**: `fridge_countdown_sheet.dart:432`
+(`'$d days left'`) looked suspicious in isolation but is actually guarded
+correctly — `d == 1` is handled by an explicit branch (`'1 day left'`)
+immediately above it, so the plural branch only ever executes for d != 1.
+No fix needed there; flagging so it isn't "rediscovered" as a bug next time
+someone greps this file.
+
+**Also found, out of UI scope**: `lib/services/ai_recipe_service.dart:167`
+and the near-identical `'$portions people'` lines in
+`fridge_clearer_screen.dart:226`, `custom_ai_recipe_creator_sheet.dart:217`,
+`fridge_countdown_sheet.dart:222` all hardcode "people" regardless of count
+— but these are AI *system-prompt* text (recipe-generation instructions
+sent to OpenAI), never rendered in the UI. Not a user-visible bug; not
+worth fixing.
+
+Fix for all 8 real items (3 bugs + 1 inconsistency + 4 latent risks): same
+one-line ternary pattern already used correctly elsewhere in this codebase
+— `'${count} noun${count == 1 ? '' : 's'}'`. Purely mechanical, pre-approved,
+not yet applied.
 
 ## Working conventions
 

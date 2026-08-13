@@ -318,7 +318,27 @@ USER SAFETY & PERSONALIZATION CONTEXT (MANDATORY — DO NOT IGNORE):
       final res = await _db.functions.invoke('ai-recipe-precision', body: body);
       final jsonMap = _coerceJsonMap(res.data);
       final dataMap = _unwrapDataEnvelope(jsonMap);
-      return PrecisionData.fromJson(dataMap);
+      final precisionData = PrecisionData.fromJson(dataMap);
+
+      // ai-recipe-precision's edge function source isn't in this repo (see
+      // CLAUDE.md), so we can't get real OpenAI token counts the way
+      // ChefService.askChefHarris now does — this is a rough char-count
+      // estimate of the request payload only, clearly labeled as such.
+      // What IS reliable: `source` ('cache' vs 'generated'), which the edge
+      // function already returns — a cache hit means no new OpenAI call was
+      // made server-side, i.e. ~$0 marginal cost for this call.
+      final payloadChars = jsonEncode(body).length;
+      if (precisionData.source == 'cache') {
+        debugPrint('AiRecipeService.getPrecisionData cost: CACHE HIT — no new OpenAI call, ~\$0 marginal cost.');
+      } else {
+        final estInputTokens = (payloadChars / 4).round();
+        debugPrint(
+          'AiRecipeService.getPrecisionData cost: CACHE MISS (generated) — est_input_tokens=$estInputTokens '
+          '(rough char-count estimate of request payload only, model/output unknown — edge function source not in this repo).',
+        );
+      }
+
+      return precisionData;
     } catch (e, st) {
       debugPrint('AiRecipeService.getPrecisionData failed: $e');
       debugPrint('AiRecipeService.getPrecisionData stack: $st');

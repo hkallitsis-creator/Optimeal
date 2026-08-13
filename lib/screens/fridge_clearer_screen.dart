@@ -10,7 +10,9 @@ import 'package:optimeal/models/technique_lesson.dart' as models;
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/services/ai_recipe_service.dart';
 import 'package:optimeal/services/chef_service.dart';
+import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
+import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -550,17 +552,33 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       // concurrently instead of serially doubling the user's wait.
       final precisionCardsFuture = _fetchPrecisionCards(ingredients);
       final prompt = _buildCookModePrompt(idea, portions, excludeTitle: previousTitle);
-      if (!isPro) {
-        // Counts against the weekly cap the moment the call fires (mirrors
-        // real OpenAI cost, which is incurred regardless of what happens
-        // to the response afterward).
-        unawaited(UsageCapService.instance.increment(UsageFeature.fridgeClearerGeneration));
-      }
+      // Usage tracking is unconditional and independent of entitlement
+      // (CLAUDE.md roadmap item 11 follow-up, 2026-08-13) — always counts
+      // this real attempted call, regardless of Pro/kDebugMode status. Only
+      // the cap CHECK above (weeklyCount >= kFridgeClearerFreeWeeklyLimit)
+      // stays gated on isPro; tracking and gating must not share a
+      // conditional, or a bypass in one silently breaks the other.
+      unawaited(UsageCapService.instance.increment(UsageFeature.fridgeClearerGeneration));
+      // Recipe variety (CLAUDE.md roadmap item 13): steer away from
+      // recently cooked dishes so the same handful (frittata, stir-fry,
+      // etc.) doesn't keep recurring regardless of actual ingredients.
+      // Merges two sources: persisted cook history (only populated when a
+      // recipe is actually opened in Cook Mode) and this app session's
+      // in-memory RecentGenerationsService (every generation, cooked or
+      // not) — the latter is what closes the gap where 5 straight "Try
+      // Another"/"Generate" calls in one sitting previously had nothing to
+      // exclude against.
+      final recentCookHistory = await CookSessionStorageService().loadCookHistory();
+      final recentDishTitles = [
+        ...RecentGenerationsService.instance.recent(),
+        ...recentCookHistory.map((e) => e.recipe.title),
+      ];
       final replyFuture = _chefService.askChefHarris(
         userQuery: prompt,
         recipeTitle: idea.title,
         profile: profile,
         forceJsonObject: true,
+        recentDishTitles: recentDishTitles,
       );
 
       // Precision notes are a nice-to-have and never throw (errors are
@@ -619,6 +637,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
         curriculumLessonIds: merged,
       );
       debugPrint('CookModeRecipePayload constructed with curriculumLessonIds=${recipe.curriculumLessonIds}');
+
+      RecentGenerationsService.instance.record(recipe.title);
 
       setState(() {
         _precisionCards = cards;

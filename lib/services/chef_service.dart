@@ -318,13 +318,77 @@ class ChefService {
     return out;
   }
 
+  /// Recent-dish variety cap (CLAUDE.md roadmap item 13): how many recent
+  /// dish titles get injected into the prompt as a "don't repeat these"
+  /// instruction. Titles are short (~20-40 chars each), so even the max 10
+  /// adds well under 100 tokens — negligible next to the ~2000-2500 token
+  /// prompt budget already measured (see Roadmap item 5).
+  static const int _maxRecentDishExclusions = 10;
+
+  /// Curated dish-format/style keywords (lowercase) for the recipe-variety
+  /// fix. Title-string exclusion alone can't stop the model renaming the
+  /// same dish concept to dodge a literal match — the real bug seen in
+  /// testing was five straight Fridge Clearer generations that were all,
+  /// under different names, an egg-and-potato bake (frittata → hash → bake
+  /// → skillet → bake). This is a hand-maintained list, not a classifier —
+  /// it'll catch common cases but won't catch every possible rename; expect
+  /// to extend it as new gaps show up.
+  static const List<String> _knownDishFormats = [
+    'frittata', 'omelette', 'omelet', 'scramble', 'quiche', 'souffle', 'soufflé',
+    'bake', 'casserole', 'gratin', 'tart', 'pie',
+    'hash', 'skillet', 'stir-fry', 'stir fry', 'sauté', 'saute',
+    'curry', 'soup', 'stew', 'chowder', 'chili',
+    'salad', 'bowl', 'wrap',
+    'pasta', 'risotto', 'pilaf', 'paella', 'gnocchi', 'dumpling',
+    'pizza', 'flatbread',
+    'fritters', 'patties', 'burger', 'skewers', 'kebab',
+    'roast', 'traybake', 'sheet pan', 'sheet-pan', 'one-pot', 'one pot',
+  ];
+
+  /// Scans [titles] for known dish-format keywords (case-insensitive
+  /// substring match) and returns the distinct formats found, in the order
+  /// first encountered.
+  List<String> _extractDishFormats(List<String> titles) {
+    final found = <String>[];
+    for (final title in titles) {
+      final lower = title.toLowerCase();
+      for (final format in _knownDishFormats) {
+        if (lower.contains(format) && !found.contains(format)) {
+          found.add(format);
+        }
+      }
+    }
+    return found;
+  }
+
   /// Asks Chef Harris for SOS help.
   ///
   /// - [userQuery] is the user's immediate cooking problem/question.
   /// - [recipeTitle] optionally provides context to keep answers specific.
   /// - If [forceJsonObject] is true, the OpenAI proxy is asked to return a strict JSON object.
   ///   (Callers should still validate/parse defensively.)
-  Future<String> askChefHarris({required String userQuery, String? recipeTitle, UserProfile? profile, bool forceJsonObject = false}) async {
+  /// - [recentDishTitles] is an optional list of recently generated dish
+  ///   titles (most recent first, from any source — persisted cook history
+  ///   and/or this app session's [RecentGenerationsService]) to steer the AI
+  ///   away from repeating the same handful of dishes (CLAUDE.md roadmap
+  ///   item 13). Only the most recent [_maxRecentDishExclusions] (after
+  ///   case-insensitive dedupe) are actually sent.
+  /// - [excludeDishFormats]: when true (default), also extracts known
+  ///   dish-format keywords (frittata, bake, stir-fry, etc.) from
+  ///   [recentDishTitles] and explicitly forbids reusing those formats, not
+  ///   just the literal titles — this is what actually stops the model from
+  ///   dodging exclusion by renaming the same dish. Pass false for surfaces
+  ///   where the user may have explicitly typed a format by name (Custom AI
+  ///   Recipe Creator) — format-excluding "frittata" would fight a user who
+  ///   typed "frittata" themselves.
+  Future<String> askChefHarris({
+    required String userQuery,
+    String? recipeTitle,
+    UserProfile? profile,
+    bool forceJsonObject = false,
+    List<String>? recentDishTitles,
+    bool excludeDishFormats = true,
+  }) async {
     final query = userQuery.trim();
     if (query.isEmpty) return 'Tell me what’s happening in the pan and I’ll jump in. Happy cooking! — Chef Harris';
 
@@ -378,6 +442,47 @@ class ChefService {
       userMessage.writeln(curriculumAddendum);
     }
 
+    // Recipe variety (CLAUDE.md roadmap item 13): steer away from the same
+    // handful of dishes (frittata, stir-fry, etc.) recurring regardless of
+    // actual ingredients, by naming what's already been cooked/suggested
+    // recently and asking for genuine variety against that list.
+    final seenLower = <String>{};
+    final recentTitles = <String>[];
+    for (final raw in (recentDishTitles ?? const <String>[])) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) continue;
+      if (!seenLower.add(trimmed.toLowerCase())) continue; // case-insensitive dedupe across merged sources
+      recentTitles.add(trimmed);
+      if (recentTitles.length >= _maxRecentDishExclusions) break;
+    }
+    if (recentTitles.isNotEmpty) {
+      userMessage.writeln(
+        'Recently suggested/cooked dishes — do NOT repeat any of these, and avoid close variants '
+        'of them (same dish renamed, or the same protein+method combo with a different garnish). '
+        'Genuinely vary cuisine, main technique, or ingredient treatment instead: ${recentTitles.join(', ')}.',
+      );
+      userMessage.writeln();
+    }
+
+    // Format-level exclusion: title matching alone can't stop the model
+    // renaming the same dish concept (frittata -> hash -> bake -> skillet)
+    // to dodge the literal check above. See _knownDishFormats doc comment.
+    final recentFormats = excludeDishFormats ? _extractDishFormats(recentTitles) : const <String>[];
+    if (recentFormats.isNotEmpty) {
+      userMessage.writeln(
+        'Also avoid these dish formats/styles already used recently, regardless of what you name the '
+        'dish: ${recentFormats.join(', ')}. Pick a genuinely different format or cooking style — '
+        'not another dish in one of these formats under a new name.',
+      );
+      userMessage.writeln();
+    }
+
+    debugPrint(
+      'ChefService.askChefHarris variety: excluding ${recentTitles.length} recent dish title(s) from this '
+      'prompt: $recentTitles | excluding ${recentFormats.length} dish format(s): $recentFormats '
+      '(excludeDishFormats=$excludeDishFormats)',
+    );
+
     const systemPrompt = '$_systemPersona\n\n$_curriculumCore\n\n$_recipeDifficultyByKitchenConfidence';
     final userMessageStr = userMessage.toString();
     final Map<String, dynamic> payload = {
@@ -398,11 +503,17 @@ class ChefService {
       final data = res.data;
 
       String? content;
+      Map? usage;
+      String? model;
       if (data is Map) {
         content = data['content']?.toString();
+        usage = data['usage'] is Map ? data['usage'] as Map : null;
+        model = data['model']?.toString();
       } else if (data is String) {
         content = data;
       }
+
+      _logEstimatedCost(usage: usage, model: model, fallbackInputChars: systemPrompt.length + userMessageStr.length);
 
       final text = (content ?? '').trim();
       if (text.isEmpty) {
@@ -413,6 +524,51 @@ class ChefService {
     } catch (e) {
       debugPrint('ChefService: request failed: $e');
       return 'Something went wrong reaching the chef line. Try again in a moment. Happy cooking! — Chef Harris';
+    }
+  }
+
+  /// Single named source for OpenAI pricing (USD per 1M tokens) on the
+  /// Dart/client side. Mirrors `OPENAI_PRICING_PER_MILLION_TOKENS` in
+  /// `supabase/functions/ask-chef-harris/index.ts` — Dart and Deno can't
+  /// share a literal file, so this is a duplicate by necessity; update both
+  /// (numbers AND the "rates checked" date) together. This copy only drives
+  /// the client-side fallback estimate below (used when a response is
+  /// missing `usage`, e.g. a stale pre-deploy edge function) — the durable,
+  /// authoritative cost record is written server-side into
+  /// `api_call_cost_log` by the edge function's own copy of these rates.
+  /// Rates checked 2026-08-13 against OpenAI's published pricing.
+  static const Map<String, ({double input, double output})> _openAiPricingPerMillionTokens = {
+    'gpt-4o': (input: 2.50, output: 10.00),
+    'gpt-4o-mini': (input: 0.15, output: 0.60),
+  };
+
+  /// Logs an estimated USD cost for the call just completed. Prefers real
+  /// token counts from OpenAI's `usage` field (now forwarded by the
+  /// `ask-chef-harris` edge function); falls back to a char/4 estimate
+  /// (input only — no way to know output length without `usage`) if the
+  /// deployed edge function version doesn't include it yet.
+  void _logEstimatedCost({required Map? usage, required String? model, required int fallbackInputChars}) {
+    final resolvedModel = (model == 'gpt-4o-mini') ? 'gpt-4o-mini' : 'gpt-4o';
+    final rates = _openAiPricingPerMillionTokens[resolvedModel] ?? _openAiPricingPerMillionTokens['gpt-4o']!;
+    final inputPerM = rates.input;
+    final outputPerM = rates.output;
+
+    if (usage != null) {
+      final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ?? 0;
+      final completionTokens = (usage['completion_tokens'] as num?)?.toInt() ?? 0;
+      final costUsd = (promptTokens / 1000000) * inputPerM + (completionTokens / 1000000) * outputPerM;
+      debugPrint(
+        'ChefService.askChefHarris cost: model=$resolvedModel prompt_tokens=$promptTokens '
+        'completion_tokens=$completionTokens est_cost_usd=\$${costUsd.toStringAsFixed(5)} (real token counts)',
+      );
+    } else {
+      final estInputTokens = (fallbackInputChars / 4).round();
+      final costUsd = (estInputTokens / 1000000) * inputPerM;
+      debugPrint(
+        'ChefService.askChefHarris cost: model=$resolvedModel est_input_tokens=$estInputTokens '
+        'est_cost_usd=\$${costUsd.toStringAsFixed(5)} (INPUT ONLY, char-count estimate — deployed edge '
+        'function does not yet return usage; redeploy ask-chef-harris to get accurate cost including output)',
+      );
     }
   }
 }

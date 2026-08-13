@@ -248,9 +248,11 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
       final profile = context.read<UserProfileController>().profile;
       final portions = profile.householdServings;
       final prompt = _buildPrompt(item, portions);
-      if (!isPro) {
-        unawaited(UsageCapService.instance.increment(UsageFeature.fridgeClearerGeneration));
-      }
+      // Usage tracking is unconditional and independent of entitlement
+      // (CLAUDE.md roadmap item 11 follow-up, 2026-08-13) — see
+      // fridge_clearer_screen.dart for the full rationale. Only the cap
+      // CHECK above stays gated on isPro.
+      unawaited(UsageCapService.instance.increment(UsageFeature.fridgeClearerGeneration));
       final reply = await _chefService.askChefHarris(
         userQuery: prompt,
         recipeTitle: 'Use ${item.ingredientName} tonight',

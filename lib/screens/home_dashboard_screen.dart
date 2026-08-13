@@ -10,6 +10,7 @@ import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/fridge_countdown_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
+import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -1190,7 +1191,6 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
   bool _loading = true;
   String? _error;
   String? _text;
-  final List<String> _previousSuggestions = [];
 
   String? _extractDishName(String text) {
     final trimmed = text.trim();
@@ -1281,18 +1281,28 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
           ? _buildHistoryAwarePrompt(history)
           : 'Give me ONE quick Mediterranean-leaning meal idea for tonight that fits my profile. Include: (1) dish name, (2) why it matches me, (3) a 5-step fast method, (4) a smart ingredient substitution if needed, (5) a tiny “leftover rescue” tip.';
 
-      if (_previousSuggestions.isNotEmpty) {
-        final noRepeats = _previousSuggestions.map((e) => '"$e"').join(', ');
-        userQuery += '\n\nDon\'t suggest any of these again: [$noRepeats]. If you were going to repeat one, pivot cuisines or core technique and pick a truly different dish.';
-      }
-      if (!isPro) {
-        // Counts against the daily cap the moment the call fires, mirroring
-        // the real OpenAI cost incurred either way.
-        unawaited(UsageCapService.instance.increment(UsageFeature.chefHarrisChat));
-      }
+      // Usage tracking is unconditional and independent of entitlement
+      // (CLAUDE.md roadmap item 11 follow-up, 2026-08-13) — see
+      // fridge_clearer_screen.dart for the full rationale. Only the cap
+      // CHECK above stays gated on isPro.
+      unawaited(UsageCapService.instance.increment(UsageFeature.chefHarrisChat));
+      // Recipe variety (CLAUDE.md roadmap item 13): `history` above only
+      // informs the pattern-matching prompt when there are 3+ entries — it
+      // never actually forbids the AI from repeating a past dish. Routes
+      // through the single shared `recentDishTitles` mechanism instead of
+      // the old separate freeform "don't suggest again" text block that
+      // used to live here (two parallel mechanisms drift) — merges
+      // persisted cook history with this app session's in-memory
+      // RecentGenerationsService, which is what actually carries repeats
+      // across multiple suggestion-sheet opens within one sitting.
+      final recentDishTitles = [
+        ...RecentGenerationsService.instance.recent(),
+        ...history.map((e) => e.recipe.title),
+      ];
       final res = await _chefService.askChefHarris(
         userQuery: userQuery,
         profile: profile,
+        recentDishTitles: recentDishTitles,
       );
       if (!mounted) return;
       final cleaned = res.trim();
@@ -1302,10 +1312,9 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
         _loading = false;
       });
 
-      // Track suggestions for this sheet session to reduce repeats.
       final toStore = (dish ?? cleaned).trim();
       if (toStore.isNotEmpty) {
-        _previousSuggestions.add(toStore);
+        RecentGenerationsService.instance.record(toStore);
       }
     } catch (e, st) {
       debugPrint('Chef suggestion load failed: $e');

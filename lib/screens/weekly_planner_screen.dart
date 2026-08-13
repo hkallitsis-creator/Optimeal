@@ -9,6 +9,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/chef_service.dart';
+import 'package:optimeal/services/cook_session_storage_service.dart';
+import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/theme.dart';
@@ -1732,10 +1734,20 @@ class _DealMealSuggestionSheetState extends State<_DealMealSuggestionSheet> {
       if (!mounted) return;
       _deals = deals;
 
+      // Recipe variety (CLAUDE.md roadmap item 13): this is the actual
+      // dish-choice point in the Deal Meal fast path — the second call
+      // below just builds Cook Mode steps for whatever dish this one picks,
+      // so exclusion only needs to apply here.
+      final recentCookHistory = await CookSessionStorageService().loadCookHistory();
+      final recentDishTitles = [
+        ...RecentGenerationsService.instance.recent(),
+        ...recentCookHistory.map((e) => e.recipe.title),
+      ];
       final text = await widget.chefService.askChefHarris(
         userQuery: _buildPrompt(deals),
         profile: widget.profile,
         forceJsonObject: true,
+        recentDishTitles: recentDishTitles,
       );
       if (!mounted) return;
 
@@ -1747,6 +1759,7 @@ class _DealMealSuggestionSheetState extends State<_DealMealSuggestionSheet> {
         });
         return;
       }
+      RecentGenerationsService.instance.record(parsed.title);
 
       final cookPrompt = _buildCookModePrompt(dish: parsed.title, items: parsed.aisleItems);
       final cookText = await widget.chefService.askChefHarris(

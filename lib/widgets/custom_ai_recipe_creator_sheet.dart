@@ -4,7 +4,9 @@ import 'dart:convert';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/chef_service.dart';
+import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
+import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
@@ -250,16 +252,27 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
       final profile = context.read<UserProfileController>().profile;
       final portions = profile.householdServings;
       final prompt = _buildPrompt(userPrompt, portions);
-      if (!isPro) {
-        // Counts against the lifetime free-taste allowance the moment the
-        // call fires, mirroring the real OpenAI cost incurred either way.
-        unawaited(UsageCapService.instance.increment(UsageFeature.customAiRecipeCreator));
-      }
+      // Usage tracking is unconditional and independent of entitlement
+      // (CLAUDE.md roadmap item 11 follow-up, 2026-08-13) — see
+      // fridge_clearer_screen.dart for the full rationale. Only the cap
+      // CHECK above stays gated on isPro.
+      unawaited(UsageCapService.instance.increment(UsageFeature.customAiRecipeCreator));
+      // Recipe variety (CLAUDE.md roadmap item 13): title-level exclusion
+      // only, deliberately no dish-format exclusion here (excludeDishFormats:
+      // false below) — the user may have explicitly typed a format by name
+      // ("frittata"), and format-excluding it would fight their own request.
+      final recentCookHistory = await CookSessionStorageService().loadCookHistory();
+      final recentDishTitles = [
+        ...RecentGenerationsService.instance.recent(),
+        ...recentCookHistory.map((e) => e.recipe.title),
+      ];
       final reply = await _chefService.askChefHarris(
         userQuery: prompt,
         recipeTitle: userPrompt,
         profile: profile,
         forceJsonObject: true,
+        recentDishTitles: recentDishTitles,
+        excludeDishFormats: false,
       );
       if (!mounted) return;
       final payload = _parseCookModeRecipe(reply, portions: portions);
@@ -268,6 +281,7 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
         setState(() => _error = 'Chef Harris returned something unexpected. Try again.');
         return;
       }
+      RecentGenerationsService.instance.record(payload.title);
 
       final matchedCurriculumKeys = _chefService.matchedCurriculumDrawerKeys(_buildCurriculumSearchText(payload));
 
