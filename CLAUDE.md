@@ -1945,6 +1945,46 @@ complete and uses a standard, reliable Flutter API — high confidence.
     `test/services/chef_recipe_parser_test.dart`: never referenced the
     deleted enum value, so no edit was needed there; re-ran anyway,
     11/11 still passing.
+26. **Six "Swiss"-worded user-facing strings — NOT a cleanup item, added
+    2026-08-15. Correct as they are; do not find-and-replace.** Surfaced
+    during a grep for surviving "Swiss" copy after the earlier
+    European-framing pass. **These are locale-dependent, not stale**:
+    Swiss-first is the actual launch plan, and "Swiss households waste
+    600+ CHF a year" is a stronger hook in Switzerland than a generic
+    European line would be. They belong in future EN/DE/FR/IT
+    localization work as the Swiss-locale variant of that copy, not a
+    global rewrite. All six:
+    - `lib/screens/onboarding_screen.dart:151` — `"Swiss households waste
+      600+ CHF a year… in food that never gets eaten."` (onboarding
+      headline)
+    - `lib/screens/paywall_screen.dart:238` — `'Swiss households waste
+      600+ CHF/year in food that never gets eaten...'` (paywall value
+      prop)
+    - `lib/screens/paywall_screen.dart:282` — `subtitle: 'Live timers,
+      checkboxes, and Swiss substitute guidance.'` (paywall feature list)
+    - `lib/screens/fridge_clearer_screen.dart:369` — `title: 'Swiss
+      Substitute Map'` (precision-card title)
+    - `lib/screens/fridge_clearer_screen.dart:360` — `'...very
+      Swiss-kitchen friendly.'` (precision-card explanation text)
+    - `lib/screens/fridge_clearer_screen.dart:1149` — `'Heat cues, cut
+      specs, timing, and Swiss-kitchen swaps — tailored to your fridge.'`
+      (rendered `Text` widget)
+
+    **The three Fridge Clearer ones aren't independent copy choices — they
+    trace to a field name in `ai-recipe-precision`'s data model.** That
+    edge function's `PrecisionData` interface (`supabase/functions/ai-recipe-precision/index.ts`,
+    downloaded and read under Roadmap item 16) has a `substituteSwiss: string`
+    field — the Swiss framing is baked into the schema the AI is asked to
+    fill, not just wording layered on top in the client. That's *why* the
+    earlier European-framing pass missed these three: it was a text pass
+    over Dart copy, and this framing lives one layer down, in what the
+    model is asked to return. **Do not rename the field** — this is a
+    documentation note about why these three exist, not a request to
+    touch `ai-recipe-precision` (which is still under a deploy hold per
+    Roadmap item 16 regardless). If/when real EN/DE/FR/IT localization
+    work starts, this is the pointer to where the Swiss-specific framing
+    actually originates for these three, so it isn't mistaken for a
+    simple string edit.
 
 ## Retention Features Backlog
 
