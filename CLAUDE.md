@@ -380,48 +380,212 @@ clean redirect, not walking back a real feature. Decided with Harris
   neither (no real photos shot yet, no creator video curated yet) and
   should render correctly in that all-text state.
 
-## Supabase RLS status (as of this handover — verify current state, don't assume)
+## Supabase RLS status (re-audited 2026-08-15 against the live project — see full audit note below; don't assume this is still current without re-checking)
 
-All of the following were confirmed applied and tested with real policies
-(owner-scoped via `auth.uid()`), verified against `pg_policies` directly:
+**POLICY definitions below were freshly re-queried 2026-08-15 via
+`pg_policies` and are accurate as of that date.** Two things changed from
+the previous version of this section: `ai_precision_cache`'s "zero
+client-facing policies" claim was corrected earlier the same day (see
+Roadmap item 16), and this pass additionally found **table-level GRANTS
+that don't match policy intent on 3 more tables** (`ingredients`,
+`user_ledger_totals`, `recipes`) — see the audit note below the list. Policy
+definitions and grants are two independent things to check, not one — this
+project has now found mismatches between them four separate times
+(`api_usage_daily` 2026-08-11, `api_call_cost_log` 2026-08-13,
+`ai_precision_cache` 2026-08-15, and this same-day pass). Treat "RLS
+enabled" or "has a policy" as necessary, never sufficient — always check
+`information_schema.role_table_grants` too.
 
-- `user_profiles` — owner-only via `id = auth.uid()`
-- `user_meal_plans` — owner-only via `user_id = auth.uid()`
-- `shopping_list_items` — owner-only via `user_id = auth.uid()`
-- `waste_ledger_events` — owner-only via `user_id = auth.uid()` (pre-existing)
-- `user_ledger_totals` — owner read-only via `user_id = auth.uid()` (pre-existing)
-- `recipes` — owner-only for rows with a `user_id` set (personal AI-generated
-  recipes); public read for rows where `user_id IS NULL` (curated library
-  content, if/when that exists)
-- `ingredients` — public read-only catalog, no client writes
-- `ai_precision_cache` — RLS enabled, **zero client-facing policies at all**
-  (intentional — it's a server-only cache, only touched by edge functions
-  using the service role key, which bypasses RLS)
-- `api_call_cost_log` (added 2026-08-13) — RLS enabled, zero
-  `authenticated`/`anon` policies or grants, same pattern as
-  `ai_precision_cache`. **Important nuance confirmed live this session**:
-  `service_role`'s `bypassrls` attribute only skips RLS *policies* — it does
-  NOT grant table-level SQL privileges on its own. The initial migration
-  correctly locked out `authenticated`/`anon` but forgot to explicitly grant
-  `service_role` INSERT/SELECT, so the `ask-chef-harris` edge function's
-  writes silently failed for one round of live testing (5 real generations,
-  0 rows landed) before a follow-up migration
-  (`20260813130000_fix_api_call_cost_log_service_role_grants.sql`) fixed it.
-  Same root-cause class as the `api_usage_daily` grants bug from 2026-08-11
-  — worth explicitly checking `service_role` grants (not just
-  `authenticated`/`anon`) on any future service-role-only table, not just
-  assuming `bypassrls` implies full access.
+- `user_profiles` — owner-only via `id = auth.uid()`. Policy confirmed
+  correct. **Grants broader than the policy needs**: `anon` has full
+  SELECT/INSERT/UPDATE/DELETE, not just `authenticated`. Not currently
+  exploitable for cross-user access — the policy's `auth.uid() = id` check
+  still requires a real match, and `auth.uid()` is `NULL` for a caller with
+  no session, which never equals a real `id` — but it's a least-privilege
+  violation worth tightening (`anon` shouldn't need write access here at
+  all; this app's anonymous users are still `authenticated`-role sessions,
+  not bare `anon`).
+- `user_meal_plans` — owner-only via `user_id = auth.uid()`. Policy and
+  grants both confirmed correctly aligned — `anon` has no write grant here,
+  `authenticated` has exactly what its policies need. No issue.
+- `shopping_list_items` — owner-only via `user_id = auth.uid()`. Policy and
+  grants both confirmed correctly aligned, same as above. No issue.
+- `waste_ledger_events` — owner-only via `user_id = auth.uid()`
+  (pre-existing). Policy confirmed correct. Same grants-too-broad pattern
+  as `user_profiles`: `anon` has full CRUD grants it doesn't need. Same
+  "not currently exploitable, still worth tightening" caveat.
+- `user_ledger_totals` — policy confirmed **SELECT-only**, owner-scoped
+  (`user_id = auth.uid()`) — the "read-only" framing is correct for what
+  the policy allows. **Fixed 2026-08-15.** Had the same structural gap as
+  `ai_precision_cache`: `anon`/`authenticated` held table-level INSERT/
+  UPDATE/DELETE grants with zero policy covering those commands — inert,
+  but one accidentally-added permissive policy away from becoming live
+  writes. **Before revoking, checked what actually writes this table**:
+  `user_ledger_totals` is written exclusively by `increment_ledger_totals()`,
+  a trigger (`trg_increment_ledger_totals`, `AFTER INSERT` on
+  `waste_ledger_events`) — confirmed via `pg_get_functiondef` that it's
+  `SECURITY DEFINER`, owned by `postgres`, so it runs with elevated
+  privileges regardless of the invoking role and needs no direct grant
+  from `authenticated` at all. Real users only ever need (and keep) their
+  own owner-scoped access to `waste_ledger_events` — confirming this
+  before revoking mattered, since guessing wrong here would have silently
+  broken Waste Ledger writes for real users, the same class of mistake
+  this whole audit was started to catch. Ran, with explicit approval:
+  `revoke insert, update, delete on public.user_ledger_totals from anon, authenticated;`
+  — confirmed after: `anon`/`authenticated` now hold only REFERENCES/
+  SELECT/TRIGGER/TRUNCATE, `service_role` unaffected. Undo, if ever
+  needed: `grant insert, update, delete on public.user_ledger_totals to anon, authenticated;`
+- `recipes` — policies confirmed exactly as documented: owner-only
+  (`auth.uid() = user_id`) for SELECT/INSERT/UPDATE/DELETE, plus public
+  SELECT where `user_id IS NULL`. **But `authenticated` only holds a
+  SELECT grant on this table — no INSERT/UPDATE/DELETE grant at all.**
+  This means the owner-write policies are currently **unreachable** via the
+  Data API — a signed-in user cannot actually insert/update/delete their
+  own recipe row today, regardless of what the policy allows, because the
+  grant layer blocks it first. Confirmed via `grep` that no Dart code
+  anywhere references `.from('recipes')` — so nothing has ever hit this
+  wall and surfaced it as a bug; it's likely why the table has stayed
+  empty (see "Current architecture facts" above) rather than evidence the
+  feature was tried and worked. This table appears to be entirely
+  dead/unused client-side right now, not actively broken. **Not fixed —
+  left alone deliberately** (revoking further would be pointless when the
+  real gap is a missing grant, not an excess one) — see the new "Save if
+  you liked it" Roadmap item for the warning this blocks.
+- `ingredients` — SELECT-only policies confirmed (3 redundant ones, see
+  below), matching the "public read-only catalog" framing **for what RLS
+  actually allows**. **Fixed 2026-08-15**: `anon`/`authenticated` held full
+  INSERT/UPDATE/DELETE grants with zero policy permitting those commands —
+  the "no client writes" claim was only true by accident of the policy
+  layer. Confirmed via `grep` that nothing client-side writes to this
+  table (every reference is `.select()`) before revoking. Ran:
+  `revoke insert, update, delete on public.ingredients from anon, authenticated;`
+  (SELECT retained — the client reads this table constantly). Confirmed
+  after: `anon`/`authenticated` now hold only REFERENCES/SELECT/TRIGGER/
+  TRUNCATE. Undo, if ever needed:
+  `grant insert, update, delete on public.ingredients to anon, authenticated;`
+- `ai_precision_cache` — **fixed 2026-08-15.** Had RLS enabled with 0
+  policies (correctly deny-all) but `anon`/`authenticated` incorrectly held
+  full CRUD grants (see Roadmap item 16 for the full audit trail — the
+  earlier "zero client-facing policies at all... server-only" framing in
+  this doc was wrong, corrected there). Ran, with explicit approval:
+  `revoke select, insert, update, delete on public.ai_precision_cache from anon, authenticated;`
+  — re-queried `information_schema.role_table_grants` immediately after:
+  `anon`/`authenticated` now hold only REFERENCES/TRIGGER/TRUNCATE,
+  `service_role` retains full CRUD. Now matches `api_call_cost_log`'s
+  clean pattern exactly. Undo, if ever needed:
+  `grant select, insert, update, delete on public.ai_precision_cache to anon, authenticated;`
+- `api_call_cost_log` (added 2026-08-13) — re-confirmed clean 2026-08-15,
+  used as the control table while investigating the above: RLS enabled,
+  zero `authenticated`/`anon` policies, and — checked directly this
+  session — `anon`/`authenticated` correctly hold **no** SELECT/INSERT/
+  UPDATE/DELETE grants either (only harmless REFERENCES/TRIGGER/TRUNCATE).
+  Only `service_role` has real INSERT/SELECT, exactly as the 2026-08-13 fix
+  intended. **This is the one table where policies and grants are both
+  provably correct together** — useful as a reference for what "done
+  right" looks like when fixing the others. **Important nuance confirmed
+  live 2026-08-13**: `service_role`'s `bypassrls` attribute only skips RLS
+  *policies* — it does NOT grant table-level SQL privileges on its own.
+  The initial migration correctly locked out `authenticated`/`anon` but
+  forgot to explicitly grant `service_role` INSERT/SELECT, so the
+  `ask-chef-harris` edge function's writes silently failed for one round of
+  live testing (5 real generations, 0 rows landed) before a follow-up
+  migration (`20260813130000_fix_api_call_cost_log_service_role_grants.sql`)
+  fixed it.
 
 Note: there are duplicate/redundant policies on a few tables (both an old
 broad "ALL" policy and newer granular per-command policies covering the same
-thing) left over from iterative fixes. Harmless — permissive policies OR
-together — but worth cleaning up for hygiene when there's a lull.
+thing) left over from iterative fixes — **confirmed real 2026-08-15** via
+direct `pg_policies` query: `user_profiles` (3 duplicate pairs), `ingredients`
+(3 redundant SELECT policies), `shopping_list_items` and `user_meal_plans`
+(each has both a broad `ALL` policy and separate per-command policies
+covering the same ground). Harmless — permissive policies OR together — but
+worth cleaning up for hygiene when there's a lull.
 
 There is no `deals` table in the actual database — code has a speculative,
 gracefully-failing lookup for one (`paywall_screen.dart`-era code, see actual
 class names once verified in this repo) that falls back to inferring deals
 from `ingredients.badge`. Not a bug, just worth knowing so it isn't
 "discovered" again as a missing table.
+
+### Full RLS/grants verification audit — 2026-08-15
+
+Triggered by finding two wrong claims in this doc the same day (Weekly
+Planner's `RecentGenerationsService` coverage, and `ai_precision_cache`'s
+grants) — both had been written from assumption and never actually checked
+against the live project. Went through every claim in this doc about RLS,
+grants, policies, Data API exposure, auth, edge function config, and usage
+caps, and checked each one directly (`pg_policies`,
+`information_schema.role_table_grants`/`role_routine_grants`, actual edge
+function source, actual SDK source in the local pub cache) rather than
+trusting the existing text. Full row-count table + methodology lives in
+session notes; net result folded into the corrected sections above and into
+Roadmap item 16. Nothing was fixed as part of this audit — verification
+only, no `REVOKE`/`GRANT` run, no code changed.
+
+**VERIFIED (checked directly this session or a prior one with real, still
+re-confirmed evidence):**
+- `ask-chef-harris` has `verify_jwt = true` in `supabase/config.toml`,
+  matching the live deployed function config (`supabase functions list`).
+- `ai-recipe-precision` has `verify_jwt: false` (same source).
+- `ask-chef-harris`'s actual source (read directly, not assumed): no
+  client-facing API key, generic proxy forwarding `systemPrompt`/
+  `userMessage` unmodified, model whitelist enforced
+  (`['gpt-4o','gpt-4o-mini']`), `max_tokens: 1200`, decodes `user_id` from
+  the JWT `sub` claim trusting `verify_jwt`'s prior validation (documented
+  in the function's own code comment), writes `api_call_cost_log` via
+  `SUPABASE_SERVICE_ROLE_KEY`.
+- `api_usage_daily`: `authenticated` has SELECT/INSERT/UPDATE +
+  `EXECUTE` on `increment_api_usage`; `anon` has none of those — matches
+  the documented 2026-08-11 fix, re-confirmed live today.
+- `fridge_items`: policies and grants both confirmed correctly aligned,
+  `anon` correctly excluded.
+- `user_meal_plans`, `shopping_list_items`: policies and grants both
+  confirmed correctly aligned.
+- `recipes` table confirmed still empty (0 rows).
+- `EntitlementService.isPro()`: `if (kDebugMode) return true;` confirmed
+  at the top of the method, before any RevenueCat/mock check — matches the
+  documented debug-bypass design.
+- `UsageCapService.getUsageCount(...)`: confirmed `catch (e) { ...; return
+  0; }` — matches the documented fail-open design.
+- Duplicate/redundant policies claim — confirmed real (see above).
+- The general claim "RLS policies and table-level grants are two separate
+  Postgres mechanisms" (Roadmap item 11 follow-up) — confirmed true, and
+  this entire audit is built on that mechanic holding.
+
+**WRONG (found and corrected this session):**
+- `ai_precision_cache` — "zero client-facing policies at all... server-only"
+  undersold it: `anon`/`authenticated` hold full CRUD grants, currently
+  inert only because RLS has zero policies. Corrected in Roadmap item 16.
+- `ingredients` — "no client writes" was only true by accident of the
+  policy layer; the grants say otherwise. Corrected above.
+- `user_ledger_totals` — "owner read-only" undersold it the same way as
+  `ai_precision_cache`: correct for what the policy allows, silent about
+  inert-but-present write grants. Corrected above.
+- `recipes` — the policy description was accurate, but missing entirely:
+  that the write policies are unreachable today because `authenticated`
+  lacks the INSERT/UPDATE/DELETE grants the policies assume exist.
+  Corrected above.
+- Weekly Planner Deal Meal `RecentGenerationsService` coverage (found and
+  corrected same day, see Roadmap item 19's correction note) — not a
+  permissions claim, but flagged here too since it's the other wrong claim
+  that triggered this whole audit.
+
+**UNVERIFIED (still written as fact elsewhere in this doc, not re-checked
+this session — flagging rather than assuming either way):**
+- The original (2026-08-06 and earlier) claims that Storage bucket
+  policies, rate limiting on Edge Functions, and dev/prod project
+  separation are outstanding pre-launch items (Roadmap item 10) — not
+  re-checked, no reason to doubt them, just not independently confirmed
+  this session.
+- `ai-recipe-precision`'s own internal logic beyond what was read directly
+  in Roadmap item 16 (e.g. whether `OPENAI_API_KEY`/`SUPABASE_SERVICE_ROLE_KEY`
+  secrets are actually set correctly in that function's environment, vs.
+  just referenced in code) — code reads the env vars and throws if missing,
+  but whether they're actually configured wasn't independently checked.
+- Whether any Storage buckets exist yet with their own RLS-equivalent
+  policies — out of scope for this pass (no Storage usage found in the
+  code, consistent with "once profile photos/recipe images are added"
+  framing in Roadmap item 10, but not actively re-verified).
 
 ## Session summary — 2026-08-06 — READ THIS FIRST
 
@@ -1064,6 +1228,17 @@ complete and uses a standard, reliable Flutter API — high confidence.
     themselves still bypass correctly in debug builds (6 Fridge Clearer
     generations in one day, no upgrade prompt), and confirmed tracking now
     survives the bypass too.
+
+    **Recorded as a known, accepted risk — 2026-08-15, at Harris's explicit
+    instruction, not as a new finding.** A `kDebugMode` bypass on this
+    exact entitlement path has already silently broken usage tracking on
+    this project once (the "What this missed" paragraph above, same day it
+    shipped). The design itself is unchanged and still correct for what
+    it's for — but recording the precedent explicitly here means any
+    future change to `isPro()`, or anything else gated the same way, should
+    treat "does this interact badly with the debug bypass" as a real
+    question to ask, not something to discover live again. This is a
+    decision being kept, not a bug being reopened.
 13. **Recipe variety — BUILT 2026-08-13, follow-up fix same day after the
     first pass failed live-testing.** First pass: root cause found by
     reading the actual prompt-building code rather than assuming — neither
@@ -1165,32 +1340,611 @@ complete and uses a standard, reliable Flutter API — high confidence.
       step is re-running the same 5-in-a-row Fridge Clearer test Harris
       just ran and confirming both the console log and the actual dishes
       show real variety this time.
-14. **Investigate OpenAI prompt caching — added 2026-08-13, for a future
-    session, not urgent.** Real measured data from item 11's cost-log work:
-    one `ask-chef-harris` call logged 3344 prompt tokens against 627
-    completion tokens — input is roughly **5x** the completion size, so
-    input is the clear majority of per-call cost (at current pricing,
-    $2.50/1M input vs $10/1M output, this call's input alone cost more than
-    double its output despite being priced 4x cheaper per token: ~3344 ×
-    $2.50/1M ≈ $0.0084 input vs ~627 × $10/1M ≈ $0.0063 output). Much of
-    that ~3344-token input is very likely identical between calls — the
-    fixed system prompt (persona + curriculum core + difficulty rules,
-    already measured at ~1774 tokens in the Roadmap item 5 investigation)
-    doesn't change call to call. OpenAI's prompt caching automatically
-    discounts the **stable prefix** shared across consecutive requests, but
-    only if that stable content is placed at the very front of the prompt,
-    before anything request-specific — worth checking exactly how
-    `ChefService.askChefHarris` currently orders `systemPrompt` vs the
-    per-call curriculum addendum/user context (see Roadmap item 5:
-    "the curriculum addendum is injected into the user message, not the
-    system prompt" — so the ordering of the system message itself is the
-    main thing to verify/restructure) and whether restructuring so the
-    genuinely-fixed content sits first would let caching actually engage.
-    **Higher priority than streaming** (Roadmap item 5, step 3) — cheaper
-    to implement (a prompt-ordering change, not a transport-layer rework
-    touching every Supabase call) and it saves real money rather than
-    perceived latency. Not urgent enough for tonight's design-polish
-    session — next session that picks up cost/performance work.
+14. **OpenAI prompt caching — INVESTIGATED AND CLOSED 2026-08-15. Not open,
+    deprioritized — do not reopen unless generation volume grows by two
+    orders of magnitude.** Originally added 2026-08-13 on the hypothesis
+    that the system prompt might need reordering for caching to engage.
+    Investigated directly against the actual code (`chef_service.dart:486`)
+    rather than left as a hypothesis: **the system prompt is already a
+    clean, 1,774-token static prefix, byte-for-byte identical on every
+    call (`const systemPrompt = ...`), and already correctly positioned
+    first** in the `messages` array sent to OpenAI (`ask-chef-harris/index.ts`).
+    No restructuring is needed for that part — the original framing (that
+    the curriculum addendum being in the user message meant the system
+    message's own ordering needed fixing) was based on an inference that
+    didn't hold up once the actual code was read: the addendum was never
+    in the system message to begin with, so the boundary was already
+    clean. OpenAI's requirements (verified against current docs, not
+    memory): automatic for `gpt-4o`+, no code/parameter changes needed,
+    ~1,024-token minimum, 128-token increments, exact-prefix match, 50%
+    discount on cached input tokens — this prompt already clears the
+    minimum by a comfortable margin.
+    **Estimated saving, if the cache is actually hitting: ~$0.0022/call,
+    ~$2.22/month at 1,000 generations/month.** Real but small.
+    **Unverified, and not worth verifying at this volume**: nothing in
+    this codebase captures OpenAI's `prompt_tokens_details.cached_tokens`
+    field (checked `ask-chef-harris/index.ts`'s logging and
+    `api_call_cost_log`'s columns — grepped the whole repo for
+    `cached_tokens`, zero matches), so there's no way to confirm from
+    existing data whether caching is actually engaging today. Capturing
+    that field would be a small, additive logging change (not a prompt
+    change) that would answer this definitively — **explicitly not worth
+    doing at current volume**, per the dollar figures above. A secondary,
+    smaller opportunity was also found (the JSON schema block +
+    guidelines in each surface's own `_buildCookModePrompt`-equivalent are
+    textually static per surface but currently interleaved with per-call
+    values, so they can't benefit from caching as written) — **not
+    pursued, and explicitly not to be pursued without a deliberate
+    decision**: it would mean touching content across the 4 duplicated
+    schema blocks, which is exactly the kind of prompt change this
+    project has already seen have real, unintended quality effects (the
+    `'swiss'` cuisine bug, the `gpt-4o-mini` voice trial) — not neutral
+    reordering. **Closed as: correctly structured already, real but small
+    money on the table, not worth chasing further at current scale.**
+15. **Safety validator for Chef Harris output — added 2026-08-15. HIGH
+    PRIORITY, PRE-LAUNCH BLOCKER.** Right now there is no check of any kind
+    between OpenAI's raw output and what the user sees — `ChefService.askChefHarris`
+    (`lib/services/chef_service.dart`) returns the trimmed response text
+    straight through (only checked for non-emptiness), and every caller
+    consumes it directly. For a cooking app generating actual temperatures,
+    times, and storage/reheat instructions, a food-safety error reaching a
+    real user is a liability question, not just a quality one — a different
+    risk class from the voice/quality tuning in Roadmap item 5. The system
+    prompt already contains a short "CORE FOOD SAFETY (non-negotiable)"
+    block (danger zone, raw-protein handling, cooling times — see
+    `_curriculumCore` in `chef_service.dart`), but that's pre-generation
+    guidance only, never checked against what actually comes back.
+    Likely architecture: a deterministic rules layer for well-defined,
+    enumerable hazards, plus a model-review backstop call for cases the
+    rules layer can't anticipate. On a flag, prefer regeneration or
+    correction injection over an outright block — consistent with this
+    app's existing fail-forward pattern (`UsageCapService`'s fail-open
+    design, `askChefHarris`'s own internal error fallback strings) — a hard
+    block on a false positive would be a worse outcome than a corrected
+    recipe. **The actual hazard list is Harris's to supply** (professional
+    culinary knowledge) — do not invent or expand it unprompted.
+    **Shares an interception point with a future "teaching corpus
+    constraint layer"** (keeping AI-generated technique guidance consistent
+    with the curriculum drawers) — design the hook to serve both, not just
+    food safety.
+
+    **Where this would actually sit (found via a 2026-08-15 read-only
+    architecture pass, not yet scoped into an implementation plan):**
+    there is no existing single choke point. Four independent surfaces each
+    call `askChefHarris` and parse its raw string into a `CookModeRecipePayload`
+    (the typed recipe model, defined in `one_pan_cooking_roadmap_screen.dart`
+    despite the filename) via their **own separately duplicated**
+    `_parseCookModeRecipe` private method: `fridge_clearer_screen.dart`,
+    `custom_ai_recipe_creator_sheet.dart`, `fridge_countdown_sheet.dart`
+    (Use Tonight), and `weekly_planner_screen.dart` (Deal Meal fast path's
+    2nd call). Display after parsing also diverges by surface — some route
+    through the shared `GeneratedRecipeActionsSheet` widget (Fridge
+    Countdown; Home's Custom AI Craving entry point), some display inline
+    in their own screen/sheet (Fridge Clearer; Weekly Planner's Deal Meal
+    sheet), and some silently add straight to the weekly plan with **no**
+    review screen at all (Weekly Planner's Custom AI Craving and
+    fridge-picker entry points) — so a "show the corrected version" UX
+    doesn't have a consistent landing spot today. Building one real choke
+    point means: (a) extracting the 4 duplicated parsers into one shared
+    `parse` function (worthwhile cleanup on its own), (b) calling
+    validation immediately after that shared parse succeeds, before any of
+    the 4 surfaces branch into their different display/persist paths, (c)
+    deciding what regeneration means for the 2 surfaces that never show a
+    review screen today, and (d) deciding whether `_ChefSuggestionSheet`
+    (Home's free-text suggestion) and `_ChefSosSheet` (Cook Mode's SOS
+    chat, mid-cook — arguably the single highest safety-relevance surface,
+    since it's live troubleshooting) are in scope, since both return
+    unstructured prose (`forceJsonObject: false`), not a `CookModeRecipePayload`,
+    so the same field-level rules layer can't apply to them directly.
+    Also out of this chokepoint entirely: `AiRecipeService`/
+    `ai-recipe-precision`'s "precision cards" (heat spec, salt timing, etc.)
+    are a separate AI call with separate parsing — safety-adjacent content
+    that reaches the user through a different path, worth a scoping
+    decision alongside the above rather than assuming it's covered.
+    **Nothing awkward found on the streaming/caching/optimistic-UI front**:
+    `askChefHarris` isn't streamed today (see Roadmap item 5, step 3 —
+    still a future project) and nothing renders partial/unvalidated content
+    before a full response is parsed — `setState` only happens after
+    parsing succeeds. Do factor in, for whenever streaming ships: an
+    incremental UI would need to either buffer the full response behind
+    validation anyway or design the validator to work incrementally — not
+    a today problem, but a real one for that project once it starts.
+    Not yet scoped into a concrete implementation plan or started.
+
+    **Shared-parser refactor (prerequisite for this item) — device-tested
+    and ACCEPTED 2026-08-15.** `parseChefRecipeJson` (`chef_recipe_parser.dart`)
+    is live at all 4 call sites. Device-test breakdown, recorded honestly
+    rather than as a blanket "passed":
+    - **Fridge Clearer** — ran clean, console-verified: 2 generations, both
+      parsed, curriculum tags resolved, `WhatYouLearnedSheet` resolved 4
+      lessons, no exceptions.
+    - **Fridge Countdown** — not run. Blocked by the cold-start dead end
+      documented under Retention Features Backlog item 1 (no way to seed a
+      first fridge item without one already existing). Coverage substituted
+      by the unit test suite below plus a direct code-read confirming
+      `fridge_countdown_sheet.dart:183` passes `readDescription: false`.
+    - **Custom AI Recipe Creator, both entry points (Home + Weekly Planner)**
+      — ran, completed visually, recipe landed correctly in Weekly
+      Planner's Tuesday slot. Console wasn't attached (stale browser tab) —
+      **verified instead via `api_usage_daily`**: `custom_ai_recipe_creator`
+      showed count=2 for the test session, confirming both passes really
+      generated, independent of console visibility.
+    - **Weekly Planner Deal Meal** — not run, and not going to be: this
+      surface is being removed (see the new Deal Meal removal item below).
+    - **Malformed-response coverage (originally checklist item 9)** —
+      replaced by `test/services/chef_recipe_parser_test.dart`, 11/11
+      passing: valid JSON, non-JSON text, non-object JSON, empty steps,
+      missing ingredients/kitchen_gear/title, and both flags in both
+      states.
+    - **Cook Mode portion stepper (checklist item 7) — PARTLY VERIFIED,
+      not fully.** Not systematically exercised on every surface this
+      pass. Recorded honestly per Harris's instruction rather than rounded
+      up to "verified" — the earlier code trace (this same item, above)
+      showing the stepper gates on `structuredIngredients` and never on
+      `basePortions` keeps the risk assessed as low, but "low risk" is not
+      the same claim as "checked."
+    **Accepted on this basis** — the frozen files are unfrozen; further
+    work on them no longer needs to route back through this checklist.
+16. **`ai-recipe-precision` source is not in this repo and is currently
+    unauditable — added 2026-08-15. HIGH PRIORITY.** Confirmed live and
+    real (not dead code, not bypassed — see the 2026-08-15 generation-path
+    report): `AiRecipeService.getPrecisionData()` makes a genuine
+    `functions.invoke('ai-recipe-precision', ...)` call, and `supabase
+    functions list --project-ref xwugnhzlnfgmczkbbcbh` confirms it's
+    `ACTIVE`, `version: 2`, deployed. The problem is narrower than "does it
+    work" — its actual implementation cannot be read or diffed from this
+    codebase at all, unlike `ask-chef-harris` (checked into
+    `supabase/functions/ask-chef-harris/index.ts`). That means any
+    food-safety-relevant logic inside it (it returns heat specs, salt
+    timing, knife-cut specs — all safety-adjacent) is currently unreviewable,
+    and it sits **entirely outside** the safety-validator chokepoint
+    described in Roadmap item 15 (which only covers `askChefHarris`'s
+    `CookModeRecipePayload` output). **Confirmed available, not yet run**:
+    the Supabase CLI has a real `supabase functions download` subcommand
+    (`supabase functions download ai-recipe-precision --project-ref
+    xwugnhzlnfgmczkbbcbh --use-api`, run from the repo root) that should
+    pull it down to `supabase/functions/ai-recipe-precision/`, mirroring
+    the same relative-path convention already confirmed for `deploy` (see
+    "What this is" section, top of this doc). Needs no new
+    access — same already-linked, already-authenticated CLI used all
+    session. **Not yet run** — whether the download comes back as
+    readable original source or a bundled/minified blob is unknown until
+    someone actually does it; flagging that uncertainty rather than
+    assuming either way. **Also flagged, not fixed**: `ai-recipe-precision`
+    has `verify_jwt: false` while `ask-chef-harris` has `verify_jwt: true`
+    — an asymmetry in auth requirements between the app's two edge
+    functions, noticed while confirming the above via `functions list`.
+    Not investigated further — flagging as a possible cost/security
+    exposure (an unauthenticated function is callable by anyone with the
+    project's anon key, not just this app's real users) to confirm, not
+    asserting it's actually a problem yet.
+
+    **Source downloaded and read 2026-08-15 — findings below, source is now
+    in this repo but under a deploy hold.** Ran
+    `supabase functions download ai-recipe-precision --project-ref
+    xwugnhzlnfgmczkbbcbh --use-api` from the repo root; it now lives at
+    `supabase/functions/ai-recipe-precision/index.ts` +`deno.json`.
+    **Came back as clean, readable, hand-authored TypeScript** — not a
+    bundled/minified blob, comments intact (including one noting a prior
+    schema-alignment fix to `ai_precision_cache`'s columns). **Has NOT been
+    deployed from and must not be** — `supabase/functions/ai-recipe-precision/NOTE_DO_NOT_DEPLOY.md`
+    documents the hold until Harris reviews it.
+    - **What it returns**: `heatLevel`, `heatReason`, `knifeCutSpecMm`,
+      `saltTiming`, `acidBalanceNote`, `substituteSwiss`, `baseRatios` — all
+      cooking-technique guidance (heat/timing/ratios), **no explicit
+      food-safety framing at all**. Unlike `ask-chef-harris`'s system
+      prompt (which has a dedicated "CORE FOOD SAFETY" block — danger
+      zone, raw-protein handling, cooling times), this function's system
+      prompt only asks for technical culinary precision ("Be technical and
+      specific — temperatures, timings, physical cues, ratios. No generic
+      filler.") — no safety instruction, no hazard check, no validation of
+      any kind on the model's output before it's cached and returned. Its
+      `heatLevel`/`heatReason` fields are cooking-technique heat (e.g.
+      "medium-high" pan heat), not a food-safety internal-temperature
+      check — worth being precise about that distinction when scoping
+      Roadmap item 15, since this function is real safety-adjacent content
+      with materially less scrutiny on it than the main recipe path, not more.
+    - **Auth — confirmed real exposure, not just a `verify_jwt` label.**
+      The handler performs **no authentication check of its own** anywhere
+      in the code — no reading or validating an `Authorization` header at
+      all — and it initializes its Supabase client with the **service role
+      key** (full DB privileges) regardless of caller. Combined with
+      `verify_jwt: false` at the platform level, this means anyone with
+      the project's public anon key (necessarily embedded in the shipped
+      app, not a secret) can call this function directly — bypassing the
+      Flutter app, `EntitlementService`, and `UsageCapService` entirely —
+      and trigger either a cache read or a real billed OpenAI call, with
+      zero rate limiting or identity check server-side. This is a genuine
+      cost/abuse exposure, not a theoretical one: the client-side usage
+      caps this project relies on for cost control (see "Monetization"
+      section above) provide **no protection at all** against direct calls
+      to this specific function. Not fixed — report only, flagging
+      severity higher than the original "possible exposure to confirm"
+      framing now that the code itself has been read.
+
+    **Follow-up investigation, same day (2026-08-15) — service-role DB
+    access, cache-poisoning risk, client auth header, and least-privilege
+    question, all answered from code, no live exploit attempted:**
+    - **Every DB operation the service-role client makes** (all three
+      target `ai_precision_cache`, no other table): (1) `SELECT` filtered
+      by `cache_key` — a SHA-256 hash of `{ingredients (sorted), method,
+      protein, cutStyle}`, i.e. **entirely caller-controlled**, no
+      user/session component; (2) `UPDATE` of `hit_count`/`last_used_at`,
+      same caller-controlled `cache_key` filter; (3) `INSERT` on a cache
+      miss, writing that same `cache_key` plus whatever the LLM returned
+      (`JSON.parse(llmJson.choices[0].message.content)`, only a
+      compile-time TypeScript type annotation, **zero runtime validation**
+      of field types/content before it's written). **Also confirmed**: the
+      function's `PrecisionRequest` interface only reads `ingredients`,
+      `method`, `protein`, `cutStyle` from the request body — it silently
+      **ignores** every profile/safety field the Dart client actually
+      sends (`userSafetyContext`, `dietaryPreference`, `allergies`,
+      `profileSafetyHash`, `servings` — see `_buildPrecisionRequestBody` in
+      `ai_recipe_service.dart`). The client goes to the trouble of building
+      a dietary/allergy safety context and sending it; **the deployed
+      function never reads it.** Sharpens the earlier "no food-safety
+      framing" finding — it's not just that the prompt lacks a safety
+      instruction, the safety-relevant input path from the client is
+      wired to nothing server-side.
+    - **Cache poisoning — YES, structurally confirmed via code (not via an
+      actual live attack — none was attempted).** The cache key has no
+      per-user or per-session component, and reads are a plain
+      key-equality lookup — any two callers whose `{ingredients, method,
+      protein, cutStyle}` hash the same get the same cached row, full
+      stop. A caller cannot write arbitrary text directly (there's no raw
+      pass-through insert), but `ingredients`/`method`/`protein`/`cutStyle`
+      are free-form strings concatenated straight into the OpenAI user
+      prompt (`Ingredients: ${ingredients.join(', ')}\nMethod: ${method}...`),
+      a standard prompt-injection surface — and whatever the model returns
+      is cached with no validation. An unauthenticated caller can (a)
+      deliberately target a predictable, realistic ingredient/method
+      combination a real user is likely to request later, and (b) attempt
+      to steer the model's `heatLevel`/`heatReason`/`saltTiming`/etc. text
+      via injection in those fields. If that steering succeeds even
+      partially, the result is cached and **will** be served verbatim to
+      the next real user who happens to send the same combination —
+      there's no mechanism that could prevent it structurally. Whether a
+      given injection attempt succeeds against the model is inherently
+      variable; that the *pathway* exists with no barriers is not in
+      question.
+    - **Flutter client auth header — confirmed via the actual SDK source,
+      not assumption.** Traced the real call chain in the local pub cache
+      (`supabase-2.13.4/lib/src/supabase_client.dart` +
+      `auth_http_client.dart`, `functions_client-2.6.4/lib/src/functions_client.dart`):
+      `SupabaseClient.functions` is constructed with `httpClient:
+      _authHttpClient`, and `AuthHttpClient.send()` calls `_getAccessToken()`
+      — which returns `auth.currentSession?.accessToken` (**live**,
+      refreshing it first if expired) — and injects it as `Authorization:
+      Bearer <token>` on every outgoing request via `putIfAbsent` (only
+      applied if not already set, and nothing in this app sets a static
+      Authorization header, so it always applies). Since this app signs in
+      anonymously at startup, every real user always has a live, valid
+      session JWT attached to every `ai-recipe-precision` call already,
+      today, unconditionally — the same mechanism `ask-chef-harris`
+      (`verify_jwt: true`) already relies on and which works fine for this
+      anonymous-first app. **Flipping `verify_jwt: true` on
+      `ai-recipe-precision` would very likely not break real users** —
+      not flipped, per instruction; this is code-level evidence, not a
+      live test, and doesn't account for every edge case (e.g. a session
+      that failed to establish at all, which falls back to sending the
+      anon key itself — also a valid project JWT, so likely still accepted,
+      but genuinely untested).
+    - **Is the service-role key actually required? No — only the current
+      lack of RLS policies makes it required.** Per the existing RLS
+      section above, `ai_precision_cache` has **zero policies for
+      `authenticated`/`anon`** — that's the only reason this function
+      can't use the anon key today; its actual operations (3 simple
+      operations against 1 table, no cross-table access, no columns
+      suggesting per-user sensitivity — no `user_id` column at all) don't
+      inherently need service-role privilege. Switching to the anon key
+      plus a scoped RLS policy on just this table would reduce blast
+      radius (service role bypasses RLS on *every* table in the project;
+      anon key + a scoped policy would confine this function to the one
+      table it's supposed to touch) — but would NOT by itself fix the cost
+      exposure above, since that's about who can invoke the function at
+      all, not what it's allowed to do once invoked. Config/schema change,
+      not made — report only.
+
+    **RLS/grants audit, 2026-08-15 — real finding, not just confirmation.**
+    Queried the live project directly (`supabase db query --linked`, read
+    -only, no changes made): every one of the 11 `public`-schema tables
+    currently exposed via the Data API has **RLS enabled** — none exposed
+    with RLS disabled.
+
+    | table | RLS enabled | policy count |
+    |---|---|---|
+    | `ai_precision_cache` | true | 0 |
+    | `api_call_cost_log` | true | 0 |
+    | `api_usage_daily` | true | 3 |
+    | `fridge_items` | true | 4 |
+    | `ingredients` | true | 3 |
+    | `recipes` | true | 4 |
+    | `shopping_list_items` | true | 5 |
+    | `user_ledger_totals` | true | 1 |
+    | `user_meal_plans` | true | 5 |
+    | `user_profiles` | true | 6 |
+    | `waste_ledger_events` | true | 1 |
+
+    For `ai_precision_cache` specifically: **RLS enabled + 0 policies means
+    default-deny for every non-bypassing role** — confirms scenario (a),
+    not (b): the edge function's `service_role` key (which has
+    `BYPASSRLS`) is currently the only door, regardless of grants. **But
+    the grants themselves turned out to be wrong, and that's the real
+    finding.** Checked `information_schema.role_table_grants` directly:
+    `anon` and `authenticated` both have full **SELECT, INSERT, UPDATE,
+    DELETE** on `ai_precision_cache` — not just the harmless
+    REFERENCES/TRIGGER/TRUNCATE this table's documented design calls for
+    (contradicts this doc's own earlier claim of "zero policies or grants
+    for authenticated/anon" — that claim was wrong, now corrected here).
+    Checked `api_call_cost_log` (the other 0-policy table) as a control:
+    it's correct — `anon`/`authenticated` have only REFERENCES/TRIGGER/
+    TRUNCATE there, `service_role` has the real INSERT/SELECT, exactly as
+    documented and as the 2026-08-13 fix migration intended. So this is
+    specific to `ai_precision_cache`, not a systemic pattern across both
+    service-role-only tables — likely the same "inherited default
+    privileges, never explicitly revoked" root cause already documented
+    for the `api_usage_daily` grants bug (2026-08-11), just never caught
+    here because RLS happened to mask it.
+    **Practical risk today**: not exploitable via the Data API right now
+    — RLS's default-deny holds regardless of the stray grants. **Latent
+    risk**: RLS enabled is the *only* thing preventing it. If RLS were
+    ever disabled on this table by accident (a migration mistake, a
+    Dashboard misclick, anything) — with zero code change anywhere else —
+    `anon`/`authenticated` would immediately have full read/write on this
+    table via the Data API, no edge function or prompt injection needed,
+    exactly the more-direct poisoning path this was checked to rule out.
+    **Fixed 2026-08-15**, with explicit approval — see "Supabase RLS
+    status" section above for the exact command run and the confirmed
+    post-fix grants.
+
+    **Design warning — do not "fix" the discarded safety fields by just
+    reading them.** The client sends `userSafetyContext`, `allergies`, and
+    `dietaryPreference` to `ai-recipe-precision`, and the function discards
+    all of it (see above). That looks like a simple oversight to patch, but
+    it structurally isn't: the cache key is a content hash of
+    `{ingredients, method, protein, cutStyle}` with **no user component at
+    all**. If the function were changed to actually use allergy/diet
+    context without also changing the cache key, the *first* user who
+    triggers a generation for a given ingredient combination would get a
+    response personalized to their allergies — and that response would
+    then be cached and served to every *other* user who happens to request
+    the same ingredients, regardless of their own allergies. **This is
+    worst for `substituteSwiss`** specifically — the one field whose
+    entire purpose is allergy/diet-driven substitution — a cached
+    substitution chosen for one user's allergy could be served as neutral
+    "helpful" advice to a user with a different or no allergy. Any future
+    change making this function allergy-aware **must change the cache-key
+    derivation first** (e.g. fold a hash of the safety-relevant profile
+    fields into the key, same pattern `ChefService`'s
+    `_hashSafetyRelevantProfileFields` already uses client-side) — reading
+    the fields without that is not a partial fix, it's a new bug.
+
+    **`verify_jwt: true` — one more consequence to record before flipping
+    it, not a blocker, just don't be surprised by it.** `main()` wraps
+    `signInAnonymously()` in try/catch specifically so a failure there
+    never blocks app startup (see Auth section above) — meaning a user
+    whose anonymous sign-in failed has no session and therefore no real
+    JWT. Today, `ai-recipe-precision` still serves them fine (no
+    `verify_jwt` gate). After flipping it to `true`, those specific users
+    would lose precision cards — a feature that works for them today would
+    stop, silently from their side (no error UI exists for this
+    specifically). Acceptable and reversible from the Dashboard in
+    seconds, but worth having written down so it isn't a surprise
+    if/when someone asks "why did precision cards stop for some users."
+
+17. **Fridge Clearer fabricates a fallback recipe on parse failure instead
+    of showing "no recipe" — added 2026-08-15. Prerequisite for Roadmap
+    item 15.** Confirmed via the 2026-08-15 shared-parser report: of the 4
+    recipe-generating surfaces, 3 (Custom AI Recipe Creator, Fridge
+    Countdown, Weekly Planner's Deal Meal path) already show an error
+    message and no recipe when `_parseCookModeRecipe` returns null. Fridge
+    Clearer (`fridge_clearer_screen.dart:592-617`) is the outlier — on
+    null it silently constructs a hardcoded 2-step generic "recipe" and
+    displays that instead, meaning it structurally cannot represent "no
+    recipe to show" today. This blocks the safety validator's hard-fail
+    mode (Roadmap item 15) on this specific surface, since hard-fail
+    depends on being able to show nothing. **Turns out to be a small fix,
+    not new UI**: the screen already has `_generationError` (state
+    var) and `_InlineErrorCard` (already rendered at `:869-871`, already
+    wired to a retry callback) — used today for actual exceptions (the
+    outer catch block, `:694`) but never reached by the parse-failure
+    branch specifically, which currently never sets `_generationError` and
+    instead falls through to building the fallback recipe. Fixing this
+    means replacing the fallback-recipe construction with setting
+    `_generationError` and leaving `_generatedRecipe` null — reusing
+    existing, already-correct UI, not building anything new. Not started.
+18. ~~**Weekly Planner's Deal Meal path is hardcoded to 2 servings.**~~
+    **CLOSED BY REMOVAL, 2026-08-15 — not fixed, the surface it lived on no
+    longer exists.** See the Deal Meal removal entry after item 20 for the
+    full removal record. Original text kept below for history.
+
+    Added 2026-08-15. `_buildCookModePrompt`
+    (`weekly_planner_screen.dart:1539-1573`) hardcodes `'Scale realistic
+    quantities for 2 people.'` directly in the prompt text and never reads
+    `profile.householdServings` or asks the user for a size — unlike the
+    other 3 recipe-generating surfaces, which all take a real `portions`
+    parameter sourced from the household profile. Confirmed (2026-08-15)
+    this is why `_parseCookModeRecipe`'s `basePortions: structuredIngredients.isEmpty
+    ? null : 2` hardcodes `2` too — it's downstream of the prompt, not an
+    independent bug. Low urgency: doesn't crash or mislead silently (the
+    "2 people" assumption is at least consistent between prompt and
+    parser), just doesn't respect household size for this one fast path.
+19. ~~**Weekly Planner's Deal Meal path bypasses `UsageCapService` entirely.**~~
+    **CLOSED BY REMOVAL, 2026-08-15 — the cap gap is fully closed, not
+    patched.** Confirmed the same day, re-checking the full `askChefHarris`
+    call-site inventory after removal: the only uncapped call remaining
+    app-wide is Cook Mode's SOS chat, which is uncapped **by design**
+    (Harris's own 2026-08-10 decision — SOS stays free-forever as part of
+    Cook Mode). No part of this cap gap survives anywhere else. Original
+    text kept below for history.
+
+    Added 2026-08-15. Confirmed via a
+    full app-wide grep for `UsageCapService.instance.increment` (2026-08-15,
+    during the shared-parser refactor session): there are exactly 4 call
+    sites — `fridge_clearer_screen.dart:455`, `custom_ai_recipe_creator_sheet.dart:156`,
+    `fridge_countdown_sheet.dart:165`, `home_dashboard_screen.dart:1288` —
+    and **zero** in `weekly_planner_screen.dart`. Deal Meal generation
+    (`_DealMealSuggestionSheetState`) makes **two** real `askChefHarris`
+    calls per generation (dish selection, then Cook Mode steps for that
+    dish — see Roadmap item 18) and neither one increments any cap. This
+    is a real, live paywall/cost hole, not a hypothetical: a free user can
+    generate unlimited Deal Meals, at two full OpenAI calls each, with zero
+    usage tracking and no cap ever triggering. Not fixed — report only.
+    Fix shape not yet designed; at minimum needs a `UsageFeature` decision
+    (its own bucket, or share `fridgeClearerGeneration` like Fridge
+    Countdown does) before wiring `increment(...)` calls in analogous to
+    the other 4 surfaces.
+
+    **Correction, same day**: an earlier draft of this session's report
+    also claimed Deal Meal bypasses `RecentGenerationsService` (the
+    recipe-variety fix, Roadmap item 13). **That claim was wrong and was
+    corrected before being added here** — verified directly against
+    `weekly_planner_screen.dart:1637-1662`: the dish-selection call (the
+    only one of the two calls where variety actually matters — the second
+    just builds steps for whatever dish the first already picked) both
+    reads `recentDishTitles` (merging `RecentGenerationsService.instance.recent()`
+    with cook history, same pattern as the other 3 surfaces) and calls
+    `RecentGenerationsService.instance.record(parsed.title)` afterward.
+    Deal Meal's variety coverage is actually correct and complete. Noting
+    the correction here, not just in conversation, so this doesn't get
+    "rediscovered" as a bug later from a stale summary. The one genuine
+    `RecentGenerationsService` gap remains what Roadmap item 13 already
+    documents: Fridge Countdown's "Use Tonight" neither reads nor writes
+    it at all (separate from this item, already tracked, priority already
+    raised 2026-08-15 under Retention Features Backlog item 1).
+
+    **Recorded as a risk, not a neutral description — 2026-08-15, at
+    Harris's explicit instruction.** `UsageCapService`'s cap-check fails
+    open (`getUsageCount`/its wrappers `catch` any error and `return 0`,
+    meaning a throw during the check is treated as "under the cap" and the
+    generation proceeds — see `usage_cap_service.dart`). Fail-open is the
+    right call for a feature flag; **it is the wrong default for a spend
+    limit**, and combined with two other holes, there are currently
+    **three separate ways past the cap**, not one:
+    1. The fail-open catch itself — any transient error during the check
+       (not the increment, the *check*) silently lets the generation
+       through uncapped.
+    2. Deal Meal's total bypass, documented above in this same item — the
+       cap is never even consulted for that surface.
+    3. The entire mechanism is client-side. `UsageCapService`'s check and
+       `EntitlementService.isPro()`'s gate both run in the Flutter app —
+       there is no server-side enforcement anywhere. A modified client, or
+       any direct call to `ask-chef-harris`/`ai-recipe-precision` outside
+       the app entirely (see Roadmap item 16's auth findings — the latter
+       has no auth check of its own at all), bypasses all three of the
+       above simultaneously, by construction, not as an edge case.
+    None of these three are fixed. Recording them together because they
+    compound — a single fix to any one of them still leaves the other two
+    fully open. **Update 2026-08-15**: hole #2 (Deal Meal's total bypass)
+    is closed by removal, per this item's header above. Holes #1
+    (fail-open catch) and #3 (client-side-only enforcement) are general
+    architecture facts, not tied to Deal Meal — they remain fully open for
+    every surface that still exists.
+20. **"Save if you liked it" — save custom creations plus feedback — added
+    2026-08-15. Not started.** A real planned feature that never made it
+    into this doc until now (surfaced when Harris referenced it by a
+    roadmap number that had drifted from what's actually here — see the
+    working-convention note below). Lets a user save a generated recipe
+    they liked, plus feedback on it. No design/scope beyond that one-line
+    description exists yet — not scoped into surfaces, data shape, or UI.
+
+    **Blocker, discovered before this item existed on paper**: this
+    feature will need to write to the `recipes` table, whose owner-write
+    RLS policies are already correct (`auth.uid() = user_id` on INSERT/
+    UPDATE/DELETE, confirmed via `pg_policies` — see "Supabase RLS status"
+    above) but **currently unreachable**: `authenticated` is missing the
+    INSERT/UPDATE/DELETE grants those policies assume exist — only a
+    SELECT grant is present. Whoever builds this feature will write
+    correct-looking policies (they already exist!) and watch every save
+    silently fail via the Data API, because the actual blocker is one
+    level up, at the grant layer, not the policy layer. Confirmed via grep
+    that nothing client-side touches `.from('recipes')` today, so this
+    table is genuinely dead/unused right now, not actively broken — but it
+    will need exactly this fix as a prerequisite the moment this item
+    starts: `grant insert, update, delete on public.recipes to authenticated;`
+    (not run — this item hasn't started).
+21. **Post-cook finish flow — UX gap, two halves, added 2026-08-15 from
+    live device testing.** (1) After the Waste Ledger celebration → What
+    You Learned → share card sequence finishes, the app sits idle on the
+    finish screen doing nothing — it should return to Home once the share
+    card is dismissed. (2) Separately: if the user skips or misses the
+    share card, that card is lost the moment the sheet closes — it should
+    be saved somewhere for a while so they can share it later (after
+    eating, for example) instead of only existing in that one moment.
+    Product decision, not designed or implemented here.
+22. **Custom AI Craving via Weekly Planner writes silently, no
+    confirmation — open product question, added 2026-08-15.** The
+    generated recipe lands directly in the day slot; the user never sees
+    or approves the title before it's placed. **Linked to Roadmap item
+    15**: this is the same silent-write path already flagged there as
+    having nowhere to display a corrected recipe if the safety validator
+    ever flags one and wants to show a regenerated/corrected version
+    instead of just blocking. Whether to add a confirmation step is
+    Harris's call — not designed or implemented here.
+23. **Custom AI Craving sheet's prompt-guidance copy needs a rewrite —
+    added 2026-08-15.** The title copy ("Type a dish, craving, or diet —
+    I'll generate a precise Cook Mode recipe"), the placeholder example
+    text, and the four quick-pick chips all read awkwardly, and the promise
+    the copy makes ("precise") isn't one Harris is sure he agrees with.
+    Flagged as copy to rewrite — not rewritten here.
+24. **"Custom AI Craving" as a feature name reads awkwardly — naming
+    question, added 2026-08-15.** Not a task, not designed or resolved
+    here — Harris's call on a replacement name, if any.
+25. **Weekly Planner's "Supermarket Discount Meal" (Deal Meal) — REMOVED
+    2026-08-15, product decision.** Assumed local supermarket discount
+    data, which doesn't generalize to a European or global launch without
+    far more machinery than it was worth. The `deals` table it tried first
+    never existed (confirmed earlier this session and in prior sessions);
+    its only real data source was a fallback query against the shared
+    `ingredients` table's `badge` column — no dedicated schema, so nothing
+    is orphaned at the database level.
+
+    **Removed**: `_DealMealSuggestionSheet` + `_DealMealSuggestionSheetState`
+    (`weekly_planner_screen.dart`, was `:1443-1857`, ~415 lines — dish
+    selection, Cook Mode step generation, and the sheet's own UI, all in
+    one self-contained block), `_showDiscountMealFromDealsForDay()` (was
+    `:829-859`), the `onDiscountMeal` callback wiring in `_showAddMealSheet()`,
+    the "Supermarket Discount Meal" tile in `_AddMealOptionsSheet` (trimmed
+    from 3 options to 2, the class itself kept), `ChefRecipeSurface.weeklyPlannerDealMeal`
+    (`chef_recipe_parser.dart`), and `_AisleExt.fromLabel` (a small
+    aisle-name-parsing helper that existed only to support this feature's
+    JSON parsing — found as a second-order dead-code effect while removing
+    the rest, not on the original approved list, but genuinely unreachable
+    the moment its only caller was gone). Also removed 5 now-unused imports
+    from `weekly_planner_screen.dart` (`chef_recipe_parser.dart`,
+    `chef_service.dart`, `cook_session_storage_service.dart`,
+    `recent_generations_service.dart`, `state/user_profile_controller.dart`)
+    — verified via grep that nothing else in the file used any of them.
+    Fixed the two stale doc comments that referenced this feature
+    (`chef_recipe_parser.dart`'s class doc, `recent_generations_service.dart`'s
+    class doc).
+
+    **Explicitly kept, confirmed shared with the surfaces that remain**:
+    `_AisleItem`, `_Aisle`, `_mergeAisleItems`, `_aisleItemsFromIngredients`,
+    `_inferAisle`, `_upsertShoppingListItemsForMeal`, `_PlannedMeal`, the
+    `ingredients` table and its `badge` column, `chef_service.dart`'s
+    persona copy ("budget-friendly meals") and allergy-substitution
+    guidance ("supermarket tier"), `theme.dart`'s tagline ("Time & Budget
+    Kitchen Engine") — all confirmed used elsewhere or app-wide, despite
+    surface-level keyword overlap with "deal"/"discount"/"budget".
+
+    **Persisted data — no data migration, by explicit decision.** Old
+    `user_meal_plans` rows with `source = 'Supermarket Discount Meal'`
+    still render, still open in Cook Mode, still mark as cooked — `source`
+    was confirmed (via full-file grep before removal) to be used only as
+    display text, never branched on. **Known cosmetic residual, logged and
+    accepted, not fixed**: those old slots' caption will keep reading
+    "Supermarket Discount Meal" indefinitely, naming a feature that no
+    longer exists to generate new ones. Explicitly fine per Harris — those
+    rows are his own test data, no real users yet.
+
+    **Closes Roadmap items 18 and 19 completely** — see their headers
+    above. `flutter analyze`: **61 issues, down from the 65 baseline** (4
+    fewer `unnecessary_type_check` warnings that lived inside the deleted
+    JSON-parsing code went with it) — zero new issues introduced.
+    `test/services/chef_recipe_parser_test.dart`: never referenced the
+    deleted enum value, so no edit was needed there; re-ran anyway,
+    11/11 still passing.
 
 ## Retention Features Backlog
 
@@ -1230,6 +1984,45 @@ below) — not just "not started yet," but a decision Harris hasn't made.
    against the live Supabase project this session — not yet clicked
    through by Harris.**
 
+   **Priority raised 2026-08-15**: completing live testing of this feature
+   is now higher priority — do it sooner rather than whenever there's a
+   lull. Also raised: "Use Tonight"'s recipe-variety gap (flagged, not
+   fixed, in Roadmap item 13 — it shares Fridge Clearer's weekly cap and
+   generates via `askChefHarris` directly but was never wired into the
+   `RecentGenerationsService`/`recentDishTitles` variety fix built that
+   session). Fix that alongside the live-testing pass, not as a separate
+   later task.
+
+   **Cold-start dead end — found 2026-08-15 during live device testing, not
+   a hypothesis.** Grepped every call site of `FridgeCountdownService.addItem`
+   and every `.insert()` into `fridge_items`: there is exactly **one**,
+   inside `_AddFridgeItemSheetState._save()` — and that form is itself only
+   reachable from inside `FridgeCountdownSheet`, which (confirmed the same
+   day — only one entry point exists, the Home chip) only opens when
+   `_expiringSoonCount > 0`. **A user with zero fridge items, or only fresh
+   ones, can never open the sheet, and therefore can never reach the only
+   form that creates a fridge item at all — a genuine chicken-and-egg dead
+   end, not an edge case.** This is exactly why live-testing this feature
+   couldn't be done this session — Harris hit it directly trying to seed a
+   first item. Real fix shape, not yet designed: the Home entry point (or
+   some entry point) needs to be reachable regardless of whether any item
+   is currently expiring — e.g. a persistent (if lower-key) "Fridge" entry
+   on Home rather than one gated entirely behind the urgency chip. Not
+   fixed — flagging so it's understood as a structural gap, not just
+   "not yet clicked through."
+
+   **Product question, not a bug — do not resolve unilaterally, added
+   2026-08-15.** Once inside the sheet, "Use Tonight" is enabled on every
+   item regardless of freshness (confirmed by reading `_FridgeItemRow`:
+   the button is only disabled while that item's own generation is
+   in-flight, never gated on `isExpiringSoon`). The feature's entire
+   framing is urgency ("use it tonight before it spoils") — an ungated
+   action lets it be used on an item with three weeks of shelf life left,
+   which undercuts that framing. Whether that's actually wrong (vs. just a
+   convenience — urgency-framed language on a fresh item isn't harmful,
+   just odd) is Harris's call, not a judgment to make here. Logged for a
+   future decision, not queued as work.
+
 2. **Confidence Climb — BUILT 2026-08-11.** Confirmed first that the
    kitchen-confidence prompt fix (difficulty rules reaching the AI) is
    still solid — verified directly in `chef_service.dart` while adding the
@@ -1263,6 +2056,10 @@ below) — not just "not started yet," but a decision Harris hasn't made.
    not yet clicked through by Harris** (would need 3+ real cook-history
    entries with matched techniques in the current month to see the
    celebration line, or 5+ to see the tier-up offer).
+
+   **Priority raised 2026-08-15**: completing live testing of this feature
+   is now higher priority — do it sooner rather than whenever there's a
+   lull, same reasoning as Fridge Countdown above.
 
 3. **Sunday Reset — still on hold, decision explicitly deferred by Harris
    2026-08-11.** Originally gated on "recipe generation speed confirmed
@@ -1476,6 +2273,12 @@ exactly what caught both of these. No `claude-in-chrome` available on
 
 ### Next session starts here
 
+**Priority lowered 2026-08-15**: this batch is mechanical, pre-approved,
+and still worth doing, but it's no longer next up — the safety validator
+(Roadmap item 15) and finishing live-testing on Fridge Countdown/Confidence
+Climb (Retention Features Backlog items 1-2) take priority now. Revisit
+once those land.
+
 - **The 18-site `backgroundColor` batch fix above is pre-approved and ready
   to run** — purely mechanical, no proposal needed, just do it (verify with
   `flutter analyze` after, same as any other session).
@@ -1551,8 +2354,20 @@ one-line ternary pattern already used correctly elsewhere in this codebase
 — `'${count} noun${count == 1 ? '' : 's'}'`. Purely mechanical, pre-approved,
 not yet applied.
 
+**Priority lowered 2026-08-15**: still mechanical and pre-approved, but no
+longer next up — see the same note under Design Polish Backlog's "Next
+session starts here" above (superseded by the safety validator and
+Fridge Countdown/Confidence Climb live-testing).
+
 ## Working conventions
 
+- **CLAUDE.md is authoritative for Roadmap item numbering — added
+  2026-08-15.** If Harris refers to a Roadmap (or Retention Features
+  Backlog, or Design Polish Backlog) item by number and it doesn't match
+  what's actually at that number in this doc, **stop and ask** — don't
+  guess which item was meant, and don't silently attach findings to the
+  nearest-sounding item. Harris's own working list can drift from this
+  doc; this doc is the one that's checked against the live project.
 - **Locate code by content/class name, not filename**, until you've confirmed
   the export gave files their correct real names (see top of this doc).
 - When a fix touches a Supabase Edge Function, give exact code plus explicit
