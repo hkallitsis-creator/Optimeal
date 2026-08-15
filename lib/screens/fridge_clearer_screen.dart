@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -7,8 +6,8 @@ import 'package:provider/provider.dart';
 
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/models/technique_lesson.dart' as models;
-import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/services/ai_recipe_service.dart';
+import 'package:optimeal/services/chef_recipe_parser.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
@@ -225,111 +224,6 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       '- Heat should be one of the allowed values (default "medium").',
       '- Each ingredient must be a structured object with a numeric "amount" and a "unit", realistically scaled for $portions people — do not reuse the same quantity regardless of how many people are being served. Use "piece", "clove", or "slice" as the unit for whole/countable items instead of inventing a weight.',
     ].join('\n');
-  }
-
-  String _extractJsonObject(String raw) {
-    final t = raw.trim();
-    final start = t.indexOf('{');
-    final end = t.lastIndexOf('}');
-    if (start == -1 || end == -1 || end <= start) return t;
-    return t.substring(start, end + 1);
-  }
-
-  String _formatIngredientAmount(double amount) {
-    if (amount == amount.roundToDouble()) return amount.toInt().toString();
-    return amount.toStringAsFixed(1);
-  }
-
-  CookModeRecipePayload? _parseCookModeRecipe(String raw, {required int portions}) {
-    try {
-      final decoded = jsonDecode(_extractJsonObject(raw));
-      if (decoded is! Map<String, dynamic>) return null;
-
-      final curriculumLessonIds = _readCurriculumLessonIds(decoded['curriculum_lesson_ids']);
-
-      final title = (decoded['title'] ?? '').toString().trim();
-      final description = (decoded['description'] ?? '').toString().trim();
-
-      final ingredients = <String>[];
-      final structuredIngredients = <RecipeIngredient>[];
-      final ingRaw = decoded['ingredients'];
-      if (ingRaw is List) {
-        for (final e in ingRaw) {
-          if (e is Map) {
-            final m = Map<String, dynamic>.from(e);
-            final name = (m['name'] ?? '').toString().trim();
-            if (name.isEmpty) continue;
-            final amount = (m['amount'] is num)
-                ? (m['amount'] as num).toDouble()
-                : double.tryParse('${m['amount'] ?? ''}'.trim()) ?? 0;
-            final unit = (m['unit'] ?? '').toString().trim();
-            structuredIngredients.add(RecipeIngredient(name: name, amount: amount, unit: unit.isEmpty ? 'piece' : unit));
-            final formatted = amount > 0 ? '${_formatIngredientAmount(amount)}${unit.isEmpty ? '' : ' $unit'} $name'.trim() : name;
-            ingredients.add(formatted);
-          } else {
-            // Back-compat: some cached/older responses may still be plain strings.
-            final s = e.toString().trim();
-            if (s.isNotEmpty) ingredients.add(s);
-          }
-        }
-      }
-
-      final gear = <String>[];
-      final gearRaw = decoded['kitchen_gear'];
-      if (gearRaw is List) {
-        for (final e in gearRaw) {
-          final s = e.toString().trim();
-          if (s.isNotEmpty) gear.add(s);
-        }
-      }
-
-      final steps = <CookModeStepPayload>[];
-      final stepsRaw = decoded['steps'];
-      if (stepsRaw is List) {
-        for (final s in stepsRaw) {
-          if (s is! Map) continue;
-          final stepTitle = (s['title'] ?? '').toString().trim();
-          if (stepTitle.isEmpty) continue;
-          final duration = int.tryParse('${s['duration_minutes'] ?? ''}'.trim()) ?? 0;
-          final heat = (s['heat'] ?? 'medium').toString().trim();
-          final bullets = <String>[];
-          final bulletsRaw = s['bullets'];
-          if (bulletsRaw is List) {
-            for (final b in bulletsRaw) {
-              final blt = b.toString().trim();
-              if (blt.isNotEmpty) bullets.add(blt);
-            }
-          }
-          if (bullets.isEmpty) bullets.add('Keep going and taste as you go.');
-          steps.add(CookModeStepPayload(title: stepTitle, heat: heat, durationMinutes: duration, bullets: bullets));
-        }
-      }
-
-      if (steps.isEmpty) return null;
-      return CookModeRecipePayload(
-        title: title.isEmpty ? 'Fridge Clearer Recipe' : title,
-        description: description.isEmpty ? null : description,
-        ingredients: ingredients,
-        steps: steps,
-        kitchenGear: gear,
-        structuredIngredients: structuredIngredients.isEmpty ? null : structuredIngredients,
-        basePortions: portions,
-        curriculumLessonIds: curriculumLessonIds,
-      );
-    } catch (e) {
-      debugPrint('FridgeClearer: failed to parse cook-mode JSON: $e');
-      return null;
-    }
-  }
-
-  List<String> _readCurriculumLessonIds(dynamic raw) {
-    if (raw is! List) return const [];
-    final out = <String>[];
-    for (final e in raw) {
-      final s = e.toString().trim();
-      if (s.isNotEmpty) out.add(s);
-    }
-    return out;
   }
 
   _RecipeIdea _buildCookModeIdeaFromCurrentInputs() {
@@ -589,31 +483,21 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       final reply = await replyFuture;
       if (!mounted) return;
 
-      var recipe = _parseCookModeRecipe(reply, portions: portions);
+      var recipe = await parseChefRecipeJson(
+        raw: reply,
+        portions: portions,
+        fallbackTitle: 'Fridge Clearer Recipe',
+        surface: ChefRecipeSurface.fridgeClearer,
+        useGenericFallbacks: false,
+        readDescription: true,
+      );
       if (recipe == null) {
         debugPrint('FridgeClearer: cook-mode generation returned invalid JSON. Raw: $reply');
-        recipe = CookModeRecipePayload(
-          title: idea.title,
-          description: null,
-          ingredients: ingredients,
-          kitchenGear: const ['1 Pan or Pot', 'Knife', 'Spoon/Spatula'],
-          basePortions: portions,
-          curriculumLessonIds: null,
-          steps: const [
-            CookModeStepPayload(
-              title: 'Prep + combine',
-              heat: 'medium',
-              durationMinutes: 5,
-              bullets: ['Chop what needs chopping. Combine your perishables with pantry staples.'],
-            ),
-            CookModeStepPayload(
-              title: 'Cook through',
-              heat: 'medium_high',
-              durationMinutes: 10,
-              bullets: ['Cook until hot and safe to eat. Taste, then adjust salt + acid at the end.'],
-            ),
-          ],
-        );
+        if (!mounted) return;
+        setState(() {
+          _generationError = 'Couldn\'t generate a recipe right now. Please try again.';
+        });
+        return;
       }
 
       final matchedCurriculumKeys = _chefService.matchedCurriculumDrawerKeys(_buildCurriculumSearchText(recipe));
