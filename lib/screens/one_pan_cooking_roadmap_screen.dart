@@ -854,6 +854,19 @@ child: WasteLedgerCelebrationSheet(
               ? _CookModeBottomBar(
                   onSosPressed: () => _postFrame(_openSos),
                   onFinishPressed: () {
+                    // Once the post-cook sequence has already run (or been
+                    // attempted — the guard fires before the Waste Ledger
+                    // write, not after it succeeds), _logCookSessionCompletion
+                    // can never run again. Most of the time that's moot,
+                    // since the sequence now navigates Home on its own once
+                    // it resolves — but if it was interrupted by a thrown
+                    // error partway through (see CLAUDE.md Roadmap item 21),
+                    // this button is the only way out, and it must actually
+                    // go somewhere rather than repeat a snackbar forever.
+                    if (_ledgerSessionLogged) {
+                      context.go(AppRoutes.home);
+                      return;
+                    }
                     _postFrame(() {
                       if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
