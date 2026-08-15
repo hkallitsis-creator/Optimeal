@@ -2,3 +2,8 @@
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/ask-chef-harris/index.ts"
+
+[functions.ai-recipe-precision]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/ai-recipe-precision/index.ts"
