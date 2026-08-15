@@ -1,6 +1,7 @@
 /// In-memory, app-session-lifetime record of dish titles generated across
 /// AI recipe surfaces (Fridge Clearer, home dashboard's Chef Harris
-/// Suggestion, Weekly Planner's Deal Meal, Custom AI Recipe Creator).
+/// Suggestion, Custom AI Recipe Creator). Weekly Planner's Deal Meal path
+/// used this too until its removal (CLAUDE.md Roadmap items 18/19).
 ///
 /// Deliberately separate from [CookSessionStorageService]'s persisted
 /// cook history: that service only records a dish once the user actually
