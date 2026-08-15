@@ -1,19 +1,19 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/screens/fridge_clearer_screen.dart' show kFridgeClearerFreeWeeklyLimit;
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/chef_recipe_parser.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/fridge_countdown_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
+import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/generated_recipe_actions_sheet.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
@@ -62,6 +62,7 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => const SafeArea(child: _AddFridgeItemSheet()),
     );
     if (added == true) await _load();
@@ -91,95 +92,6 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
       }
     }
     return b.toString();
-  }
-
-  String _extractJsonObject(String raw) {
-    final t = raw.trim();
-    final start = t.indexOf('{');
-    final end = t.lastIndexOf('}');
-    if (start == -1 || end == -1 || end <= start) return t;
-    return t.substring(start, end + 1);
-  }
-
-  String _formatIngredientAmount(double amount) {
-    if (amount == amount.roundToDouble()) return amount.toInt().toString();
-    return amount.toStringAsFixed(1);
-  }
-
-  CookModeRecipePayload? _parseCookModeRecipe(String raw, {required int portions}) {
-    try {
-      final decoded = jsonDecode(_extractJsonObject(raw));
-      if (decoded is! Map<String, dynamic>) return null;
-
-      final title = (decoded['title'] ?? '').toString().trim();
-
-      final ingredients = <String>[];
-      final structuredIngredients = <RecipeIngredient>[];
-      final ingRaw = decoded['ingredients'];
-      if (ingRaw is List) {
-        for (final e in ingRaw) {
-          if (e is Map) {
-            final m = Map<String, dynamic>.from(e);
-            final name = (m['name'] ?? '').toString().trim();
-            if (name.isEmpty) continue;
-            final amount = (m['amount'] is num)
-                ? (m['amount'] as num).toDouble()
-                : double.tryParse('${m['amount'] ?? ''}'.trim()) ?? 0;
-            final unit = (m['unit'] ?? '').toString().trim();
-            structuredIngredients.add(RecipeIngredient(name: name, amount: amount, unit: unit.isEmpty ? 'piece' : unit));
-            final formatted = amount > 0 ? '${_formatIngredientAmount(amount)}${unit.isEmpty ? '' : ' $unit'} $name'.trim() : name;
-            ingredients.add(formatted);
-          } else {
-            final s = e.toString().trim();
-            if (s.isNotEmpty) ingredients.add(s);
-          }
-        }
-      }
-
-      final gear = <String>[];
-      final gearRaw = decoded['kitchen_gear'];
-      if (gearRaw is List) {
-        for (final e in gearRaw) {
-          final s = e.toString().trim();
-          if (s.isNotEmpty) gear.add(s);
-        }
-      }
-
-      final steps = <CookModeStepPayload>[];
-      final stepsRaw = decoded['steps'];
-      if (stepsRaw is List) {
-        for (final s in stepsRaw) {
-          if (s is! Map) continue;
-          final stepTitle = (s['title'] ?? '').toString().trim();
-          if (stepTitle.isEmpty) continue;
-          final duration = int.tryParse('${s['duration_minutes'] ?? ''}'.trim()) ?? 0;
-          final heat = (s['heat'] ?? 'medium').toString().trim();
-          final bullets = <String>[];
-          final bulletsRaw = s['bullets'];
-          if (bulletsRaw is List) {
-            for (final b in bulletsRaw) {
-              final blt = b.toString().trim();
-              if (blt.isNotEmpty) bullets.add(blt);
-            }
-          }
-          if (bullets.isEmpty) bullets.add('Keep going and taste as you go.');
-          steps.add(CookModeStepPayload(title: stepTitle, heat: heat, durationMinutes: duration, bullets: bullets));
-        }
-      }
-
-      if (steps.isEmpty) return null;
-      return CookModeRecipePayload(
-        title: title.isEmpty ? 'Use it tonight' : title,
-        ingredients: ingredients.isEmpty ? const ['Salt', 'Pepper', 'Cooking oil'] : ingredients,
-        steps: steps,
-        kitchenGear: gear.isEmpty ? const ['1 Pan or Pot', 'Knife', 'Spoon/Spatula'] : gear,
-        structuredIngredients: structuredIngredients.isEmpty ? null : structuredIngredients,
-        basePortions: portions,
-      );
-    } catch (e) {
-      debugPrint('FridgeCountdownSheet: failed to parse cook-mode JSON: $e');
-      return null;
-    }
   }
 
   String _buildPrompt(FridgeItem item, int portions) {
@@ -236,7 +148,7 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
           context,
           title: "You've used this week's free generations",
           message:
-              'Free plan includes $kFridgeClearerFreeWeeklyLimit fridge-rescue generations a week (shared with Fridge Clearer). '
+              'Free plan includes $kFridgeClearerFreeWeeklyLimit fridge-rescue generation${kFridgeClearerFreeWeeklyLimit == 1 ? '' : 's'} a week (shared with Fridge Clearer). '
               'Upgrade to Pro for unlimited generations, Custom AI Recipe Creator, and more.',
         );
         return;
@@ -261,7 +173,18 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
       );
       if (!mounted) return;
 
-      final payload = _parseCookModeRecipe(reply, portions: portions);
+      final payload = await parseChefRecipeJson(
+        raw: reply,
+        portions: portions,
+        fallbackTitle: 'Use it tonight',
+        surface: ChefRecipeSurface.fridgeCountdown,
+        // B.4 (2026-08-15): deliberately false — do not flip without
+        // checking CLAUDE.md first, blocked on Confidence Climb
+        // live-testing (description text feeds curriculum keyword
+        // matching, which feeds Confidence Climb's rep-counting).
+        readDescription: false,
+      );
+      if (!mounted) return;
       if (payload == null) {
         debugPrint('FridgeCountdownSheet: invalid JSON from model. Raw: $reply');
         if (!mounted) return;
@@ -288,6 +211,7 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
+        backgroundColor: AppDesignTokens.surfaceCream,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(child: GeneratedRecipeActionsSheet(recipe: payloadWithCurriculum, sourceLabel: 'Fridge Countdown')),
       );

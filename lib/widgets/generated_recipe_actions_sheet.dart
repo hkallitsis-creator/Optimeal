@@ -5,6 +5,7 @@ import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/theme.dart';
+import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/weekday_picker_sheet.dart';
 
@@ -112,6 +113,7 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
                         context: context,
                         isScrollControlled: false,
                         showDragHandle: true,
+                        backgroundColor: AppDesignTokens.surfaceCream,
                         builder: (ctx) => const SafeArea(child: WeekdayPickerSheet(title: '📅 Plan for which day?')),
                       );
                       if (dayIndex == null || !context.mounted) return;

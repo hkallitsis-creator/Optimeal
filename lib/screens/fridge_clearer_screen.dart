@@ -264,6 +264,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       context: context,
       isScrollControlled: false,
       showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => const SafeArea(child: WeekdayPickerSheet(title: '📅 Plan for which day?')),
     );
     if (!mounted || dayIndex == null) return;
@@ -418,7 +419,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
           context,
           title: "You've used this week's free generations",
           message:
-              'Free plan includes $kFridgeClearerFreeWeeklyLimit Fridge Clearer generations a week. '
+              'Free plan includes $kFridgeClearerFreeWeeklyLimit Fridge Clearer generation${kFridgeClearerFreeWeeklyLimit == 1 ? '' : 's'} a week. '
               'Upgrade to Pro for unlimited generations, Custom AI Recipe Creator, and more.',
         );
         return;

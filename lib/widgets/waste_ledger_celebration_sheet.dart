@@ -75,7 +75,7 @@ class WasteLedgerCelebrationSheet extends StatelessWidget {
             Divider(height: 1, thickness: 1, color: scheme.outline.withValues(alpha: 0.12)),
             const SizedBox(height: 12),
             Text(
-              'Lifetime: $lifetimeIngredientsRescued ingredients rescued',
+              'Lifetime: $lifetimeIngredientsRescued ingredient${lifetimeIngredientsRescued == 1 ? '' : 's'} rescued',
               style: theme.textTheme.labelMedium?.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75), fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 16),

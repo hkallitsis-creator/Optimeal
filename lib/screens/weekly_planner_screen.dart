@@ -103,6 +103,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: false,
+      backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => SafeArea(
         child: _AddMealOptionsSheet(
           dayLabel: _days[_selectedDayIndex],
@@ -269,6 +270,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
+        backgroundColor: AppDesignTokens.surfaceCream,
         builder: (ctx) => const SafeArea(child: CustomAiRecipeCreatorSheet()),
       );
       if (!mounted || payload == null) return;

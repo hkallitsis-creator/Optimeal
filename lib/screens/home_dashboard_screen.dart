@@ -64,6 +64,7 @@ class HomeDashboardScreen extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => const SafeArea(child: _ChefSuggestionSheet()),
     );
   }
@@ -73,6 +74,7 @@ class HomeDashboardScreen extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => SafeArea(child: _TechniqueOfTheWeekSheet(entry: entry)),
     );
   }
@@ -146,6 +148,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => const SafeArea(child: FridgeCountdownSheet()),
     );
     if (!mounted) return;
@@ -211,6 +214,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (sheetContext) => SafeArea(
         child: _RecentlyCookedSheet(
@@ -317,7 +321,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     title: 'This Week',
                     subtitle: _weeklyIngredientsRescued == 0
                         ? 'Nothing rescued yet this week.'
-                        : '$_weeklyIngredientsRescued ingredients rescued so far.',
+                        : '$_weeklyIngredientsRescued ingredient${_weeklyIngredientsRescued == 1 ? '' : 's'} rescued so far.',
                     emoji: '🌿',
                     accent: HomeDashboardScreen._deepForest,
                     icon: Icons.eco_rounded,
@@ -417,7 +421,7 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            weeklyCount == 0 ? 'No rescued ingredients logged yet.' : '$weeklyCount ingredient(s) rescued so far this week.',
+            weeklyCount == 0 ? 'No rescued ingredients logged yet.' : '$weeklyCount ingredient${weeklyCount == 1 ? '' : 's'} rescued so far this week.',
             style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 16),
@@ -455,7 +459,7 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
               border: Border.all(color: scheme.outline.withValues(alpha: 0.12)),
             ),
             child: Text(
-              'Lifetime: $lifetimeCount ingredients rescued',
+              'Lifetime: $lifetimeCount ingredient${lifetimeCount == 1 ? '' : 's'} rescued',
               style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w900),
             ),
           ),
@@ -1260,7 +1264,7 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
         await UpgradePromptSheet.show(
           context,
           title: "You've used today's free Chef suggestions",
-          message: 'Free plan includes $kChefHarrisChatFreeDailyLimit Chef Harris suggestions a day. Upgrade to Pro for unlimited.',
+          message: 'Free plan includes $kChefHarrisChatFreeDailyLimit Chef Harris suggestion${kChefHarrisChatFreeDailyLimit == 1 ? '' : 's'} a day. Upgrade to Pro for unlimited.',
         );
         if (!mounted) return;
         // If this was the very first load (sheet just opened, nothing to

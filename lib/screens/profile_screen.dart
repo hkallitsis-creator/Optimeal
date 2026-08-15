@@ -358,6 +358,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           context: context,
                           isScrollControlled: true,
                           showDragHandle: true,
+                          backgroundColor: AppDesignTokens.surfaceCream,
                           builder: (_) => const _SecureAccountSheet(),
                         );
                         if (!mounted) return;

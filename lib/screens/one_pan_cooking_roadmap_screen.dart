@@ -13,6 +13,7 @@ import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
+import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/confidence_tier_up_sheet.dart';
 import 'package:optimeal/widgets/curriculum_drawer_content.dart';
@@ -422,6 +423,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
+        backgroundColor: AppDesignTokens.surfaceCream,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(
 child: WasteLedgerCelebrationSheet(
@@ -446,6 +448,7 @@ child: WasteLedgerCelebrationSheet(
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
+        backgroundColor: AppDesignTokens.surfaceCream,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(
           child: WhatYouLearnedSheet(curriculumLessonIds: ids, confidenceLine: confidenceEvaluation.celebrationLine),
@@ -476,6 +479,7 @@ child: WasteLedgerCelebrationSheet(
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
+        backgroundColor: AppDesignTokens.surfaceCream,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(
           child: PostCookShareCardSheet(
@@ -679,6 +683,7 @@ child: WasteLedgerCelebrationSheet(
         isScrollControlled: true,
         useRootNavigator: true,
         showDragHandle: true,
+        backgroundColor: AppDesignTokens.surfaceCream,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (sheetContext) => _ChefSosSheet(
           recipeTitle: _recipeTitle,
