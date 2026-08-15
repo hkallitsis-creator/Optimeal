@@ -1985,6 +1985,58 @@ complete and uses a standard, reliable Flutter API — high confidence.
     work starts, this is the pointer to where the Swiss-specific framing
     actually originates for these three, so it isn't mistaken for a
     simple string edit.
+27. **Waste Ledger silent data loss — added 2026-08-15. HIGH PRIORITY,
+    before any testers.** `_ledgerSessionLogged` is set `true` at
+    `one_pan_cooking_roadmap_screen.dart:414`, **before** the `try` block
+    that contains the actual write — so it means "we started trying," not
+    "the write succeeded." If `LedgerService.logCompletion()`'s
+    `waste_ledger_events` insert throws (a network drop being the
+    realistic case, though not the only possible one), the rescue is
+    never recorded anywhere, the guard prevents any retry, and the
+    outer `catch` in `_logCookSessionCompletion()` fails silently — no
+    error shown to the user, per its own comment ("do not block their
+    cook flow on a ledger error"). This is data loss on the app's core
+    premise (rescuing ingredients from waste), not a cosmetic bug. Not
+    fixed — report only, this session.
+
+    **Likely fix shape, not designed**: split the single
+    `_ledgerSessionLogged` guard into two separate states — one for
+    "the ledger write completed," another for "the celebration sequence
+    has been shown" — so a failed write can be retried (e.g. next time
+    `_logCookSessionCompletion` is invoked, or via an explicit retry
+    affordance) while the sheets themselves still only ever run once.
+    Not scoped further than that.
+
+    **Open contradiction in the 2026-08-15 report on this — flagged as
+    unresolved, not investigated further, per explicit instruction.**
+    That report stated two things that can't both be true: (a)
+    `_appendWeeklyEvent` runs *before* the Supabase insert, has its own
+    self-contained `try`/`catch`, and "can't itself abort the method" —
+    implying its local `SharedPreferences` write already happened and
+    survives regardless of what the Supabase insert does next; and (b)
+    in the same report, "no weekly rollup" was listed among what's lost
+    if the insert throws — implying the local write does *not* survive.
+    Whether the local weekly-rollup record actually survives a failed
+    Supabase insert is unresolved. It matters concretely: if it does
+    survive, a retry only needs to re-attempt the Supabase write (cheap,
+    the local data is already there); if it doesn't, a retry needs to
+    reconstruct the full rescue record from scratch (harder). Needs an
+    actual code trace before the fix above is scoped for real — not done
+    here.
+
+    **Standing pattern, not just this one bug.** This is the **second**
+    confirmed instance of a `catch` block making a real failure look
+    like a success from the outside: the first is `askChefHarris`
+    swallowing its own network/request errors and returning a friendly
+    fallback string, while `UsageCapService.increment(...)` still fires
+    unconditionally at all four call sites regardless of whether the
+    call actually reached OpenAI (Roadmap item 10, "Also pre-launch,
+    added 2026-08-13"). Two different subsystems, same shape of bug:
+    tracking/state that's supposed to reflect "did the real thing
+    happen" instead just reflects "did we attempt it." Worth a review of
+    swallow-and-continue error handling across this project **as a
+    class**, not fixed one instance at a time as each is separately
+    discovered. Not started.
 
 ## Retention Features Backlog
 
