@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'package:optimeal/models/recipe_model.dart';
+import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/confidence_climb_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
@@ -495,12 +496,25 @@ child: WasteLedgerCelebrationSheet(
       // them, so Cook Mode + Waste Ledger stay untouched by monetization.
       if (!mounted) return;
       final isPro = await EntitlementService.instance.isPro();
-      if (!mounted || isPro) return;
-      await UpgradePromptSheet.show(
-        context,
-        title: 'Nice cooking!',
-        message: 'Upgrade to Pro for unlimited AI recipes, Custom AI Recipe Creator, and more — right when you\'re on a roll.',
-      );
+      if (mounted && !isPro) {
+        await UpgradePromptSheet.show(
+          context,
+          title: 'Nice cooking!',
+          message: 'Upgrade to Pro for unlimited AI recipes, Custom AI Recipe Creator, and more — right when you\'re on a roll.',
+        );
+      }
+
+      // Return Home once the entire post-cook sequence has resolved
+      // (CLAUDE.md Roadmap item 21) — previously nothing navigated here,
+      // leaving Cook Mode sitting idle on its finished state after the
+      // last sheet closed. Deliberately placed after the upgrade nudge,
+      // not right after the share card, so that nudge — one of only
+      // three sanctioned upgrade moments — still fires unconditionally
+      // before the user leaves. context.go (not push) matches the
+      // pattern used by every other explicit "back to Home" action in
+      // this app, and works regardless of which screen launched Cook Mode.
+      if (!mounted) return;
+      context.go(AppRoutes.home);
     } catch (e) {
       debugPrint('Failed to log waste ledger completion: $e');
       // Fail silently to the user — do not block their cook flow on a ledger error.
