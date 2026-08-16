@@ -75,3 +75,7 @@ Thumbs.db
 
 # Local device-test log captures
 device_log_*.txt
+
+# Legal and business documents — never in version control
+*.pdf
+!docs/**/*.pdf
