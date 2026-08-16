@@ -1,12 +1,62 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:optimeal/services/pending_ledger_write_service.dart';
+
+/// Result of [LedgerService.logCompletion] or [LedgerService.retryPendingWrite].
+///
+/// Deliberately a sealed return type rather than a thrown exception: the
+/// caller needs to distinguish "the waste_ledger_events row exists" from
+/// "it doesn't," and a post-insert read-back failure (the follow-up
+/// user_ledger_totals lookup) must never be able to collapse those two
+/// cases together. See CLAUDE.md Roadmap item 27.
+sealed class LedgerCompletionResult {
+  const LedgerCompletionResult();
+}
+
+/// The waste_ledger_events row exists — either freshly inserted, or
+/// already present from a prior attempt under the same idempotency key
+/// (a 23505 unique-violation on retry is treated as success here, not
+/// failure — see [LedgerService._performLedgerInsert]).
+class LedgerCompletionSuccess extends LedgerCompletionResult {
+  const LedgerCompletionSuccess({
+    required this.ingredientsRescued,
+    required this.ingredientsRescuedList,
+    required this.lifetimeIngredientsRescued,
+  });
+
+  final int ingredientsRescued;
+  final List<String> ingredientsRescuedList;
+
+  /// Null only when the write itself succeeded but the follow-up
+  /// `user_ledger_totals` read-back failed — the row exists, the figure
+  /// just couldn't be confirmed. Never used to signal write failure.
+  final int? lifetimeIngredientsRescued;
+}
+
+/// The waste_ledger_events row was never written. [payload] is the exact
+/// map that was (or would have been) passed to `.insert(...)` — hand it
+/// to [PendingLedgerWriteService] verbatim so a retry can reuse the same
+/// idempotency key rather than generating a new one.
+class LedgerCompletionWriteFailed extends LedgerCompletionResult {
+  const LedgerCompletionWriteFailed({
+    required this.payload,
+    required this.error,
+  });
+
+  final Map<String, dynamic> payload;
+  final Object error;
+}
+
 /// Service for writing and reading the user's waste-ledger metrics.
 class LedgerService {
   SupabaseClient get _db => Supabase.instance.client;
+
+  final PendingLedgerWriteService _pendingWriteService = PendingLedgerWriteService();
 
   static const String _weeklyEventsPrefsKey = 'waste_ledger_weekly_events_v1';
 
@@ -68,64 +118,163 @@ class LedgerService {
     return out;
   }
 
-  /// Logs one completion event to `waste_ledger_events` and returns updated
-  /// totals, counting only fresh produce (pantry staples are excluded).
+  /// 16 cryptographically-random bytes, hex-encoded. Deliberately not
+  /// derived from the rescue's content (ingredients, source, etc.) — a
+  /// content hash would collide when a user legitimately rescues the same
+  /// ingredients twice, silently swallowing the second real rescue as a
+  /// "duplicate" and reintroducing the exact undercount this exists to
+  /// prevent. Generated once per rescue attempt; retries must reuse the
+  /// same key rather than calling this again.
+  static String _generateIdempotencyKey() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  static int _readIntFromRow(Map<String, dynamic>? row, List<String> keys) {
+    if (row == null) return 0;
+    for (final k in keys) {
+      final v = row[k];
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      final parsed = int.tryParse('${v ?? ''}');
+      if (parsed != null) return parsed;
+    }
+    return 0;
+  }
+
+  /// Logs one completion event to `waste_ledger_events` and returns
+  /// updated totals, counting only fresh produce (pantry staples are
+  /// excluded).
   ///
-  /// [source] must be one of: 'fridge_clearer', 'cook_mode', 'custom_ai_recipe'.
-  Future<Map<String, dynamic>> logCompletion({
+  /// [source] must be one of: 'fridge_clearer', 'cook_mode', 'custom_ai_recipe',
+  /// 'fridge_countdown'. In practice, callers should use
+  /// [CookModeSurface.ledgerSourceValue] rather than a literal — see
+  /// CLAUDE.md Roadmap item 28.
+  ///
+  /// Does not throw for expected failure modes (auth, network, database) —
+  /// returns [LedgerCompletionWriteFailed] instead, with the pending write
+  /// already queued in [PendingLedgerWriteService] so it can be retried
+  /// later. A thrown exception here would mean something unexpected went
+  /// wrong, not a normal "the insert failed" case.
+  Future<LedgerCompletionResult> logCompletion({
     required String source,
     String? recipeId,
     required List<String> ingredientsRescued,
   }) async {
-    try {
-      final user = _db.auth.currentUser;
-      if (user == null) {
-        throw Exception('Not authenticated: cannot log ledger completion.');
-      }
-
-      final freshIngredients = freshProduceOnly(ingredientsRescued);
-
-      final ingredientsCount = freshIngredients.length;
-
-      // Persist locally for weekly rollups (no backend dependency). This is
-      // best-effort and should never block the main logging flow.
-      await _appendWeeklyEvent(freshIngredients);
-
-      await _db.from('waste_ledger_events').insert({
-        'user_id': user.id,
-        'source': source,
-        'recipe_id': (recipeId != null && recipeId.trim().isNotEmpty) ? recipeId.trim() : null,
-        'ingredients_rescued': freshIngredients,
-        'ingredients_count': ingredientsCount,
-      });
-
-      Map<String, dynamic>? totalsRow;
-      totalsRow = await _db.from('user_ledger_totals').select().eq('user_id', user.id).maybeSingle();
-
-      int readInt(Map<String, dynamic>? row, List<String> keys) {
-        if (row == null) return 0;
-        for (final k in keys) {
-          final v = row[k];
-          if (v is int) return v;
-          if (v is num) return v.toInt();
-          final parsed = int.tryParse('${v ?? ''}');
-          if (parsed != null) return parsed;
-        }
-        return 0;
-      }
-
-      // Per schema: totals are keyed by `user_id` and exposed as these exact columns.
-      final lifetimeIngredientsRescued = readInt(totalsRow, ['lifetime_ingredients_rescued']);
-
-      return {
-        'ingredientsRescued': ingredientsCount,
-        'ingredientsRescuedList': freshIngredients,
-        'lifetimeIngredientsRescued': lifetimeIngredientsRescued,
-      };
-    } catch (e, st) {
-      debugPrint('LedgerService.logCompletion failed: $e\n$st');
-      throw Exception('Failed to log waste ledger completion: $e');
+    final user = _db.auth.currentUser;
+    if (user == null) {
+      debugPrint('LedgerService.logCompletion: not authenticated, cannot log.');
+      return LedgerCompletionWriteFailed(
+        payload: const {},
+        error: Exception('Not authenticated: cannot log ledger completion.'),
+      );
     }
+
+    final freshIngredients = freshProduceOnly(ingredientsRescued);
+    final ingredientsCount = freshIngredients.length;
+
+    // Persist locally for weekly rollups (no backend dependency). This is
+    // best-effort and should never block the main logging flow. Must run
+    // exactly once per real rescue attempt — never called from the retry
+    // path (_performLedgerInsert / retryPendingWrite), which would
+    // otherwise append a second local weekly event for the same rescue.
+    await _appendWeeklyEvent(freshIngredients);
+
+    final idempotencyKey = _generateIdempotencyKey();
+    final payload = <String, dynamic>{
+      'user_id': user.id,
+      'source': source,
+      'recipe_id': (recipeId != null && recipeId.trim().isNotEmpty) ? recipeId.trim() : null,
+      'ingredients_rescued': freshIngredients,
+      'ingredients_count': ingredientsCount,
+      'idempotency_key': idempotencyKey,
+    };
+
+    final result = await _performLedgerInsert(payload);
+    if (result is LedgerCompletionWriteFailed) {
+      await _pendingWriteService.add(
+        PendingLedgerWrite(idempotencyKey: idempotencyKey, payload: payload, queuedAt: DateTime.now()),
+      );
+    }
+    return result;
+  }
+
+  /// Retries a single previously-failed write from [PendingLedgerWriteService].
+  ///
+  /// Applies the stale-uid check from CLAUDE.md Roadmap item 27 first: if
+  /// anonymous auth has since issued a different uid (e.g. after a
+  /// reinstall), a write carrying the old one would fail RLS forever with
+  /// no way to ever succeed — so it's discarded rather than retried.
+  ///
+  /// Clears the pending record on success (a fresh insert, or a 23505
+  /// meaning an earlier attempt already landed — [_performLedgerInsert]
+  /// reports both as [LedgerCompletionSuccess], so one check covers both).
+  /// Left in place on any other failure so a later retry can try again.
+  ///
+  /// Not called from anywhere yet — no automatic trigger, no UI wired to
+  /// it. Dead code until that's built as its own piece of work.
+  Future<LedgerCompletionResult> retryPendingWrite(PendingLedgerWrite write) async {
+    final currentUser = _db.auth.currentUser;
+    final storedUserId = write.payload['user_id'] as String?;
+    if (currentUser == null || storedUserId == null || storedUserId != currentUser.id) {
+      debugPrint(
+        'LedgerService.retryPendingWrite: stale or missing user_id for ${write.idempotencyKey}, discarding.',
+      );
+      await _pendingWriteService.clear(write.idempotencyKey);
+      return LedgerCompletionWriteFailed(
+        payload: write.payload,
+        error: Exception('Pending ledger write discarded: stale user_id.'),
+      );
+    }
+
+    final result = await _performLedgerInsert(write.payload);
+    if (result is LedgerCompletionSuccess) {
+      await _pendingWriteService.clear(write.idempotencyKey);
+    }
+    return result;
+  }
+
+  /// The insert-only path, shared by [logCompletion] and [retryPendingWrite].
+  /// Deliberately does not call [_appendWeeklyEvent] — that must only ever
+  /// run once per real rescue attempt, in [logCompletion], never on retry.
+  ///
+  /// Splits the insert and the post-insert totals read into separate
+  /// `try` blocks so a read-back failure can never make this method
+  /// report that the write itself failed.
+  Future<LedgerCompletionResult> _performLedgerInsert(Map<String, dynamic> payload) async {
+    try {
+      await _db.from('waste_ledger_events').insert(payload);
+    } on PostgrestException catch (e) {
+      if (e.code != '23505') {
+        debugPrint('LedgerService: waste_ledger_events insert failed: $e');
+        return LedgerCompletionWriteFailed(payload: payload, error: e);
+      }
+      // Unique violation on idempotency_key: a prior attempt with this
+      // exact key already inserted the row. Treat as success, not error.
+      debugPrint('LedgerService: insert returned 23505 for ${payload['idempotency_key']} — already written, treating as success.');
+    } catch (e) {
+      debugPrint('LedgerService: waste_ledger_events insert failed: $e');
+      return LedgerCompletionWriteFailed(payload: payload, error: e);
+    }
+
+    final userId = payload['user_id'] as String;
+    int? lifetimeIngredientsRescued;
+    try {
+      final totalsRow = await _db.from('user_ledger_totals').select().eq('user_id', userId).maybeSingle();
+      lifetimeIngredientsRescued = _readIntFromRow(totalsRow, ['lifetime_ingredients_rescued']);
+    } catch (e) {
+      debugPrint('LedgerService: user_ledger_totals read-back failed after a successful write: $e');
+      // lifetimeIngredientsRescued stays null. The row exists either way —
+      // this must not turn into a reported write failure.
+    }
+
+    final ingredientsRescuedList = ((payload['ingredients_rescued'] as List?) ?? const []).cast<String>();
+    return LedgerCompletionSuccess(
+      ingredientsRescued: (payload['ingredients_count'] as int?) ?? ingredientsRescuedList.length,
+      ingredientsRescuedList: ingredientsRescuedList,
+      lifetimeIngredientsRescued: lifetimeIngredientsRescued,
+    );
   }
 
   /// Returns a weekly + lifetime summary for the Waste Ledger.

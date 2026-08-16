@@ -25,14 +25,68 @@ import 'package:optimeal/widgets/what_you_learned_sheet.dart';
 import 'package:optimeal/models/technique_lesson.dart' as models;
 import 'package:optimeal/widgets/culinary_matrix_card.dart' as matrix_widgets;
 import 'package:optimeal/services/cook_session_storage_service.dart';
+
 // Kept for backwards compatibility with existing (currently unused) roadmap UI
 // primitives below. These can be safely deleted later once the old UI is fully
 // removed.
 enum RoadmapTechnique { bakeTrayRoast, sautePanFry, stirFry }
 
+/// The surface a Cook Mode launch originated from. Drives whether a
+/// completed cook is eligible to log to the Waste Ledger — see
+/// [isRescueEligible] — and, for eligible surfaces, what
+/// `waste_ledger_events.source` value to record. See CLAUDE.md Roadmap
+/// item 28.
+enum CookModeSurface {
+  fridgeClearer,
+  fridgeCountdown,
+  customAiRecipeCreator,
+  weeklyPlanner;
+
+  /// Whether a genuine (non-re-cook) completion from this surface counts as
+  /// a real ingredient rescue. Only Fridge Clearer and Fridge Countdown
+  /// generate a recipe directly from what's actually in the user's fridge —
+  /// Custom AI Recipe Creator and Weekly Planner don't, by design decision.
+  bool get isRescueEligible =>
+      this == CookModeSurface.fridgeClearer ||
+      this == CookModeSurface.fridgeCountdown;
+
+  /// The `waste_ledger_events.source` value for this surface. Null for
+  /// non-rescue-eligible surfaces — `logCompletion` is never called for
+  /// those, so no value is ever needed or written.
+  String? get ledgerSourceValue => switch (this) {
+        CookModeSurface.fridgeClearer => 'fridge_clearer',
+        CookModeSurface.fridgeCountdown => 'fridge_countdown',
+        CookModeSurface.customAiRecipeCreator ||
+        CookModeSurface.weeklyPlanner =>
+          null,
+      };
+}
+
+/// Envelope for a fresh (non-resume) Cook Mode launch, passed as go_router's
+/// `extra`. Carries the recipe plus enough context for the Waste Ledger
+/// gating logic in `_logCookSessionCompletion` to apply correctly: which
+/// surface originated this cook ([surface]), and whether this is a re-cook
+/// of an already-cooked recipe via Home's Recently Cooked rather than a
+/// fresh generation ([isReCook]) — a re-cook never logs, regardless of
+/// surface. [surface] is null for the Recently Cooked re-entry path, where
+/// original provenance isn't tracked and doesn't matter: [isReCook] alone
+/// already excludes it from logging.
+class CookModeLaunchRequest {
+  const CookModeLaunchRequest({
+    required this.recipe,
+    required this.surface,
+    this.isReCook = false,
+  });
+
+  final CookModeRecipePayload recipe;
+  final CookModeSurface? surface;
+  final bool isReCook;
+}
+
 /// Payload for launching Cook Mode with a dynamic, generated recipe.
 ///
-/// Passed through `go_router` using `context.push(AppRoutes.onePanCookingRoadmap, extra: payload)`.
+/// Passed through `go_router` wrapped in a [CookModeLaunchRequest] via
+/// `context.push(AppRoutes.onePanCookingRoadmap, extra: CookModeLaunchRequest(...))`.
 class CookModeRecipePayload {
   const CookModeRecipePayload({
     required this.title,
@@ -74,16 +128,32 @@ class CookModeRecipePayload {
 ///
 /// - [heat] values should be one of: "low", "medium", "medium_high", "off_heat".
 class CookModeStepPayload {
-  const CookModeStepPayload({required this.title, required this.heat, required this.durationMinutes, required this.bullets});
+  const CookModeStepPayload(
+      {required this.title,
+      required this.heat,
+      required this.durationMinutes,
+      required this.bullets,
+      this.ingredientsAdded});
 
   final String title;
   final String heat;
   final int durationMinutes;
   final List<String> bullets;
+
+  /// Names of ingredients this step adds to the pan/pot — matches the
+  /// `name` values in the recipe's top-level ingredients. Optional on
+  /// read: recipes saved before this field existed parse with this null,
+  /// same as a missing/older [RecipeIngredient.cut].
+  final List<String>? ingredientsAdded;
 }
 
 class OnePanCookingRoadmapScreen extends StatefulWidget {
-  const OnePanCookingRoadmapScreen({super.key, this.recipe, this.resumeSession});
+  const OnePanCookingRoadmapScreen(
+      {super.key,
+      this.recipe,
+      this.resumeSession,
+      this.surface,
+      this.isReCook = false});
 
   /// Optional dynamic recipe passed from other screens (e.g. Fridge Clearer).
   /// When null, Cook Mode falls back to the built-in demo recipe.
@@ -99,14 +169,35 @@ class OnePanCookingRoadmapScreen extends StatefulWidget {
   /// explicitly tapping Resume.
   final ActiveCookSession? resumeSession;
 
+  /// Which surface this fresh launch originated from — see
+  /// [CookModeSurface]. Ignored (superseded by [resumeSession]'s own
+  /// surface) if [resumeSession] is provided. Null for the demo recipe.
+  /// See CLAUDE.md Roadmap item 28.
+  final CookModeSurface? surface;
+
+  /// Whether this is a re-cook of an already-cooked recipe (Home's
+  /// Recently Cooked) rather than a fresh generation. Ignored (superseded
+  /// by [resumeSession]'s own value) if [resumeSession] is provided.
+  final bool isReCook;
+
   @override
-  State<OnePanCookingRoadmapScreen> createState() => _OnePanCookingRoadmapScreenState();
+  State<OnePanCookingRoadmapScreen> createState() =>
+      _OnePanCookingRoadmapScreenState();
 }
 
-class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen> with WidgetsBindingObserver {
+class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
+    with WidgetsBindingObserver {
   bool _isSosOpen = false;
 
-  bool _ledgerSessionLogged = false;
+  /// True once the post-cook completion sequence has started (either via
+  /// the last step completing, or Finish & Plate). Guards against
+  /// double-firing and signals "a genuine completion happened" to callers
+  /// (the back button, Weekly Planner's `completed` check) — deliberately
+  /// independent of whether the Waste Ledger write itself was attempted or
+  /// succeeded, since not every cook is rescue-eligible (see CLAUDE.md
+  /// Roadmap item 28). Named for what it tracks now; was `_ledgerSessionLogged`
+  /// before that item decoupled the sequence from the ledger result.
+  bool _cookSequenceStarted = false;
   final _ledgerService = LedgerService();
   final _sessionStorage = CookSessionStorageService();
   final _confidenceClimbService = ConfidenceClimbService();
@@ -116,6 +207,14 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// [OnePanCookingRoadmapScreen.resumeSession]). Null only for the built-in
   /// demo recipe, which is never persisted.
   late final CookModeRecipePayload? _payload;
+
+  /// Resolved surface/re-cook status for this session — from
+  /// [OnePanCookingRoadmapScreen.resumeSession] if resuming, otherwise from
+  /// the widget's own [OnePanCookingRoadmapScreen.surface]/[OnePanCookingRoadmapScreen.isReCook].
+  /// Null [_surface] (demo recipe, or a pre-Roadmap-28 resumed session) is
+  /// never rescue-eligible. See CLAUDE.md Roadmap item 28.
+  late final CookModeSurface? _surface;
+  late final bool _isReCook;
 
   // Cook session state (single source of truth)
   bool _cookStarted = false;
@@ -159,7 +258,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     final factor = portions / _basePortions;
     return structured.map((ing) {
       final scaled = _roundScaledAmount(ing.amount * factor, ing.unit);
-      final amountText = scaled == scaled.roundToDouble() ? scaled.toInt().toString() : scaled.toStringAsFixed(1);
+      final amountText = scaled == scaled.roundToDouble()
+          ? scaled.toInt().toString()
+          : scaled.toStringAsFixed(1);
       return '$amountText ${ing.unit} ${ing.name}'.trim();
     }).toList(growable: false);
   }
@@ -173,6 +274,18 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     final structured = _baseStructuredIngredients;
     if (structured == null) return _staticIngredients;
     return structured.map((ing) => ing.name).toList(growable: false);
+  }
+
+  /// Per-ingredient cut, index-aligned with [_ingredients] (both are built
+  /// from the same [_baseStructuredIngredients] list, in the same order —
+  /// portion scaling changes amounts, never order or count). Null for
+  /// every entry when there's no structured data at all (demo recipe,
+  /// older cached recipes) — same "render with no label" outcome as an
+  /// individual null cut.
+  List<String?> get _ingredientCuts {
+    final structured = _baseStructuredIngredients;
+    if (structured == null) return List<String?>.filled(_ingredients.length, null);
+    return structured.map((ing) => ing.cut).toList(growable: false);
   }
 
   /// Ingredient indices the user has checked off while prepping.
@@ -208,7 +321,14 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       // Demo recipe data (local-only). Later we can hydrate this from Supabase.
       _recipeTitle = 'Mushroom Risotto';
       _kitchenGear = const ['1 Skillet', 'Cutting Board', 'Wooden Spoon'];
-      _staticIngredients = const ['Onion', 'Mushrooms', 'Arborio rice', 'Stock', 'Butter', 'Parmesan'];
+      _staticIngredients = const [
+        'Onion',
+        'Mushrooms',
+        'Arborio rice',
+        'Stock',
+        'Butter',
+        'Parmesan'
+      ];
       _baseStructuredIngredients = null;
       _basePortions = 1;
       _steps = const [
@@ -253,11 +373,13 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         ),
       ];
     } else {
-      _recipeTitle = payload.title.trim().isEmpty ? 'Cook Mode' : payload.title.trim();
+      _recipeTitle =
+          payload.title.trim().isEmpty ? 'Cook Mode' : payload.title.trim();
       _staticIngredients = payload.ingredients;
-      _kitchenGear = (payload.kitchenGear == null || payload.kitchenGear!.isEmpty)
-          ? const ['1 Pan or Pot', 'Knife', 'Spoon/Spatula']
-          : payload.kitchenGear!;
+      _kitchenGear =
+          (payload.kitchenGear == null || payload.kitchenGear!.isEmpty)
+              ? const ['1 Pan or Pot', 'Knife', 'Spoon/Spatula']
+              : payload.kitchenGear!;
       _baseStructuredIngredients = payload.structuredIngredients;
       // Uses the actual portion count the recipe was generated for. Falls
       // back to 2 only for older/cached recipes that predate this field.
@@ -268,8 +390,12 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             (s) => _CookStep(
               actionTitle: s.title.trim(),
               heat: _parseHeat(s.heat),
-              duration: Duration(minutes: s.durationMinutes <= 0 ? 4 : s.durationMinutes),
-              bullets: s.bullets.where((b) => b.trim().isNotEmpty).map((b) => b.trim()).toList(growable: false),
+              duration: Duration(
+                  minutes: s.durationMinutes <= 0 ? 4 : s.durationMinutes),
+              bullets: s.bullets
+                  .where((b) => b.trim().isNotEmpty)
+                  .map((b) => b.trim())
+                  .toList(growable: false),
             ),
           )
           .toList(growable: false);
@@ -285,7 +411,8 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
           : resolvedSteps;
     }
 
-    _estimatedCookTime = _steps.fold(Duration.zero, (sum, s) => sum + s.duration);
+    _estimatedCookTime =
+        _steps.fold(Duration.zero, (sum, s) => sum + s.duration);
 
     final resume = widget.resumeSession;
     if (resume != null) {
@@ -297,7 +424,13 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       _completedSteps = Set<int>.from(resume.completedSteps);
       _activeRemaining = resume.activeRemaining;
       _currentPortions = resume.currentPortions;
-    } else if (payload != null) {
+      _surface = resume.surface;
+      _isReCook = resume.isReCook;
+    } else {
+      _surface = widget.surface;
+      _isReCook = widget.isReCook;
+    }
+    if (resume == null && payload != null) {
       // A genuine fresh open of Cook Mode with a real recipe (not the demo,
       // not a resume) — this is what counts toward Recently Cooked.
       unawaited(_recordRecentlyCooked(payload));
@@ -309,7 +442,8 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   }
 
   static _HeatLevel _parseHeat(String raw) {
-    final v = raw.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+    final v =
+        raw.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
     return switch (v) {
       'low' => _HeatLevel.low,
       'medium_high' || 'high' => _HeatLevel.mediumHigh,
@@ -352,7 +486,8 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     // phone call, app switch) — this is the point where an OS-level kill
     // could happen without further warning, so we can't wait for a "nicer"
     // moment to persist.
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
       unawaited(_persistActiveSession());
     }
   }
@@ -385,7 +520,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// user has actually pressed Start.
   Future<void> _persistActiveSession() async {
     final payload = _payload;
-    if (payload == null || !_cookStarted || _ledgerSessionLogged) return;
+    if (payload == null || !_cookStarted || _cookSequenceStarted) return;
     try {
       await _sessionStorage.saveActiveSession(
         recipe: payload,
@@ -395,6 +530,8 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         completedSteps: _completedSteps ?? <int>{},
         activeRemaining: _activeRemaining,
         currentPortions: _currentPortions,
+        surface: _surface,
+        isReCook: _isReCook,
       );
     } catch (e) {
       debugPrint('Failed to persist Cook Mode session: $e');
@@ -410,81 +547,145 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   }
 
   Future<void> _logCookSessionCompletion() async {
-    if (_ledgerSessionLogged) return;
-    _ledgerSessionLogged = true;
+    if (_cookSequenceStarted) return;
+    _cookSequenceStarted = true;
     unawaited(_sessionStorage.clearActiveSession());
     try {
-      final result = await _ledgerService.logCompletion(
-        source: 'cook_mode',
-        recipeId: null,
-        ingredientsRescued: _ingredients,
-      );
-      if (!mounted) return;
-      await AppBottomSheet.show<void>(
-        context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        backgroundColor: AppDesignTokens.surfaceCream,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-        builder: (ctx) => SafeArea(
-child: WasteLedgerCelebrationSheet(
-            ingredientsRescued: (result['ingredientsRescuedList'] as List).cast<String>(),
-            lifetimeIngredientsRescued: result['lifetimeIngredientsRescued'] as int,
-          ),
-        ),
-      );
+      // Waste Ledger logging — gated on both conditions from CLAUDE.md
+      // Roadmap item 28: the surface must be rescue-eligible (Fridge
+      // Clearer / Fridge Countdown only — Weekly Planner and Custom AI
+      // Recipe Creator never log), AND this must not be a re-cook (Home's
+      // Recently Cooked never logs, regardless of the recipe's original
+      // surface). A failed write also falls through rather than aborting —
+      // the rest of this sequence must never depend on a ledger result
+      // existing, only on whether it was a [LedgerCompletionSuccess].
+      final surface = _surface;
+      final shouldLog =
+          surface != null && surface.isRescueEligible && !_isReCook;
+      LedgerCompletionSuccess? ledgerSuccess;
+      if (shouldLog) {
+        final result = await _ledgerService.logCompletion(
+          source: surface.ledgerSourceValue!,
+          recipeId: null,
+          ingredientsRescued: _ingredients,
+        );
+        if (result is LedgerCompletionSuccess) {
+          ledgerSuccess = result;
+          final credited = result.ingredientsRescuedList;
+          final excluded = _ingredients
+              .where((i) => !credited.contains(i.trim()))
+              .toList(growable: false);
+          debugPrint(
+            'LedgerService.logCompletion success: recipe="${_payload?.title ?? ''}" '
+            'credited=$credited excluded(pantry staples per freshProduceOnly)=$excluded',
+          );
+        } else if (result is LedgerCompletionWriteFailed) {
+          debugPrint('Failed to log waste ledger completion: ${result.error}');
+        }
+      } else {
+        debugPrint(
+          'Cook Mode: not rescue-eligible, skipping Waste Ledger write — surface=$surface isReCook=$_isReCook',
+        );
+      }
 
+      final successResult = ledgerSuccess;
+      if (successResult != null) {
+        if (!mounted) return;
+        await AppBottomSheet.show<void>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          backgroundColor: AppDesignTokens.surfaceCream,
+          shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+          builder: (ctx) => SafeArea(
+            child: WasteLedgerCelebrationSheet(
+              ingredientsRescued: successResult.ingredientsRescuedList,
+              lifetimeIngredientsRescued:
+                  successResult.lifetimeIngredientsRescued ?? 0,
+            ),
+          ),
+        );
+      }
+
+      // Everything below runs unconditionally — What You Learned,
+      // Confidence Climb, the tier-up offer, the share card, the upgrade
+      // nudge, and navigation home must all still happen for a cook that
+      // didn't log (wrong surface, a re-cook, or a failed write). See
+      // CLAUDE.md Roadmap item 28.
       if (!mounted) return;
       final payload = _payload;
+      // Populated only from the model's own declared "curriculum_lesson_id"
+      // (validated against ChefService.curriculumDrawerKeys by the parser)
+      // — never from keyword-matching the recipe's generated text anymore.
+      // A missing or unrecognized declared key means this list is empty,
+      // and both consumers below (What You Learned, Confidence Climb) must
+      // treat that as "nothing to show/count," not fall back to a guess —
+      // a wrong card is worse than no card, a fictional rep is worse than
+      // a missing one.
       final ids = payload?.curriculumLessonIds ?? const <String>[];
 
-      final currentConfidence = context.read<UserProfileController>().profile.kitchenConfidence;
+      final currentConfidence =
+          context.read<UserProfileController>().profile.kitchenConfidence;
+      // ConfidenceClimbService.evaluate already returns an empty evaluation
+      // (no celebration line, no tier-up target) when ids is empty — see
+      // its own isEmpty guard — so no change needed there, only here.
       final confidenceEvaluation = await _confidenceClimbService.evaluate(
         justCookedTechniqueIds: ids,
         currentConfidence: currentConfidence,
       );
 
-      if (!mounted) return;
-      await AppBottomSheet.show<void>(
-        context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        backgroundColor: AppDesignTokens.surfaceCream,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-        builder: (ctx) => SafeArea(
-          child: WhatYouLearnedSheet(curriculumLessonIds: ids, confidenceLine: confidenceEvaluation.celebrationLine),
-        ),
-      );
+      if (ids.isNotEmpty) {
+        if (!mounted) return;
+        await AppBottomSheet.show<void>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          backgroundColor: AppDesignTokens.surfaceCream,
+          shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+          builder: (ctx) => SafeArea(
+            child: WhatYouLearnedSheet(
+                curriculumLessonIds: ids,
+                confidenceLine: confidenceEvaluation.celebrationLine),
+          ),
+        );
+      }
 
       // Confidence Climb tier-up offer — one-time per tier transition (see
       // ConfidenceClimbService), shown as its own step so it never crowds
       // the What You Learned sheet itself.
       final tierUpTarget = confidenceEvaluation.tierUpTarget;
       if (tierUpTarget != null && mounted) {
-        final accepted = await ConfidenceTierUpSheet.show(context, targetTier: tierUpTarget);
+        final accepted =
+            await ConfidenceTierUpSheet.show(context, targetTier: tierUpTarget);
         unawaited(_confidenceClimbService.markPrompted(currentConfidence));
         if (accepted == true && mounted) {
           final profileController = context.read<UserProfileController>();
-          await profileController.updateProfile(profileController.profile.copyWith(kitchenConfidence: tierUpTarget));
+          await profileController.updateProfile(profileController.profile
+              .copyWith(kitchenConfidence: tierUpTarget));
         }
       }
 
       // Post-cook shareable recap card (CLAUDE.md roadmap item 7) — a
       // growth/acquisition feature, shown right after the two celebration
-      // sheets close. Reuses the same session data they already used
-      // (ingredientsRescuedList, resolved curriculum titles) rather than
-      // capturing anything new.
+      // sheets close. Uses freshProduceOnly(_ingredients) directly — the
+      // same filtering logCompletion applies internally — rather than the
+      // ledger result, so it renders identically whether or not this cook
+      // actually logged (CLAUDE.md Roadmap item 28).
       if (!mounted) return;
-      final techniqueTitles = resolveDrawerEntries(ids).map((e) => e.title).toList(growable: false);
+      final techniqueTitles =
+          resolveDrawerEntries(ids).map((e) => e.title).toList(growable: false);
       await AppBottomSheet.show<void>(
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
         backgroundColor: AppDesignTokens.surfaceCream,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(
           child: PostCookShareCardSheet(
-            ingredientsRescued: (result['ingredientsRescuedList'] as List).cast<String>(),
+            ingredientsRescued: LedgerService.freshProduceOnly(_ingredients),
             techniqueTitles: techniqueTitles,
           ),
         ),
@@ -500,7 +701,8 @@ child: WasteLedgerCelebrationSheet(
         await UpgradePromptSheet.show(
           context,
           title: 'Nice cooking!',
-          message: 'Upgrade to Pro for unlimited AI recipes, Custom AI Recipe Creator, and more — right when you\'re on a roll.',
+          message:
+              'Upgrade to Pro for unlimited AI recipes, Custom AI Recipe Creator, and more — right when you\'re on a roll.',
         );
       }
 
@@ -519,6 +721,36 @@ child: WasteLedgerCelebrationSheet(
       debugPrint('Failed to log waste ledger completion: $e');
       // Fail silently to the user — do not block their cook flow on a ledger error.
     }
+  }
+
+  /// Shared entry point for Finish & Plate, whether pressed mid-cook (the
+  /// skip-ahead control on [_CookPlayerBar]) or at the finished state (the
+  /// existing button on [_CookModeBottomBar], not-yet-started branch only —
+  /// see CLAUDE.md Roadmap item 28). Confirms first (a permanent ledger
+  /// write, subject to the same logging rules as the last-step tick — an
+  /// accidental tap would otherwise end the session early), then stops any
+  /// running timer and runs the exact same completion sequence
+  /// [_advanceToNextStep]'s last-step branch runs.
+  Future<void> _confirmAndFinish() async {
+    final confirmed = await AppBottomSheet.show<bool>(
+      context: context,
+      isScrollControlled: false,
+      showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => const SafeArea(child: _FinishAndPlateConfirmSheet()),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    _activeTicker?.cancel();
+    setState(() {
+      _activeStepIndex = null;
+      _cookPaused = true;
+      _activeRemaining = Duration.zero;
+    });
+    _postFrame(_logCookSessionCompletion);
   }
 
   void _startCooking() {
@@ -608,7 +840,8 @@ child: WasteLedgerCelebrationSheet(
       SnackBar(
         content: Text(
           'Step ${idx + 1} complete. Moving on…',
-          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onInverseSurface),
+          style: theme.textTheme.bodyMedium
+              ?.copyWith(color: theme.colorScheme.onInverseSurface),
         ),
         backgroundColor: theme.colorScheme.inverseSurface,
         behavior: SnackBarBehavior.floating,
@@ -687,6 +920,7 @@ child: WasteLedgerCelebrationSheet(
     setState(() => _isSosOpen = true);
 
     final quickPrompts = _buildQuickPrompts();
+    final recipeContext = _buildSosRecipeContext();
 
     try {
       // If the widget unmounts between tap + async scheduling, do not present.
@@ -698,10 +932,12 @@ child: WasteLedgerCelebrationSheet(
         useRootNavigator: true,
         showDragHandle: true,
         backgroundColor: AppDesignTokens.surfaceCream,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (sheetContext) => _ChefSosSheet(
           recipeTitle: _recipeTitle,
           quickPrompts: quickPrompts,
+          recipeContext: recipeContext,
         ),
       );
     } catch (e) {
@@ -714,6 +950,40 @@ child: WasteLedgerCelebrationSheet(
     }
   }
 
+  /// Builds the "actual recipe" context block sent to Chef Harris SOS —
+  /// the current (portion-scaled) ingredient list, every step's title,
+  /// heat, duration, and bullets, and a marker on whichever step the user
+  /// is currently on. Previously SOS only received the recipe title, so
+  /// Chef Harris had no way to ground an answer in what the recipe
+  /// actually says (e.g. it once advised dicing and pre-cooking potatoes
+  /// for a recipe that said thinly slice — a real, observed failure).
+  String _buildSosRecipeContext() {
+    final b = StringBuffer();
+    b.writeln('Ingredients:');
+    for (final ing in _ingredients) {
+      b.writeln('- $ing');
+    }
+    b.writeln();
+    b.writeln('Steps:');
+    for (var i = 0; i < _steps.length; i++) {
+      final s = _steps[i];
+      final marker = _activeStepIndex == i ? ' ← USER IS ON THIS STEP NOW' : '';
+      b.writeln(
+          '${i + 1}. ${s.actionTitle} — ${_heatLabelText(s.heat)}, ~${s.duration.inMinutes} min$marker');
+      for (final bullet in s.bullets) {
+        b.writeln('   - $bullet');
+      }
+    }
+    return b.toString().trimRight();
+  }
+
+  static String _heatLabelText(_HeatLevel heat) => switch (heat) {
+        _HeatLevel.low => 'low heat',
+        _HeatLevel.medium => 'medium heat',
+        _HeatLevel.mediumHigh => 'medium-high heat',
+        _HeatLevel.offHeat => 'off heat',
+      };
+
   /// Builds SOS quick-prompt chips tailored to the current recipe, based on
   /// keyword matches against the recipe title + step titles/bullets. Falls
   /// back to a generic, dish-agnostic set if nothing matches.
@@ -721,7 +991,8 @@ child: WasteLedgerCelebrationSheet(
     final searchText = ([
       _recipeTitle,
       for (final s in _steps) ...[s.actionTitle, ...s.bullets],
-    ].join(' ')).toLowerCase();
+    ].join(' '))
+        .toLowerCase();
 
     bool hasAny(List<String> keywords) => keywords.any(searchText.contains);
 
@@ -833,23 +1104,28 @@ child: WasteLedgerCelebrationSheet(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          onPressed: () => context.pop(_ledgerSessionLogged),
+          onPressed: () => context.pop(_cookSequenceStarted),
           icon: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: theme.colorScheme.surface.withValues(alpha: 0.9),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.18)),
+              border: Border.all(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.18)),
             ),
             child: Icon(Icons.arrow_back, color: theme.colorScheme.onSurface),
           ),
           tooltip: 'Back to Plan',
         ),
-        title: Text('Cook Mode', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+        title: Text('Cook Mode',
+            style: theme.textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w800)),
         centerTitle: false,
       ),
       bottomNavigationBar: !_cookStarted
-          ? _StartCookingBottomBar(onSosPressed: () => _postFrame(_openSos), onStartPressed: () => _postFrame(_startCooking))
+          ? _StartCookingBottomBar(
+              onSosPressed: () => _postFrame(_openSos),
+              onStartPressed: () => _postFrame(_startCooking))
           : (_recipeFinished
               ? _CookModeBottomBar(
                   onSosPressed: () => _postFrame(_openSos),
@@ -863,31 +1139,19 @@ child: WasteLedgerCelebrationSheet(
                     // error partway through (see CLAUDE.md Roadmap item 21),
                     // this button is the only way out, and it must actually
                     // go somewhere rather than repeat a snackbar forever.
-                    if (_ledgerSessionLogged) {
+                    // No confirmation here — nothing new fires, this is pure
+                    // recovery navigation.
+                    if (_cookSequenceStarted) {
                       context.go(AppRoutes.home);
                       return;
                     }
-                    _postFrame(() {
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Nice work — plate up and enjoy.',
-                            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onInverseSurface),
-                          ),
-                          backgroundColor: theme.colorScheme.inverseSurface,
-                          behavior: SnackBarBehavior.floating,
-                          showCloseIcon: true,
-                          closeIconColor: theme.colorScheme.onInverseSurface,
-                        ),
-                      );
-                    });
-                    _postFrame(_logCookSessionCompletion);
+                    _postFrame(_confirmAndFinish);
                   },
                 )
               : _CookPlayerBar(
                   isPaused: _cookPaused,
-                  activeStepNumber: _activeStepIndex == null ? null : _activeStepIndex! + 1,
+                  activeStepNumber:
+                      _activeStepIndex == null ? null : _activeStepIndex! + 1,
                   remaining: _activeRemaining,
                   onPausePressed: () => _postFrame(_togglePause),
                   onNextPressed: () => _postFrame(() {
@@ -896,12 +1160,14 @@ child: WasteLedgerCelebrationSheet(
                     }
                   }),
                   onAskChefPressed: () => _postFrame(_openSos),
+                  onFinishPressed: () => _postFrame(_confirmAndFinish),
                 )),
       body: SafeArea(
         bottom: false,
         child: CustomScrollView(
           controller: _scrollController,
-          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+          physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics()),
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
@@ -916,11 +1182,19 @@ child: WasteLedgerCelebrationSheet(
                     const SizedBox(height: 14),
                     _IngredientsChecklistCard(
                       ingredients: _ingredients,
+                      cuts: _ingredientCuts,
                       checked: _checkedIngredientIndices(prepController),
-                      onToggle: (i) => prepController.togglePrepped(_ingredientKeys[i]),
-                      portions: _baseStructuredIngredients == null ? null : (_currentPortions ?? _basePortions),
-                      onIncreasePortions: _baseStructuredIngredients == null ? null : () => _changePortions(1),
-                      onDecreasePortions: _baseStructuredIngredients == null ? null : () => _changePortions(-1),
+                      onToggle: (i) =>
+                          prepController.togglePrepped(_ingredientKeys[i]),
+                      portions: _baseStructuredIngredients == null
+                          ? null
+                          : (_currentPortions ?? _basePortions),
+                      onIncreasePortions: _baseStructuredIngredients == null
+                          ? null
+                          : () => _changePortions(1),
+                      onDecreasePortions: _baseStructuredIngredients == null
+                          ? null
+                          : () => _changePortions(-1),
                     ),
                     const SizedBox(height: 14),
                     _StartCookingCard(
@@ -933,12 +1207,15 @@ child: WasteLedgerCelebrationSheet(
                         key: _stepKeys[i],
                         stepNumber: i + 1,
                         step: _steps[i],
-                        scienceNote: widget.recipe == null ? _scienceNoteForDemoStep(i) : null,
+                        scienceNote: widget.recipe == null
+                            ? _scienceNoteForDemoStep(i)
+                            : null,
                         isActive: _activeStepIndex == i,
                         isCompleted: _completedSteps?.contains(i) ?? false,
                         remaining: _remainingForStep(i),
                         cookStarted: _cookStarted,
-                        onToggleCompleted: () => _postFrame(() => _toggleStepComplete(i)),
+                        onToggleCompleted: () =>
+                            _postFrame(() => _toggleStepComplete(i)),
                       ),
                       const SizedBox(height: 12),
                     ],
@@ -963,8 +1240,10 @@ child: WasteLedgerCelebrationSheet(
           title: 'Evaporation → Browning (don\'t steam your mushrooms)',
           heatCue: 'Medium-high, then back off if the pan starts smoking.',
           timingNote: 'Wait for moisture to cook off before expecting color.',
-          knifeCutSpec: 'Slice mushrooms evenly so they brown at the same rate.',
-          whyThisWorks: 'Browning needs a dry surface. If water is still in the pan, you\'re boiling — not caramelizing.',
+          knifeCutSpec:
+              'Slice mushrooms evenly so they brown at the same rate.',
+          whyThisWorks:
+              'Browning needs a dry surface. If water is still in the pan, you\'re boiling — not caramelizing.',
           ratioSummary: 'Crowd less: one even layer beats "more" volume.',
         ),
       1 => const models.CulinaryMatrixCard(
@@ -973,7 +1252,8 @@ child: WasteLedgerCelebrationSheet(
           heatCue: 'Medium heat; steady sizzle, not aggressive frying.',
           timingNote: 'Stop when edges look slightly translucent (1–2 min).',
           knifeCutSpec: null,
-          whyThisWorks: 'A quick toast coats grains in fat and slows early starch leakage—giving you creaminess without gluey texture.',
+          whyThisWorks:
+              'A quick toast coats grains in fat and slows early starch leakage—giving you creaminess without gluey texture.',
           ratioSummary: 'Fat first → rice toast → liquid rhythm.',
         ),
       2 => const models.CulinaryMatrixCard(
@@ -982,16 +1262,19 @@ child: WasteLedgerCelebrationSheet(
           heatCue: 'Medium heat; keep a gentle simmer throughout.',
           timingNote: 'Add the next ladle only when the pan goes "almost dry".',
           knifeCutSpec: null,
-          whyThisWorks: 'Starch develops through friction + controlled hydration. Too much liquid at once dilutes agitation and slows thickening.',
+          whyThisWorks:
+              'Starch develops through friction + controlled hydration. Too much liquid at once dilutes agitation and slows thickening.',
           ratioSummary: 'Hot stock + small additions beats big pours.',
         ),
       3 => const models.CulinaryMatrixCard(
           id: 'risotto_mantecatura',
           title: 'Off-heat emulsion (mantecatura) = gloss + lift',
           heatCue: 'Fully off heat before butter + cheese.',
-          timingNote: 'Rest 60 seconds, then adjust looseness with a splash of hot stock.',
+          timingNote:
+              'Rest 60 seconds, then adjust looseness with a splash of hot stock.',
           knifeCutSpec: null,
-          whyThisWorks: 'Off-heat emulsification prevents the fat from breaking. You get a stable, glossy sauce that clings to each grain.',
+          whyThisWorks:
+              'Off-heat emulsification prevents the fat from breaking. You get a stable, glossy sauce that clings to each grain.',
           ratioSummary: 'Cold butter + grated cheese = emulsifier + body.',
         ),
       _ => null,
@@ -1002,7 +1285,11 @@ child: WasteLedgerCelebrationSheet(
 enum _HeatLevel { low, medium, mediumHigh, offHeat }
 
 class _CookStep {
-  const _CookStep({required this.actionTitle, required this.heat, required this.duration, required this.bullets});
+  const _CookStep(
+      {required this.actionTitle,
+      required this.heat,
+      required this.duration,
+      required this.bullets});
 
   final String actionTitle;
   final _HeatLevel heat;
@@ -1011,7 +1298,10 @@ class _CookStep {
 }
 
 class _CookModeHeader extends StatelessWidget {
-  const _CookModeHeader({required this.recipeTitle, required this.estimatedCookTime, required this.kitchenGear});
+  const _CookModeHeader(
+      {required this.recipeTitle,
+      required this.estimatedCookTime,
+      required this.kitchenGear});
 
   final String recipeTitle;
   final Duration estimatedCookTime;
@@ -1034,21 +1324,28 @@ class _CookModeHeader extends StatelessWidget {
       children: [
         Text(
           recipeTitle,
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+          style: theme.textTheme.headlineSmall
+              ?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 6),
         Wrap(
           spacing: 10,
           runSpacing: 10,
           children: [
-            _InfoPill(icon: Icons.timelapse, label: 'Est. time', value: _formatCookTime(estimatedCookTime), accent: theme.colorScheme.tertiary),
-            _InfoPill(icon: Icons.restaurant_menu, label: 'Mode', value: 'Cook Mode'),
+            _InfoPill(
+                icon: Icons.timelapse,
+                label: 'Est. time',
+                value: _formatCookTime(estimatedCookTime),
+                accent: theme.colorScheme.tertiary),
+            _InfoPill(
+                icon: Icons.restaurant_menu, label: 'Mode', value: 'Cook Mode'),
           ],
         ),
         const SizedBox(height: 12),
         Text(
           'Kitchen Gear Needed',
-          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+          style: theme.textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 10),
         SingleChildScrollView(
@@ -1068,7 +1365,11 @@ class _CookModeHeader extends StatelessWidget {
 }
 
 class _InfoPill extends StatelessWidget {
-  const _InfoPill({required this.icon, required this.label, required this.value, this.accent});
+  const _InfoPill(
+      {required this.icon,
+      required this.label,
+      required this.value,
+      this.accent});
 
   final IconData icon;
   final String label;
@@ -1084,7 +1385,8 @@ class _InfoPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.16)),
+        border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.16)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1092,16 +1394,22 @@ class _InfoPill extends StatelessWidget {
           Container(
             width: 32,
             height: 32,
-            decoration: BoxDecoration(color: a.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+            decoration: BoxDecoration(
+                color: a.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12)),
             child: Icon(icon, size: 18, color: a),
           ),
           const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              Text(label,
+                  style: theme.textTheme.labelMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
               const SizedBox(height: 2),
-              Text(value, style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900)),
+              Text(value,
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(fontWeight: FontWeight.w900)),
             ],
           ),
         ],
@@ -1123,14 +1431,18 @@ class _GearChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.16)),
+        border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.16)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.kitchen_outlined, size: 18, color: theme.colorScheme.primary),
+          Icon(Icons.kitchen_outlined,
+              size: 18, color: theme.colorScheme.primary),
           const SizedBox(width: 10),
-          Text(label, style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900)),
+          Text(label,
+              style: theme.textTheme.labelLarge
+                  ?.copyWith(fontWeight: FontWeight.w900)),
         ],
       ),
     );
@@ -1140,6 +1452,7 @@ class _GearChip extends StatelessWidget {
 class _IngredientsChecklistCard extends StatelessWidget {
   const _IngredientsChecklistCard({
     required this.ingredients,
+    required this.cuts,
     required this.checked,
     required this.onToggle,
     this.portions,
@@ -1148,6 +1461,12 @@ class _IngredientsChecklistCard extends StatelessWidget {
   });
 
   final List<String> ingredients;
+
+  /// Index-aligned with [ingredients]. A null entry means no cut is
+  /// recorded for that ingredient (missing field, older recipe, or no
+  /// structured data at all) — that row renders exactly as it did before
+  /// this field existed, no label, no reserved space.
+  final List<String?> cuts;
   final Set<int> checked;
   final ValueChanged<int> onToggle;
 
@@ -1199,43 +1518,59 @@ class _IngredientsChecklistCard extends StatelessWidget {
                 Container(
                   width: 40,
                   height: 40,
-                  decoration: BoxDecoration(color: theme.colorScheme.tertiary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14)),
-                  child: Icon(Icons.checklist_rounded, color: theme.colorScheme.tertiary),
+                  decoration: BoxDecoration(
+                      color: theme.colorScheme.tertiary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(14)),
+                  child: Icon(Icons.checklist_rounded,
+                      color: theme.colorScheme.tertiary),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Ingredients Checklist', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+                      Text('Ingredients Checklist',
+                          style: theme.textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w900)),
                       const SizedBox(height: 2),
                       Text(
                         'Check items off as you prep.',
-                        style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.35),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            height: 1.35),
                       ),
                     ],
                   ),
                 ),
                 if (ingredients.isNotEmpty)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
                       color: theme.colorScheme.tertiary.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: theme.colorScheme.tertiary.withValues(alpha: 0.18)),
+                      border: Border.all(
+                          color: theme.colorScheme.tertiary
+                              .withValues(alpha: 0.18)),
                     ),
                     child: Text(
                       '${checked.length}/${ingredients.length}',
-                      style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900),
+                      style: theme.textTheme.labelLarge
+                          ?.copyWith(fontWeight: FontWeight.w900),
                     ),
                   ),
               ],
             ),
-            if (portions != null && onIncreasePortions != null && onDecreasePortions != null) ...[
+            if (portions != null &&
+                onIncreasePortions != null &&
+                onDecreasePortions != null) ...[
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Text('Servings', style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800, color: theme.colorScheme.onSurfaceVariant)),
+                  Text('Servings',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.onSurfaceVariant)),
                   const Spacer(),
                   IconButton(
                     onPressed: onDecreasePortions,
@@ -1243,7 +1578,9 @@ class _IngredientsChecklistCard extends StatelessWidget {
                     color: theme.colorScheme.tertiary,
                     tooltip: 'Fewer servings',
                   ),
-                  Text('$portions', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+                  Text('$portions',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w900)),
                   IconButton(
                     onPressed: onIncreasePortions,
                     icon: const Icon(Icons.add_circle_outline),
@@ -1255,7 +1592,9 @@ class _IngredientsChecklistCard extends StatelessWidget {
             ],
             const SizedBox(height: 12),
             if (ingredients.isEmpty)
-              Text('No ingredients listed for this recipe.', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant))
+              Text('No ingredients listed for this recipe.',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant))
             else
               Column(
                 children: [
@@ -1263,6 +1602,7 @@ class _IngredientsChecklistCard extends StatelessWidget {
                     _IngredientChecklistRow(
                       ingredient: ingredients[i],
                       split: _splitIngredient(ingredients[i]),
+                      cut: i < cuts.length ? cuts[i] : null,
                       checked: checked.contains(i),
                       onToggle: () => onToggle(i),
                     ),
@@ -1278,20 +1618,50 @@ class _IngredientsChecklistCard extends StatelessWidget {
 }
 
 class _IngredientChecklistRow extends StatelessWidget {
-  const _IngredientChecklistRow({required this.ingredient, required this.split, required this.checked, required this.onToggle});
+  const _IngredientChecklistRow(
+      {required this.ingredient,
+      required this.split,
+      required this.cut,
+      required this.checked,
+      required this.onToggle});
 
   final String ingredient;
   final ({String name, String? note}) split;
+
+  /// Null renders this row exactly as it did before the cut field
+  /// existed — no label, no reserved space for one. `'none'` is real,
+  /// deliberate structured data (kept in the model and in storage) but is
+  /// also suppressed from rendering — every ingredient in the schema now
+  /// carries a cut, so pantry staples (salt, oil, stock) and whole items
+  /// (eggs, cheese) all come back as `'none'`, and a row of grey "none"
+  /// pills would tell the user nothing.
+  final String? cut;
   final bool checked;
   final VoidCallback onToggle;
+
+  void _showCutDefinition(BuildContext context, String cut) {
+    AppBottomSheet.show<void>(
+      context: context,
+      backgroundColor: AppDesignTokens.surfaceCream,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(child: _CutDefinitionSheet(cut: cut)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final border = checked ? theme.colorScheme.tertiary.withValues(alpha: 0.28) : theme.colorScheme.outline.withValues(alpha: 0.14);
-    final bg = checked ? theme.colorScheme.tertiary.withValues(alpha: 0.06) : theme.colorScheme.surface;
-    final titleColor = checked ? theme.colorScheme.onSurface.withValues(alpha: 0.55) : theme.colorScheme.onSurface;
+    final border = checked
+        ? theme.colorScheme.tertiary.withValues(alpha: 0.28)
+        : theme.colorScheme.outline.withValues(alpha: 0.14);
+    final bg = checked
+        ? theme.colorScheme.tertiary.withValues(alpha: 0.06)
+        : theme.colorScheme.surface;
+    final titleColor = checked
+        ? theme.colorScheme.onSurface.withValues(alpha: 0.55)
+        : theme.colorScheme.onSurface;
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1316,7 +1686,8 @@ class _IngredientChecklistRow extends StatelessWidget {
                 child: Checkbox(
                   value: checked,
                   onChanged: (_) => onToggle(),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6)),
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
               ),
@@ -1328,17 +1699,115 @@ class _IngredientChecklistRow extends StatelessWidget {
                 children: [
                   Text(
                     split.name,
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900, color: titleColor, decoration: checked ? TextDecoration.lineThrough : null),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: titleColor,
+                        decoration:
+                            checked ? TextDecoration.lineThrough : null),
                   ),
                   if (split.note != null) ...[
                     const SizedBox(height: 2),
                     Text(
                       split.note!,
-                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.3),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.3),
+                    ),
+                  ],
+                  if (cut != null && cut != 'none') ...[
+                    const SizedBox(height: 4),
+                    InkWell(
+                      onTap: () => _showCutDefinition(context, cut!),
+                      borderRadius: BorderRadius.circular(999),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.tertiary
+                              .withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                              color: theme.colorScheme.tertiary
+                                  .withValues(alpha: 0.20)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              ingredientCutLabel(cut!),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: theme.colorScheme.tertiary),
+                            ),
+                            const SizedBox(width: 3),
+                            Icon(Icons.info_outline_rounded,
+                                size: 12, color: theme.colorScheme.tertiary),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Reached by tapping an ingredient's cut label — shows the one-line,
+/// beginner-actionable definition from [ingredientCutDefinitions]. Never
+/// shown inline on every ingredient row, only on tap, per design.
+class _CutDefinitionSheet extends StatelessWidget {
+  const _CutDefinitionSheet({required this.cut});
+
+  final String cut;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final definition = ingredientCutDefinitions[cut] ?? 'No definition available for this cut yet.';
+
+    return Material(
+      color: AppDesignTokens.surfaceCream,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+                  decoration: BoxDecoration(
+                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                  ),
+                  child: const Icon(Icons.content_cut_rounded, color: AppDesignTokens.deepForest, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    ingredientCutLabel(cut),
+                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => context.pop(),
+                  icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              definition,
+              style: theme.textTheme.bodyMedium?.copyWith(color: AppDesignTokens.textCharcoal, height: 1.4, fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -1386,8 +1855,12 @@ class _CookStepCardState extends State<_CookStepCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final bg = widget.isActive ? theme.colorScheme.tertiary.withValues(alpha: 0.08) : theme.colorScheme.surface;
-    final border = widget.isActive ? theme.colorScheme.tertiary.withValues(alpha: 0.35) : theme.colorScheme.outline.withValues(alpha: 0.14);
+    final bg = widget.isActive
+        ? theme.colorScheme.tertiary.withValues(alpha: 0.08)
+        : theme.colorScheme.surface;
+    final border = widget.isActive
+        ? theme.colorScheme.tertiary.withValues(alpha: 0.35)
+        : theme.colorScheme.outline.withValues(alpha: 0.14);
     final hasScience = widget.scienceNote != null;
 
     return AnimatedContainer(
@@ -1419,15 +1892,20 @@ class _CookStepCardState extends State<_CookStepCard> {
                           ? theme.colorScheme.tertiary.withValues(alpha: 0.12)
                           : theme.colorScheme.primary.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.14)),
+                      border: Border.all(
+                          color: theme.colorScheme.outline
+                              .withValues(alpha: 0.14)),
                     ),
                     child: widget.isCompleted
-                        ? Icon(Icons.check_rounded, color: theme.colorScheme.tertiary)
+                        ? Icon(Icons.check_rounded,
+                            color: theme.colorScheme.tertiary)
                         : Text(
                             '${widget.stepNumber}',
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w900,
-                              color: widget.isActive ? theme.colorScheme.tertiary : theme.colorScheme.primary,
+                              color: widget.isActive
+                                  ? theme.colorScheme.tertiary
+                                  : theme.colorScheme.primary,
                             ),
                           ),
                   ),
@@ -1438,7 +1916,8 @@ class _CookStepCardState extends State<_CookStepCard> {
                       children: [
                         Text(
                           'Step ${widget.stepNumber}: ${widget.step.actionTitle}',
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                          style: theme.textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900),
                         ),
                         const SizedBox(height: 10),
                         Wrap(
@@ -1446,11 +1925,15 @@ class _CookStepCardState extends State<_CookStepCard> {
                           runSpacing: 10,
                           children: [
                             _HeatBadge(heat: widget.step.heat),
-                            _MiniPill(icon: Icons.timelapse, text: '~${widget.step.duration.inMinutes} min'),
+                            _MiniPill(
+                                icon: Icons.timelapse,
+                                text: '~${widget.step.duration.inMinutes} min'),
                             if (widget.cookStarted)
                               _MiniPill(
                                 icon: Icons.timer_outlined,
-                                text: widget.isActive ? _format(widget.remaining) : _format(widget.step.duration),
+                                text: widget.isActive
+                                    ? _format(widget.remaining)
+                                    : _format(widget.step.duration),
                               ),
                           ],
                         ),
@@ -1460,12 +1943,17 @@ class _CookStepCardState extends State<_CookStepCard> {
                   const SizedBox(width: 10),
                   IconButton(
                     onPressed: widget.onToggleCompleted,
-                    tooltip: widget.isCompleted ? 'Mark not done' : 'Mark complete',
+                    tooltip:
+                        widget.isCompleted ? 'Mark not done' : 'Mark complete',
                     icon: Icon(
-                      widget.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
+                      widget.isCompleted
+                          ? Icons.check_circle
+                          : Icons.radio_button_unchecked,
                       color: widget.isCompleted
                           ? theme.colorScheme.tertiary
-                          : (widget.isActive ? theme.colorScheme.tertiary : theme.colorScheme.onSurfaceVariant),
+                          : (widget.isActive
+                              ? theme.colorScheme.tertiary
+                              : theme.colorScheme.onSurfaceVariant),
                     ),
                   ),
                 ],
@@ -1479,7 +1967,8 @@ class _CookStepCardState extends State<_CookStepCard> {
                 const SizedBox(height: 4),
                 _ScienceNoteDisclosure(
                   isOpen: _isScienceOpen,
-                  onToggle: () => setState(() => _isScienceOpen = !_isScienceOpen),
+                  onToggle: () =>
+                      setState(() => _isScienceOpen = !_isScienceOpen),
                 ),
                 AnimatedSize(
                   duration: const Duration(milliseconds: 220),
@@ -1489,7 +1978,8 @@ class _CookStepCardState extends State<_CookStepCard> {
                       ? const SizedBox.shrink()
                       : Padding(
                           padding: const EdgeInsets.only(top: 10),
-                          child: matrix_widgets.CulinaryMatrixCard(matrix: widget.scienceNote!),
+                          child: matrix_widgets.CulinaryMatrixCard(
+                              matrix: widget.scienceNote!),
                         ),
                 ),
               ],
@@ -1498,17 +1988,23 @@ class _CookStepCardState extends State<_CookStepCard> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+                    color: theme.colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.22),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.14)),
+                    border: Border.all(
+                        color:
+                            theme.colorScheme.outline.withValues(alpha: 0.14)),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.play_circle_fill, color: theme.colorScheme.tertiary),
+                      Icon(Icons.play_circle_fill,
+                          color: theme.colorScheme.tertiary),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          widget.isCompleted ? 'Completed' : 'Hands-free timer is running for this step.',
+                          widget.isCompleted
+                              ? 'Completed'
+                              : 'Hands-free timer is running for this step.',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                             height: 1.35,
@@ -1536,7 +2032,8 @@ class _ScienceNoteDisclosure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final bg = theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.18);
+    final bg =
+        theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.18);
     final border = theme.colorScheme.outline.withValues(alpha: 0.14);
 
     return Semantics(
@@ -1556,12 +2053,14 @@ class _ScienceNoteDisclosure extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(Icons.auto_awesome, size: 18, color: theme.colorScheme.tertiary),
+              Icon(Icons.auto_awesome,
+                  size: 18, color: theme.colorScheme.tertiary),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   "Chef's Science Note",
-                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w900),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1569,7 +2068,8 @@ class _ScienceNoteDisclosure extends StatelessWidget {
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
                 turns: isOpen ? 0.5 : 0,
-                child: Icon(Icons.expand_more_rounded, color: theme.colorScheme.onSurfaceVariant),
+                child: Icon(Icons.expand_more_rounded,
+                    color: theme.colorScheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -1601,18 +2101,24 @@ class _StartCookingCard extends StatelessWidget {
                 color: theme.colorScheme.tertiary.withValues(alpha: 0.14),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(Icons.play_arrow_rounded, color: theme.colorScheme.tertiary),
+              child: Icon(Icons.play_arrow_rounded,
+                  color: theme.colorScheme.tertiary),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Start Cooking', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+                  Text('Start Cooking',
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w900)),
                   const SizedBox(height: 4),
                   Text(
-                    started ? 'Player is active — follow the highlighted step.' : 'Kick off Step 1 and enable hands-free auto-advance.',
-                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.4),
+                    started
+                        ? 'Player is active — follow the highlighted step.'
+                        : 'Kick off Step 1 and enable hands-free auto-advance.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant, height: 1.4),
                   ),
                 ],
               ),
@@ -1625,10 +2131,12 @@ class _StartCookingCard extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: theme.colorScheme.tertiary,
                   foregroundColor: theme.colorScheme.onTertiary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                   padding: const EdgeInsets.symmetric(horizontal: 18),
                 ),
-                child: Text(started ? 'Live' : 'Start', style: const TextStyle(fontWeight: FontWeight.w900)),
+                child: Text(started ? 'Live' : 'Start',
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
               ),
             ),
           ],
@@ -1646,6 +2154,7 @@ class _CookPlayerBar extends StatelessWidget {
     required this.onPausePressed,
     required this.onNextPressed,
     required this.onAskChefPressed,
+    required this.onFinishPressed,
   });
 
   final bool isPaused;
@@ -1654,6 +2163,12 @@ class _CookPlayerBar extends StatelessWidget {
   final VoidCallback onPausePressed;
   final VoidCallback onNextPressed;
   final VoidCallback onAskChefPressed;
+
+  /// Skip-ahead Finish & Plate — reachable from any step during an active
+  /// cook, not only once every step is ticked (CLAUDE.md Roadmap item 28).
+  /// The caller (`_confirmAndFinish`) shows a confirmation before this ever
+  /// actually fires the completion sequence.
+  final VoidCallback onFinishPressed;
 
   String _format(Duration d) {
     final mins = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -1666,14 +2181,20 @@ class _CookPlayerBar extends StatelessWidget {
     final theme = Theme.of(context);
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
 
-    final title = activeStepNumber == null ? 'All steps complete' : 'Active Step $activeStepNumber';
-    final subtitle = activeStepNumber == null ? 'You’re done — plate up.' : 'Remaining: ${_format(remaining)}';
+    final title = activeStepNumber == null
+        ? 'All steps complete'
+        : 'Active Step $activeStepNumber';
+    final subtitle = activeStepNumber == null
+        ? 'You’re done — plate up.'
+        : 'Remaining: ${_format(remaining)}';
 
     return Container(
       padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottom),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        border: Border(top: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.14))),
+        border: Border(
+            top: BorderSide(
+                color: theme.colorScheme.outline.withValues(alpha: 0.14))),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1684,9 +2205,14 @@ class _CookPlayerBar extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+                    Text(title,
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w900)),
                     const SizedBox(height: 2),
-                    Text(subtitle, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.3)),
+                    Text(subtitle,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            height: 1.3)),
                   ],
                 ),
               ),
@@ -1696,10 +2222,13 @@ class _CookPlayerBar extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: theme.colorScheme.tertiary,
                   foregroundColor: theme.colorScheme.onTertiary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
-                icon: Icon(isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
-                label: Text(isPaused ? 'Resume' : 'Pause', style: const TextStyle(fontWeight: FontWeight.w900)),
+                icon: Icon(
+                    isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
+                label: Text(isPaused ? 'Resume' : 'Pause',
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
               ),
             ],
           ),
@@ -1713,10 +2242,12 @@ class _CookPlayerBar extends StatelessWidget {
                     onPressed: activeStepNumber == null ? null : onNextPressed,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: theme.colorScheme.onSurface,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
                     ),
                     icon: const Icon(Icons.skip_next_rounded),
-                    label: const Text('Next Step', style: TextStyle(fontWeight: FontWeight.w900)),
+                    label: const Text('Next Step',
+                        style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ),
               ),
@@ -1729,16 +2260,125 @@ class _CookPlayerBar extends StatelessWidget {
                     style: FilledButton.styleFrom(
                       backgroundColor: theme.colorScheme.primary,
                       foregroundColor: theme.colorScheme.onPrimary,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
                     ),
                     icon: const Icon(Icons.support_agent),
-                    label: Text('Ask ${AppBrand.assistantName}', style: const TextStyle(fontWeight: FontWeight.w900)),
+                    label: Text('Ask ${AppBrand.assistantName}',
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 4),
+          // Deliberately quieter than the two rows above — a rarer,
+          // consequential action (skips remaining steps, fires a permanent
+          // ledger write subject to a confirmation) rather than a routine
+          // one. See CLAUDE.md Roadmap item 28.
+          TextButton.icon(
+            onPressed: activeStepNumber == null ? null : onFinishPressed,
+            style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.onSurfaceVariant),
+            icon: const Icon(Icons.restaurant, size: 18),
+            label: const Text('Finish & Plate',
+                style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Confirmation before Finish & Plate fires — it triggers a permanent
+/// ledger write (for rescue-eligible, non-re-cook sessions) and skips
+/// straight to the post-cook sequence, so an accidental tap would end the
+/// session early. Returns true if confirmed. See CLAUDE.md Roadmap item 28.
+class _FinishAndPlateConfirmSheet extends StatelessWidget {
+  const _FinishAndPlateConfirmSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Material(
+      color: AppDesignTokens.surfaceCream,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+                  decoration: BoxDecoration(
+                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color:
+                            AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                  ),
+                  child: const Icon(Icons.restaurant,
+                      color: AppDesignTokens.deepForest, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Finish & Plate now?',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: AppDesignTokens.textCharcoal),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              "This ends the cook now and skips any remaining steps — you won't come back to them.",
+              style: theme.textTheme.bodyMedium?.copyWith(
+                  color: AppDesignTokens.textCharcoal,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: AppSizing.primaryButtonHeight,
+              child: FilledButton(
+                onPressed: () => context.pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppDesignTokens.ctaTerracotta,
+                  foregroundColor: scheme.onTertiary,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18)),
+                ),
+                child: Text(
+                  'Finish & Plate',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.onTertiary, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => context.pop(false),
+                child: Text(
+                  'Keep cooking',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                      color:
+                          AppDesignTokens.textCharcoal.withValues(alpha: 0.75),
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1753,21 +2393,47 @@ class _HeatBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final (label, icon, bg, fg) = switch (heat) {
-      _HeatLevel.low => ('Low Heat', Icons.local_fire_department_outlined, theme.colorScheme.primary.withValues(alpha: 0.10), theme.colorScheme.primary),
-      _HeatLevel.medium => ('Medium Heat', Icons.local_fire_department_outlined, theme.colorScheme.tertiary.withValues(alpha: 0.12), theme.colorScheme.tertiary),
-      _HeatLevel.mediumHigh => ('Medium-High', Icons.whatshot_outlined, theme.colorScheme.tertiary.withValues(alpha: 0.16), theme.colorScheme.tertiary),
-      _HeatLevel.offHeat => ('Off-Heat', Icons.power_settings_new_rounded, theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35), theme.colorScheme.onSurfaceVariant),
+      _HeatLevel.low => (
+          'Low Heat',
+          Icons.local_fire_department_outlined,
+          theme.colorScheme.primary.withValues(alpha: 0.10),
+          theme.colorScheme.primary
+        ),
+      _HeatLevel.medium => (
+          'Medium Heat',
+          Icons.local_fire_department_outlined,
+          theme.colorScheme.tertiary.withValues(alpha: 0.12),
+          theme.colorScheme.tertiary
+        ),
+      _HeatLevel.mediumHigh => (
+          'Medium-High',
+          Icons.whatshot_outlined,
+          theme.colorScheme.tertiary.withValues(alpha: 0.16),
+          theme.colorScheme.tertiary
+        ),
+      _HeatLevel.offHeat => (
+          'Off-Heat',
+          Icons.power_settings_new_rounded,
+          theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+          theme.colorScheme.onSurfaceVariant
+        ),
     };
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999), border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.14))),
+      decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+              color: theme.colorScheme.outline.withValues(alpha: 0.14))),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 16, color: fg),
           const SizedBox(width: 8),
-          Text(label, style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900, color: fg)),
+          Text(label,
+              style: theme.textTheme.labelLarge
+                  ?.copyWith(fontWeight: FontWeight.w900, color: fg)),
         ],
       ),
     );
@@ -1788,14 +2454,17 @@ class _MiniPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.16)),
+        border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.16)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 16, color: theme.colorScheme.primary),
           const SizedBox(width: 8),
-          Text(text, style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900)),
+          Text(text,
+              style: theme.textTheme.labelLarge
+                  ?.copyWith(fontWeight: FontWeight.w900)),
         ],
       ),
     );
@@ -1815,10 +2484,13 @@ class _BulletLine extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(top: 6),
-          child: Icon(Icons.fiber_manual_record, size: 10, color: theme.colorScheme.tertiary),
+          child: Icon(Icons.fiber_manual_record,
+              size: 10, color: theme.colorScheme.tertiary),
         ),
         const SizedBox(width: 10),
-        Expanded(child: Text(text, style: theme.textTheme.bodyMedium?.copyWith(height: 1.45))),
+        Expanded(
+            child: Text(text,
+                style: theme.textTheme.bodyMedium?.copyWith(height: 1.45))),
       ],
     );
   }
@@ -1842,19 +2514,26 @@ class _FlavorCheckpointCard extends StatelessWidget {
                 Container(
                   width: 42,
                   height: 42,
-                  decoration: BoxDecoration(color: theme.colorScheme.tertiary.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(16)),
-                  child: Icon(Icons.auto_awesome, color: theme.colorScheme.tertiary),
+                  decoration: BoxDecoration(
+                      color: theme.colorScheme.tertiary.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(16)),
+                  child: Icon(Icons.auto_awesome,
+                      color: theme.colorScheme.tertiary),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Chef Harris Flavor Checkpoint', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+                      Text('Chef Harris Flavor Checkpoint',
+                          style: theme.textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900)),
                       const SizedBox(height: 4),
                       Text(
                         'Taste now. Adjust off-heat so the finish stays clean and glossy.',
-                        style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.45),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            height: 1.45),
                       ),
                     ],
                   ),
@@ -1891,7 +2570,8 @@ class _FlavorCheckpointCard extends StatelessWidget {
 }
 
 class _CheckpointActionChip extends StatelessWidget {
-  const _CheckpointActionChip({required this.icon, required this.label, required this.response});
+  const _CheckpointActionChip(
+      {required this.icon, required this.label, required this.response});
 
   final IconData icon;
   final String label;
@@ -1902,11 +2582,15 @@ class _CheckpointActionChip extends StatelessWidget {
     final theme = Theme.of(context);
     return ActionChip(
       avatar: Icon(icon, size: 18, color: theme.colorScheme.tertiary),
-      label: Text(label, style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900)),
+      label: Text(label,
+          style: theme.textTheme.labelLarge
+              ?.copyWith(fontWeight: FontWeight.w900)),
       onPressed: () {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(response, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onInverseSurface)),
+            content: Text(response,
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: theme.colorScheme.onInverseSurface)),
             backgroundColor: theme.colorScheme.inverseSurface,
             behavior: SnackBarBehavior.floating,
             showCloseIcon: true,
@@ -1919,7 +2603,8 @@ class _CheckpointActionChip extends StatelessWidget {
 }
 
 class _CookModeBottomBar extends StatelessWidget {
-  const _CookModeBottomBar({required this.onSosPressed, required this.onFinishPressed});
+  const _CookModeBottomBar(
+      {required this.onSosPressed, required this.onFinishPressed});
 
   final VoidCallback onSosPressed;
   final VoidCallback onFinishPressed;
@@ -1932,7 +2617,9 @@ class _CookModeBottomBar extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottom),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        border: Border(top: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.14))),
+        border: Border(
+            top: BorderSide(
+                color: theme.colorScheme.outline.withValues(alpha: 0.14))),
       ),
       child: Row(
         children: [
@@ -1943,10 +2630,12 @@ class _CookModeBottomBar extends StatelessWidget {
                 onPressed: onSosPressed,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: theme.colorScheme.onSurface,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                 ),
                 icon: const Icon(Icons.support_agent),
-                label: Text('Live ${AppBrand.assistantName} SOS', style: const TextStyle(fontWeight: FontWeight.w900)),
+                label: Text('Live ${AppBrand.assistantName} SOS',
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
               ),
             ),
           ),
@@ -1959,10 +2648,12 @@ class _CookModeBottomBar extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: theme.colorScheme.primary,
                   foregroundColor: theme.colorScheme.onPrimary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                 ),
                 icon: const Icon(Icons.restaurant),
-                label: const Text('Finish & Plate', style: TextStyle(fontWeight: FontWeight.w900)),
+                label: const Text('Finish & Plate',
+                    style: TextStyle(fontWeight: FontWeight.w900)),
               ),
             ),
           ),
@@ -1973,7 +2664,8 @@ class _CookModeBottomBar extends StatelessWidget {
 }
 
 class _StartCookingBottomBar extends StatelessWidget {
-  const _StartCookingBottomBar({required this.onSosPressed, required this.onStartPressed});
+  const _StartCookingBottomBar(
+      {required this.onSosPressed, required this.onStartPressed});
 
   final VoidCallback onSosPressed;
   final VoidCallback onStartPressed;
@@ -1986,7 +2678,9 @@ class _StartCookingBottomBar extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottom),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        border: Border(top: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.14))),
+        border: Border(
+            top: BorderSide(
+                color: theme.colorScheme.outline.withValues(alpha: 0.14))),
       ),
       child: Row(
         children: [
@@ -1997,10 +2691,12 @@ class _StartCookingBottomBar extends StatelessWidget {
                 onPressed: onSosPressed,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: theme.colorScheme.onSurface,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                 ),
                 icon: const Icon(Icons.support_agent),
-                label: Text('Live ${AppBrand.assistantName} SOS', style: const TextStyle(fontWeight: FontWeight.w900)),
+                label: Text('Live ${AppBrand.assistantName} SOS',
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
               ),
             ),
           ),
@@ -2013,10 +2709,12 @@ class _StartCookingBottomBar extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: theme.colorScheme.tertiary,
                   foregroundColor: theme.colorScheme.onTertiary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                 ),
                 icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text('Start Cooking', style: TextStyle(fontWeight: FontWeight.w900)),
+                label: const Text('Start Cooking',
+                    style: TextStyle(fontWeight: FontWeight.w900)),
               ),
             ),
           ),
@@ -2027,7 +2725,8 @@ class _StartCookingBottomBar extends StatelessWidget {
 }
 
 class _SosTipCard extends StatelessWidget {
-  const _SosTipCard({required this.icon, required this.title, required this.body});
+  const _SosTipCard(
+      {required this.icon, required this.title, required this.body});
 
   final IconData icon;
   final String title;
@@ -2041,7 +2740,8 @@ class _SosTipCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceVariant.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.14)),
+        border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.14)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2060,9 +2760,14 @@ class _SosTipCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+                Text(title,
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
-                Text(body, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.45)),
+                Text(body,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        height: 1.45)),
               ],
             ),
           ),
@@ -2073,10 +2778,19 @@ class _SosTipCard extends StatelessWidget {
 }
 
 class _ChefSosSheet extends StatefulWidget {
-  const _ChefSosSheet({required this.recipeTitle, required this.quickPrompts});
+  const _ChefSosSheet(
+      {required this.recipeTitle,
+      required this.quickPrompts,
+      required this.recipeContext});
 
   final String recipeTitle;
   final List<String> quickPrompts;
+
+  /// The recipe as written (ingredients, steps, current-step marker) —
+  /// see `_OnePanCookingRoadmapScreenState._buildSosRecipeContext`. Passed
+  /// through to every `askChefHarris` call so answers stay grounded in
+  /// what the recipe actually says.
+  final String recipeContext;
 
   @override
   State<_ChefSosSheet> createState() => _ChefSosSheetState();
@@ -2128,14 +2842,30 @@ class _ChefSosSheetState extends State<_ChefSosSheet> {
 
     try {
       final profile = context.read<UserProfileController>().profile;
-      final reply = await _chefService.askChefHarris(userQuery: text, recipeTitle: widget.recipeTitle, profile: profile);
+      // History = everything before the user message just appended above —
+      // that message is already carried as `userQuery`, so including it
+      // here too would duplicate it.
+      final history = _messages.length > 1
+          ? _messages
+              .sublist(0, _messages.length - 1)
+              .map((m) => (isUser: m.speaker == _SosSpeaker.user, text: m.text))
+              .toList(growable: false)
+          : const <({bool isUser, String text})>[];
+      final reply = await _chefService.askChefHarris(
+        userQuery: text,
+        recipeTitle: widget.recipeTitle,
+        profile: profile,
+        recipeContext: widget.recipeContext,
+        conversationHistory: history,
+      );
       if (!mounted) return;
       setState(() => _messages.add(_SosMessage.chef(reply)));
       _postFrame(_scrollToBottom);
     } catch (e) {
       debugPrint('Chef SOS send failed: $e');
       if (!mounted) return;
-      setState(() => _error = 'Couldn\'t reach Chef Harris. Try again in a moment.');
+      setState(
+          () => _error = 'Couldn\'t reach Chef Harris. Try again in a moment.');
     } finally {
       if (!mounted) return;
       setState(() => _isSending = false);
@@ -2167,110 +2897,159 @@ class _ChefSosSheetState extends State<_ChefSosSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Ask Chef Harris',
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Fast rescue steps + smart substitutions.',
-                          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.35),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: _closeSheet,
-                    tooltip: 'Back to cooking',
-                    icon: Icon(Icons.close_rounded, color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (_messages.isEmpty) ...[
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      for (final p in widget.quickPrompts)
-                        ActionChip(
-                          label: Text(p, style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800)),
-                          onPressed: _isSending
-                              ? null
-                              : () {
-                                  _controller.text = p.replaceAll(RegExp(r'^[^A-Za-z0-9]+\s*'), '');
-                                  _controller.selection = TextSelection.collapsed(offset: _controller.text.length);
-                                  _postFrame(() => _send(_controller.text));
-                                },
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
-              ],
-              Flexible(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.14)),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: _messages.isEmpty
-                        ? Padding(
-                            padding: const EdgeInsets.all(14),
+              // Everything except the input row lives inside this Expanded,
+              // which gives the inner Column below a genuinely bounded
+              // (not infinite, not a fixed fraction of screen height) max
+              // height — whatever's actually left after the input row and
+              // AnimatedPadding's keyboard-inset padding above. Within that
+              // bounded context, the header and quick prompts take their
+              // natural size and the message box is the inner Column's own
+              // Expanded child, so it gets exactly the true remaining
+              // space — no gap, no fixed guess. It's also the ONLY
+              // scrollable in this whole sheet now (no outer
+              // SingleChildScrollView competing with it for drag gestures,
+              // which is what caused messages to appear clipped instead of
+              // scrolling last time). The input row stays a plain sibling
+              // of this Expanded, never wrapped in anything scrollable —
+              // always visible.
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                        children: [
+                          Expanded(
                             child: Column(
-                              mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _SosTipCard(
-                                  icon: Icons.pan_tool_alt_rounded,
-                                  title: 'Tell me what you see',
-                                  body: '“Too watery”, “too salty”, “nothing is browning”, or “timer done but rice still hard”.',
+                                Text(
+                                  'Ask Chef Harris',
+                                  style: theme.textTheme.titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.w900),
                                 ),
-                                const SizedBox(height: 10),
-                                _SosTipCard(
-                                  icon: Icons.storefront,
-                                  title: 'Missing an ingredient?',
-                                  body: 'Say what you have — I\'ll give a 1:1 substitute.',
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Fast rescue steps + smart substitutions.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                      height: 1.35),
                                 ),
                               ],
                             ),
-                          )
-                        : ListView.builder(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                            itemCount: _messages.length + (_isSending ? 1 : 0),
-                            itemBuilder: (context, index) {
-                              if (_isSending && index == _messages.length) {
-                                return const _ChefTypingBubble();
-                              }
-                              final m = _messages[index];
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 10),
-                                child: _SosBubble(message: m),
-                              );
-                            },
                           ),
+                          IconButton(
+                            onPressed: _closeSheet,
+                            tooltip: 'Back to cooking',
+                            icon: Icon(Icons.close_rounded,
+                                color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (_messages.isEmpty) ...[
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              for (final p in widget.quickPrompts)
+                                ActionChip(
+                                  label: Text(p,
+                                      style: theme.textTheme.labelLarge
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w800)),
+                                  onPressed: _isSending
+                                      ? null
+                                      : () {
+                                          _controller.text = p.replaceAll(
+                                              RegExp(r'^[^A-Za-z0-9]+\s*'), '');
+                                          _controller.selection =
+                                              TextSelection.collapsed(
+                                                  offset:
+                                                      _controller.text.length);
+                                          _postFrame(
+                                              () => _send(_controller.text));
+                                        },
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+                      Expanded(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surface,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                                color: theme.colorScheme.outline
+                                    .withValues(alpha: 0.14)),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: _messages.isEmpty
+                                ? Padding(
+                                    padding: const EdgeInsets.all(14),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _SosTipCard(
+                                          icon: Icons.pan_tool_alt_rounded,
+                                          title: 'Tell me what you see',
+                                          body:
+                                              '“Too watery”, “too salty”, “nothing is browning”, or “timer done but rice still hard”.',
+                                        ),
+                                        const SizedBox(height: 10),
+                                        _SosTipCard(
+                                          icon: Icons.storefront,
+                                          title: 'Missing an ingredient?',
+                                          body:
+                                              'Say what you have — I\'ll give a 1:1 substitute.',
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : ListView.builder(
+                                    controller: _scrollController,
+                                    // Extra right padding (vs. 14 on the
+                                    // other sides) so bubble content clears
+                                    // the system scrollbar overlay instead
+                                    // of running underneath it.
+                                    padding: const EdgeInsets.fromLTRB(
+                                        14, 14, 20, 14),
+                                    itemCount:
+                                        _messages.length + (_isSending ? 1 : 0),
+                                    itemBuilder: (context, index) {
+                                      if (_isSending &&
+                                          index == _messages.length) {
+                                        return const _ChefTypingBubble();
+                                      }
+                                      final m = _messages[index];
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 10),
+                                        child: _SosBubble(message: m),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ),
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(_error!,
+                              style: theme.textTheme.bodyMedium
+                                  ?.copyWith(color: theme.colorScheme.error)),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(_error!, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error)),
-                ),
-              ],
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -2284,20 +3063,28 @@ class _ChefSosSheetState extends State<_ChefSosSheet> {
                       decoration: InputDecoration(
                         hintText: 'What\'s going wrong in the pan?',
                         filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+                        fillColor: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.22),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.18)),
+                          borderSide: BorderSide(
+                              color: theme.colorScheme.outline
+                                  .withValues(alpha: 0.18)),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.18)),
+                          borderSide: BorderSide(
+                              color: theme.colorScheme.outline
+                                  .withValues(alpha: 0.18)),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(color: theme.colorScheme.primary.withValues(alpha: 0.55)),
+                          borderSide: BorderSide(
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.55)),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 14),
                       ),
                     ),
                   ),
@@ -2305,11 +3092,13 @@ class _ChefSosSheetState extends State<_ChefSosSheet> {
                   SizedBox(
                     height: 52,
                     child: FilledButton(
-                      onPressed: _isSending ? null : () => _send(_controller.text),
+                      onPressed:
+                          _isSending ? null : () => _send(_controller.text),
                       style: FilledButton.styleFrom(
                         backgroundColor: theme.colorScheme.primary,
                         foregroundColor: theme.colorScheme.onPrimary,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                       ),
                       child: const Icon(Icons.send_rounded),
@@ -2333,8 +3122,10 @@ class _SosMessage {
   final _SosSpeaker speaker;
   final String text;
 
-  factory _SosMessage.user(String text) => _SosMessage(speaker: _SosSpeaker.user, text: text);
-  factory _SosMessage.chef(String text) => _SosMessage(speaker: _SosSpeaker.chef, text: text);
+  factory _SosMessage.user(String text) =>
+      _SosMessage(speaker: _SosSpeaker.user, text: text);
+  factory _SosMessage.chef(String text) =>
+      _SosMessage(speaker: _SosSpeaker.chef, text: text);
 }
 
 class _SosBubble extends StatelessWidget {
@@ -2347,8 +3138,11 @@ class _SosBubble extends StatelessWidget {
     final theme = Theme.of(context);
     final isUser = message.speaker == _SosSpeaker.user;
 
-    final bg = isUser ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22);
-    final fg = isUser ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface;
+    final bg = isUser
+        ? theme.colorScheme.primary
+        : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22);
+    final fg =
+        isUser ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface;
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -2358,13 +3152,17 @@ class _SosBubble extends StatelessWidget {
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(18),
-            border: isUser ? null : Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.14)),
+            border: isUser
+                ? null
+                : Border.all(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.14)),
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Text(
               message.text,
-              style: theme.textTheme.bodyMedium?.copyWith(color: fg, height: 1.45),
+              style:
+                  theme.textTheme.bodyMedium?.copyWith(color: fg, height: 1.45),
             ),
           ),
         ),
@@ -2384,9 +3182,11 @@ class _ChefTypingBubble extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+          color:
+              theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.14)),
+          border: Border.all(
+              color: theme.colorScheme.outline.withValues(alpha: 0.14)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -2394,12 +3194,14 @@ class _ChefTypingBubble extends StatelessWidget {
             SizedBox(
               width: 16,
               height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2, color: theme.colorScheme.primary),
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: theme.colorScheme.primary),
             ),
             const SizedBox(width: 10),
             Text(
               'Chef Harris is thinking…',
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ],
         ),

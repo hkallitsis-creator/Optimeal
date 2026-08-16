@@ -149,7 +149,10 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }
 
     if (!mounted) return;
-    final completed = await context.push<bool>(AppRoutes.onePanCookingRoadmap, extra: recipe);
+    final completed = await context.push<bool>(
+      AppRoutes.onePanCookingRoadmap,
+      extra: CookModeLaunchRequest(recipe: recipe, surface: CookModeSurface.weeklyPlanner),
+    );
     if (!mounted) return;
     if (completed == true) {
       _markMealCooked(dayIndex: dayIndex, slotIndex: slotIndex);
@@ -305,7 +308,13 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     'ingredients': payload.ingredients,
     'kitchen_gear': payload.kitchenGear,
     'steps': payload.steps
-        .map((s) => {'title': s.title, 'heat': s.heat, 'duration_minutes': s.durationMinutes, 'bullets': s.bullets})
+        .map((s) => {
+              'title': s.title,
+              'heat': s.heat,
+              'duration_minutes': s.durationMinutes,
+              'bullets': s.bullets,
+              'ingredients_added': s.ingredientsAdded,
+            })
         .toList(growable: false),
     'description': payload.description,
     'structured_ingredients': payload.structuredIngredients?.map((i) => i.toJson()).toList(),
@@ -355,7 +364,16 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
             }
           }
           if (bullets.isEmpty) bullets.add('Keep going and taste as you go.');
-          steps.add(CookModeStepPayload(title: stepTitle, heat: heat, durationMinutes: duration, bullets: bullets));
+          final ingredientsAddedRaw = s['ingredients_added'] ?? s['ingredientsAdded'];
+          final ingredientsAdded =
+              ingredientsAddedRaw is List ? ingredientsAddedRaw.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList() : null;
+          steps.add(CookModeStepPayload(
+            title: stepTitle,
+            heat: heat,
+            durationMinutes: duration,
+            bullets: bullets,
+            ingredientsAdded: (ingredientsAdded?.isEmpty ?? true) ? null : ingredientsAdded,
+          ));
         }
       }
 

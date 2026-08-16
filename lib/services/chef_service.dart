@@ -12,6 +12,22 @@ import 'package:optimeal/chef_curiculum_lookups.dart';
 class ChefService {
   ChefService();
 
+  /// Every curriculum drawer key a generated recipe may declare as what it
+  /// teaches — sourced directly from the drawer maps below, so this list
+  /// can never contain a key that doesn't actually exist, or omit one
+  /// that does. Single source of truth for both the prompt (what values
+  /// the model is told are legal) and the parser (what values are
+  /// accepted on the way back) — see [ChefRecipeSurface] callers for the
+  /// "curriculum_lesson_id" field this backs.
+  ///
+  /// Excludes 'general_tips' — a generic SOS fallback, not a taught
+  /// lesson (same exclusion the old keyword-matching already made in
+  /// [matchedCurriculumDrawerKeys] and [featurableDrawerKeys]).
+  static final List<String> curriculumDrawerKeys = [
+    ...chefTechniqueDrawers.keys,
+    ...chefReferenceDrawers.keys.where((k) => k != 'general_tips'),
+  ];
+
   /// Full Chef Harris persona. Keep this unshortened so responses stay consistent.
   static const String _systemPersona =
       'You are Chef Harris, a European culinary generalist and strategist with a dry, warm sense of humor and an obsession with precise cooking. '
@@ -21,12 +37,10 @@ class ChefService {
       '- Role: Professional chef and culinary strategist trained across European kitchens, with no single home base — draws equally from French technique, Italian simplicity, and other regional traditions.\n'
       '- Style: Practical and no-nonsense, with Mediterranean warmth; efficient, structured, no guesswork.\n'
       '- Personality: Dry, warm wit — a clever line is welcome, but never at the expense of clarity.\n\n'
-
       'PERSONALITY & HUMOR RULES:\n'
       '- BE WITTY IN TIPS & VOICE: Include a playful, clever culinary remark inside Chef Harris “checkpoint” notes or conversational responses.\n'
       '  Example: "Don\'t rush the onions—caramelization requires patience, not enthusiasm!"\n'
       '- HIGH PRECISION IN STEPS: Keep actual cooking steps crystal-clear, concise, and technical. Do NOT hide instructions inside jokes.\n\n'
-
       'FEW-SHOT VOICE EXAMPLES (match this exact balance of dry wit + precision — do not copy these verbatim, use them only as a tone/structure reference):\n\n'
       'Example 1 — conversational SOS reply:\n'
       'User: "My risotto looks like wet cement."\n'
@@ -34,7 +48,6 @@ class ChefService {
       'Stir gently and it\'ll tighten right up. Patience now, glory later. Happy cooking! — Chef Harris"\n\n'
       'Example 2 — a step bullet inside a generated recipe (shows wit folded into an instruction, not replacing it):\n'
       '"Sauté the onions on medium for 6–8 min until translucent — rushing this step is how you end up with regret instead of caramelization."\n\n'
-
       'CRITICAL COOKING & GENERATION RULES (ALWAYS):\n'
       '1) PRECISION TECHNIQUES: Never write vague instructions. Specify exact pan sizes, oil quantities (e.g., "1 tbsp / 15ml"), '
       'heat levels ("Medium-High"), and visual cues ("sauté 3 min until edges turn translucent and lightly golden").\n'
@@ -125,12 +138,48 @@ class ChefService {
 
     // --- Reference drawers: a few trigger keywords per topic.
     const referenceTriggers = <String, List<String>>{
-      'mise_en_place': ['mise en place', 'prep order', 'organize my prep', 'game plan'],
-      'food_storage': ['storage', 'store this', 'fridge', 'freezer', 'shelf life', 'leftovers', 'how long does'],
-      'cross_contamination': ['cross contamination', 'raw chicken', 'raw meat', 'food safety', 'same board'],
-      'knife_grip_mechanics': ['knife grip', 'hold the knife', 'knife technique', 'claw grip'],
-      'core_knife_cuts': ['julienne', 'brunoise', 'dice', 'chiffonade', 'knife cut', 'how do i cut', 'how to cut'],
-      'knife_safety_protocol': ['knife safety', 'cut myself', 'safe with a knife'],
+      'mise_en_place': [
+        'mise en place',
+        'prep order',
+        'organize my prep',
+        'game plan'
+      ],
+      'food_storage': [
+        'storage',
+        'store this',
+        'fridge',
+        'freezer',
+        'shelf life',
+        'leftovers',
+        'how long does'
+      ],
+      'cross_contamination': [
+        'cross contamination',
+        'raw chicken',
+        'raw meat',
+        'food safety',
+        'same board'
+      ],
+      'knife_grip_mechanics': [
+        'knife grip',
+        'hold the knife',
+        'knife technique',
+        'claw grip'
+      ],
+      'core_knife_cuts': [
+        'julienne',
+        'brunoise',
+        'dice',
+        'chiffonade',
+        'knife cut',
+        'how do i cut',
+        'how to cut'
+      ],
+      'knife_safety_protocol': [
+        'knife safety',
+        'cut myself',
+        'safe with a knife'
+      ],
       'general_tips': [
         'tip',
         'stuck',
@@ -201,7 +250,12 @@ class ChefService {
       'mediterranean': ['mediterranean', 'italian', 'greek', 'spanish'],
       'middle_eastern': ['middle eastern', 'lebanese', 'israeli', 'turkish'],
       'indian': ['indian', 'curry'],
-      'southeast_asian': ['southeast asian', 'thai', 'vietnamese', 'indonesian'],
+      'southeast_asian': [
+        'southeast asian',
+        'thai',
+        'vietnamese',
+        'indonesian'
+      ],
       'japanese': ['japanese'],
       'latin_american': ['latin american', 'mexican', 'peruvian', 'caribbean'],
       'north_american': ['north american', 'american', 'tex-mex', 'tex mex'],
@@ -212,8 +266,23 @@ class ChefService {
       // every single call regardless of what was actually being cooked. Use
       // more specific phrases so genuine "make this taste Swiss" intent still
       // matches without the false-positive tax on every request.
-      'central_european': ['central european', 'german', 'austrian', 'hungarian', 'alpine', 'swiss cuisine', 'swiss dish', 'swiss recipe', 'swiss classic'],
-      'west_east_african': ['west african', 'east african', 'ethiopian', 'nigerian'],
+      'central_european': [
+        'central european',
+        'german',
+        'austrian',
+        'hungarian',
+        'alpine',
+        'swiss cuisine',
+        'swiss dish',
+        'swiss recipe',
+        'swiss classic'
+      ],
+      'west_east_african': [
+        'west african',
+        'east african',
+        'ethiopian',
+        'nigerian'
+      ],
     };
     for (final entry in cuisineAliases.entries) {
       if (entry.value.any(text.contains)) {
@@ -252,9 +321,29 @@ class ChefService {
     // compact and biased toward the kind of language a generated recipe is
     // likely to contain.
     const techniqueTriggers = <String, List<String>>{
-      'stir_frying': ['stir fry', 'stir-fry', 'stir-frying', 'wok', 'toss constantly', 'high heat toss'],
-      'sauteing': ['sauté', 'saute', 'pan sauce', 'deglaze', 'sear the', 'golden brown'],
-      'pan_searing': ['sear', 'seared', 'crust', "don't move it", 'high heat sear'],
+      'stir_frying': [
+        'stir fry',
+        'stir-fry',
+        'stir-frying',
+        'wok',
+        'toss constantly',
+        'high heat toss'
+      ],
+      'sauteing': [
+        'sauté',
+        'saute',
+        'pan sauce',
+        'deglaze',
+        'sear the',
+        'golden brown'
+      ],
+      'pan_searing': [
+        'sear',
+        'seared',
+        'crust',
+        "don't move it",
+        'high heat sear'
+      ],
       'boiling': ['boil', 'boiling', 'rolling boil'],
       'simmering': ['simmer', 'simmering', 'gentle bubble'],
       'steaming': ['steam', 'steaming', 'steamer basket'],
@@ -269,7 +358,8 @@ class ChefService {
     for (final entry in chefTechniqueDrawers.entries) {
       final label = entry.key.replaceAll('_', ' ');
       final triggers = techniqueTriggers[entry.key];
-      final matched = triggers == null ? text.contains(label) : triggers.any(text.contains);
+      final matched =
+          triggers == null ? text.contains(label) : triggers.any(text.contains);
       if (matched) {
         if (seen.add(entry.key)) out.add(entry.key);
         techniqueMatches++;
@@ -278,12 +368,48 @@ class ChefService {
     }
 
     const referenceTriggers = <String, List<String>>{
-      'mise_en_place': ['mise en place', 'prep order', 'organize my prep', 'game plan'],
-      'food_storage': ['storage', 'store this', 'fridge', 'freezer', 'shelf life', 'leftovers', 'how long does'],
-      'cross_contamination': ['cross contamination', 'raw chicken', 'raw meat', 'food safety', 'same board'],
-      'knife_grip_mechanics': ['knife grip', 'hold the knife', 'knife technique', 'claw grip'],
-      'core_knife_cuts': ['julienne', 'brunoise', 'dice', 'chiffonade', 'knife cut', 'how do i cut', 'how to cut'],
-      'knife_safety_protocol': ['knife safety', 'cut myself', 'safe with a knife'],
+      'mise_en_place': [
+        'mise en place',
+        'prep order',
+        'organize my prep',
+        'game plan'
+      ],
+      'food_storage': [
+        'storage',
+        'store this',
+        'fridge',
+        'freezer',
+        'shelf life',
+        'leftovers',
+        'how long does'
+      ],
+      'cross_contamination': [
+        'cross contamination',
+        'raw chicken',
+        'raw meat',
+        'food safety',
+        'same board'
+      ],
+      'knife_grip_mechanics': [
+        'knife grip',
+        'hold the knife',
+        'knife technique',
+        'claw grip'
+      ],
+      'core_knife_cuts': [
+        'julienne',
+        'brunoise',
+        'dice',
+        'chiffonade',
+        'knife cut',
+        'how do i cut',
+        'how to cut'
+      ],
+      'knife_safety_protocol': [
+        'knife safety',
+        'cut myself',
+        'safe with a knife'
+      ],
       'general_tips': [
         'tip',
         'stuck',
@@ -325,6 +451,15 @@ class ChefService {
   /// prompt budget already measured (see Roadmap item 5).
   static const int _maxRecentDishExclusions = 10;
 
+  /// Cap on how many prior SOS turns (user + Chef Harris messages combined)
+  /// get sent as conversation history — the last 3 exchanges. Uncapped
+  /// history would grow every subsequent call within one SOS session
+  /// (each answer becomes part of the next call's input), compounding cost
+  /// with no bound. 3 exchanges is enough for a typical follow-up
+  /// ("what if I don't have X" -> answer -> "ok what about Y") without
+  /// that growth.
+  static const int _maxSosHistoryMessages = 6;
+
   /// Curated dish-format/style keywords (lowercase) for the recipe-variety
   /// fix. Title-string exclusion alone can't stop the model renaming the
   /// same dish concept to dodge a literal match — the real bug seen in
@@ -334,15 +469,51 @@ class ChefService {
   /// it'll catch common cases but won't catch every possible rename; expect
   /// to extend it as new gaps show up.
   static const List<String> _knownDishFormats = [
-    'frittata', 'omelette', 'omelet', 'scramble', 'quiche', 'souffle', 'soufflé',
-    'bake', 'casserole', 'gratin', 'tart', 'pie',
-    'hash', 'skillet', 'stir-fry', 'stir fry', 'sauté', 'saute',
-    'curry', 'soup', 'stew', 'chowder', 'chili',
-    'salad', 'bowl', 'wrap',
-    'pasta', 'risotto', 'pilaf', 'paella', 'gnocchi', 'dumpling',
-    'pizza', 'flatbread',
-    'fritters', 'patties', 'burger', 'skewers', 'kebab',
-    'roast', 'traybake', 'sheet pan', 'sheet-pan', 'one-pot', 'one pot',
+    'frittata',
+    'omelette',
+    'omelet',
+    'scramble',
+    'quiche',
+    'souffle',
+    'soufflé',
+    'bake',
+    'casserole',
+    'gratin',
+    'tart',
+    'pie',
+    'hash',
+    'skillet',
+    'stir-fry',
+    'stir fry',
+    'sauté',
+    'saute',
+    'curry',
+    'soup',
+    'stew',
+    'chowder',
+    'chili',
+    'salad',
+    'bowl',
+    'wrap',
+    'pasta',
+    'risotto',
+    'pilaf',
+    'paella',
+    'gnocchi',
+    'dumpling',
+    'pizza',
+    'flatbread',
+    'fritters',
+    'patties',
+    'burger',
+    'skewers',
+    'kebab',
+    'roast',
+    'traybake',
+    'sheet pan',
+    'sheet-pan',
+    'one-pot',
+    'one pot',
   ];
 
   /// Scans [titles] for known dish-format keywords (case-insensitive
@@ -381,6 +552,19 @@ class ChefService {
   ///   where the user may have explicitly typed a format by name (Custom AI
   ///   Recipe Creator) — format-excluding "frittata" would fight a user who
   ///   typed "frittata" themselves.
+  /// - [recipeContext]: the actual recipe the user is cooking (ingredients
+  ///   with amounts/units, every step's title/heat/duration/bullets, and a
+  ///   marker on the step the user is currently on), pre-formatted by the
+  ///   caller. When present, the answer must stay consistent with this
+  ///   text as written rather than improvising a different preparation.
+  ///   Previously SOS only received [recipeTitle] — a bare dish name — so
+  ///   Chef Harris had no way to ground an answer in what the recipe
+  ///   actually says.
+  /// - [conversationHistory]: prior turns in this SOS session (chronological
+  ///   order, oldest first), so a follow-up question has continuity instead
+  ///   of every send being stateless. Only the most recent
+  ///   [_maxSosHistoryMessages] are actually sent — see that constant's doc
+  ///   comment for why it's capped.
   Future<String> askChefHarris({
     required String userQuery,
     String? recipeTitle,
@@ -388,30 +572,45 @@ class ChefService {
     bool forceJsonObject = false,
     List<String>? recentDishTitles,
     bool excludeDishFormats = true,
+    String? recipeContext,
+    List<({bool isUser, String text})>? conversationHistory,
   }) async {
     final query = userQuery.trim();
-    if (query.isEmpty) return 'Tell me what’s happening in the pan and I’ll jump in. Happy cooking! — Chef Harris';
+    if (query.isEmpty) {
+      return 'Tell me what’s happening in the pan and I’ll jump in. Happy cooking! — Chef Harris';
+    }
 
     final userMessage = StringBuffer();
 
     final name = (profile?.displayName ?? '').trim();
     final diet = profile?.diet.name;
-    final allergies = (profile?.allergies ?? const <String>[]).where((e) => e.trim().isNotEmpty).toList(growable: false);
+    final allergies = (profile?.allergies ?? const <String>[])
+        .where((e) => e.trim().isNotEmpty)
+        .toList(growable: false);
     final confidence = profile?.kitchenConfidence.name;
     final servings = profile?.householdServings;
 
-    if (name.isNotEmpty || allergies.isNotEmpty || diet != null || confidence != null || servings != null) {
+    if (name.isNotEmpty ||
+        allergies.isNotEmpty ||
+        diet != null ||
+        confidence != null ||
+        servings != null) {
       userMessage.writeln('User profile context (local):');
       if (name.isNotEmpty) userMessage.writeln('- Name to address: $name');
       if (diet != null) userMessage.writeln('- Diet baseline: $diet');
       if (confidence != null) {
         userMessage.writeln('- Kitchen confidence: $confidence');
-        userMessage.writeln('Instruction: Generate a recipe whose difficulty matches this confidence level per the RECIPE DIFFICULTY BY KITCHEN CONFIDENCE rules above. Treat this as a hard constraint, not flavor text.');
+        userMessage.writeln(
+            'Instruction: Generate a recipe whose difficulty matches this confidence level per the RECIPE DIFFICULTY BY KITCHEN CONFIDENCE rules above. Treat this as a hard constraint, not flavor text.');
       }
-      if (servings != null) userMessage.writeln('- Household servings: $servings');
+      if (servings != null) {
+        userMessage.writeln('- Household servings: $servings');
+      }
       if (allergies.isNotEmpty) {
-        userMessage.writeln('- Allergies/intolerances to avoid: ${allergies.join(', ')}');
-        userMessage.writeln('Safety rule: Do not suggest ingredients containing these allergens. Offer substitutions by supermarket tier (budget/discount, mainstream, or premium/specialty) rather than naming specific store brands, since availability varies by region.');
+        userMessage.writeln(
+            '- Allergies/intolerances to avoid: ${allergies.join(', ')}');
+        userMessage.writeln(
+            'Safety rule: Do not suggest ingredients containing these allergens. Offer substitutions by supermarket tier (budget/discount, mainstream, or premium/specialty) rather than naming specific store brands, since availability varies by region.');
       }
       userMessage.writeln();
     }
@@ -420,10 +619,42 @@ class ChefService {
       userMessage.writeln('Recipe context: $recipeTitle');
       userMessage.writeln();
     }
+
+    if (recipeContext != null && recipeContext.trim().isNotEmpty) {
+      userMessage.writeln(
+          'THE ACTUAL RECIPE (as written — this is what the user is cooking right now):');
+      userMessage.writeln(recipeContext.trim());
+      userMessage.writeln();
+      userMessage.writeln(
+        'Consistency rule: your answer must stay consistent with the recipe above as written. '
+        'If the user\'s concern is valid, explain how to adapt what the recipe actually says — '
+        'the ingredients, cuts, and steps given above — do not substitute a different preparation, '
+        'ingredient prep, or technique that isn\'t in the recipe.',
+      );
+      userMessage.writeln();
+    }
+
+    if (conversationHistory != null && conversationHistory.isNotEmpty) {
+      final capped = conversationHistory.length > _maxSosHistoryMessages
+          ? conversationHistory
+              .sublist(conversationHistory.length - _maxSosHistoryMessages)
+          : conversationHistory;
+      if (capped.isNotEmpty) {
+        userMessage
+            .writeln('Conversation so far in this SOS session (oldest first):');
+        for (final turn in capped) {
+          userMessage
+              .writeln('${turn.isUser ? 'User' : 'Chef Harris'}: ${turn.text}');
+        }
+        userMessage.writeln();
+      }
+    }
+
     userMessage.writeln('User SOS: $query');
     userMessage.writeln();
     if (name.isNotEmpty) {
-      userMessage.writeln('Address the user as "$name" naturally (not in every sentence).');
+      userMessage.writeln(
+          'Address the user as "$name" naturally (not in every sentence).');
     }
     userMessage.writeln('Reply with concise, actionable steps.');
     if (!forceJsonObject) {
@@ -437,7 +668,8 @@ class ChefService {
 
     // Bucket B: pull in only the curriculum drawers relevant to this
     // specific request (technique, topic, ingredient, pairing, cuisine).
-    final curriculumAddendum = _buildCurriculumAddendum('${recipeTitle ?? ''} $query');
+    final curriculumAddendum =
+        _buildCurriculumAddendum('${recipeTitle ?? ''} $query');
     if (curriculumAddendum.isNotEmpty) {
       userMessage.writeln(curriculumAddendum);
     }
@@ -451,7 +683,9 @@ class ChefService {
     for (final raw in (recentDishTitles ?? const <String>[])) {
       final trimmed = raw.trim();
       if (trimmed.isEmpty) continue;
-      if (!seenLower.add(trimmed.toLowerCase())) continue; // case-insensitive dedupe across merged sources
+      if (!seenLower.add(trimmed.toLowerCase())) {
+        continue; // case-insensitive dedupe across merged sources
+      }
       recentTitles.add(trimmed);
       if (recentTitles.length >= _maxRecentDishExclusions) break;
     }
@@ -467,7 +701,9 @@ class ChefService {
     // Format-level exclusion: title matching alone can't stop the model
     // renaming the same dish concept (frittata -> hash -> bake -> skillet)
     // to dodge the literal check above. See _knownDishFormats doc comment.
-    final recentFormats = excludeDishFormats ? _extractDishFormats(recentTitles) : const <String>[];
+    final recentFormats = excludeDishFormats
+        ? _extractDishFormats(recentTitles)
+        : const <String>[];
     if (recentFormats.isNotEmpty) {
       userMessage.writeln(
         'Also avoid these dish formats/styles already used recently, regardless of what you name the '
@@ -483,7 +719,8 @@ class ChefService {
       '(excludeDishFormats=$excludeDishFormats)',
     );
 
-    const systemPrompt = '$_systemPersona\n\n$_curriculumCore\n\n$_recipeDifficultyByKitchenConfidence';
+    const systemPrompt =
+        '$_systemPersona\n\n$_curriculumCore\n\n$_recipeDifficultyByKitchenConfidence';
     final userMessageStr = userMessage.toString();
     final Map<String, dynamic> payload = {
       'systemPrompt': systemPrompt,
@@ -499,7 +736,8 @@ class ChefService {
     );
 
     try {
-      final res = await Supabase.instance.client.functions.invoke('ask-chef-harris', body: payload);
+      final res = await Supabase.instance.client.functions
+          .invoke('ask-chef-harris', body: payload);
       final data = res.data;
 
       String? content;
@@ -513,7 +751,10 @@ class ChefService {
         content = data;
       }
 
-      _logEstimatedCost(usage: usage, model: model, fallbackInputChars: systemPrompt.length + userMessageStr.length);
+      _logEstimatedCost(
+          usage: usage,
+          model: model,
+          fallbackInputChars: systemPrompt.length + userMessageStr.length);
 
       final text = (content ?? '').trim();
       if (text.isEmpty) {
@@ -537,7 +778,8 @@ class ChefService {
   /// authoritative cost record is written server-side into
   /// `api_call_cost_log` by the edge function's own copy of these rates.
   /// Rates checked 2026-08-13 against OpenAI's published pricing.
-  static const Map<String, ({double input, double output})> _openAiPricingPerMillionTokens = {
+  static const Map<String, ({double input, double output})>
+      _openAiPricingPerMillionTokens = {
     'gpt-4o': (input: 2.50, output: 10.00),
     'gpt-4o-mini': (input: 0.15, output: 0.60),
   };
@@ -547,16 +789,22 @@ class ChefService {
   /// `ask-chef-harris` edge function); falls back to a char/4 estimate
   /// (input only — no way to know output length without `usage`) if the
   /// deployed edge function version doesn't include it yet.
-  void _logEstimatedCost({required Map? usage, required String? model, required int fallbackInputChars}) {
+  void _logEstimatedCost(
+      {required Map? usage,
+      required String? model,
+      required int fallbackInputChars}) {
     final resolvedModel = (model == 'gpt-4o-mini') ? 'gpt-4o-mini' : 'gpt-4o';
-    final rates = _openAiPricingPerMillionTokens[resolvedModel] ?? _openAiPricingPerMillionTokens['gpt-4o']!;
+    final rates = _openAiPricingPerMillionTokens[resolvedModel] ??
+        _openAiPricingPerMillionTokens['gpt-4o']!;
     final inputPerM = rates.input;
     final outputPerM = rates.output;
 
     if (usage != null) {
       final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ?? 0;
-      final completionTokens = (usage['completion_tokens'] as num?)?.toInt() ?? 0;
-      final costUsd = (promptTokens / 1000000) * inputPerM + (completionTokens / 1000000) * outputPerM;
+      final completionTokens =
+          (usage['completion_tokens'] as num?)?.toInt() ?? 0;
+      final costUsd = (promptTokens / 1000000) * inputPerM +
+          (completionTokens / 1000000) * outputPerM;
       debugPrint(
         'ChefService.askChefHarris cost: model=$resolvedModel prompt_tokens=$promptTokens '
         'completion_tokens=$completionTokens est_cost_usd=\$${costUsd.toStringAsFixed(5)} (real token counts)',

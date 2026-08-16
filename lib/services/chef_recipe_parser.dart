@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/chef_service.dart';
 
 /// Identifies which UI surface triggered a [parseChefRecipeJson] call, for
 /// logging only — has no effect on parsing behavior.
@@ -39,6 +40,42 @@ List<String> _readCurriculumLessonIds(dynamic raw) {
   return out;
 }
 
+/// Reads the model's declared "curriculum_lesson_id" — the single drawer
+/// key it names as what the recipe actually teaches (CLAUDE.md: replaces
+/// keyword-matching the recipe's own generated text, which had no way to
+/// tell a genuinely-matched technique from an accidental one). Returns
+/// null when the field is missing, not a string, or not one of
+/// [ChefService.curriculumDrawerKeys] — a wrong card is worse than no
+/// card, so an unrecognized value is treated exactly like a missing one,
+/// never passed through.
+///
+/// Every rejection is logged via [debugPrint] (compiles out of release
+/// builds), distinguishing which of the three cases it was, with the raw
+/// value received (or the literal "absent") and the recipe's own title —
+/// so the real-world rejection rate and pattern can be read off a device
+/// log during a test session. Log only: no UI, no banner, nothing
+/// user-facing.
+String? _readDeclaredCurriculumLessonId(dynamic decoded) {
+  if (decoded is! Map) return null;
+  final title = (decoded['title'] ?? '').toString().trim();
+  final raw = decoded['curriculum_lesson_id'];
+
+  if (raw == null) {
+    debugPrint('parseChefRecipeJson: curriculum_lesson_id absent for "$title"');
+    return null;
+  }
+  if (raw is! String) {
+    debugPrint('parseChefRecipeJson: curriculum_lesson_id present but not a string (got: $raw) for "$title"');
+    return null;
+  }
+  final trimmed = raw.trim();
+  if (!ChefService.curriculumDrawerKeys.contains(trimmed)) {
+    debugPrint('parseChefRecipeJson: curriculum_lesson_id "$raw" not in known set for "$title"');
+    return null;
+  }
+  return trimmed;
+}
+
 /// Shared parser for Chef Harris's recipe JSON. Extracted 2026-08-15 from 4
 /// independently duplicated `_parseCookModeRecipe` methods (Fridge Clearer,
 /// Custom AI Recipe Creator, Fridge Countdown's "Use Tonight", and — until
@@ -70,7 +107,14 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
     final decoded = jsonDecode(_extractJsonObject(raw));
     if (decoded is! Map<String, dynamic>) return null;
 
-    final curriculumLessonIds = _readCurriculumLessonIds(decoded['curriculum_lesson_ids']);
+    // The model's declared drawer key takes priority — it's what every
+    // live schema now actually asks for. The legacy plural-list field is
+    // never requested by any live schema today, but is kept as a fallback
+    // so older/cached raw JSON (and the parser's own pre-existing test)
+    // that used it still parses exactly as before.
+    final declaredCurriculumLessonId = _readDeclaredCurriculumLessonId(decoded);
+    final curriculumLessonIds =
+        declaredCurriculumLessonId != null ? [declaredCurriculumLessonId] : _readCurriculumLessonIds(decoded['curriculum_lesson_ids']);
 
     final title = (decoded['title'] ?? '').toString().trim();
     final description = readDescription ? (decoded['description'] ?? '').toString().trim() : '';
@@ -88,7 +132,9 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
               ? (m['amount'] as num).toDouble()
               : double.tryParse('${m['amount'] ?? ''}'.trim()) ?? 0;
           final unit = (m['unit'] ?? '').toString().trim();
-          structuredIngredients.add(RecipeIngredient(name: name, amount: amount, unit: unit.isEmpty ? 'piece' : unit));
+          final rawCut = m['cut'];
+          final cut = (rawCut is String && ingredientCutVocabulary.contains(rawCut)) ? rawCut : null;
+          structuredIngredients.add(RecipeIngredient(name: name, amount: amount, unit: unit.isEmpty ? 'piece' : unit, cut: cut));
           final formatted = amount > 0 ? '${_formatIngredientAmount(amount)}${unit.isEmpty ? '' : ' $unit'} $name'.trim() : name;
           ingredients.add(formatted);
         } else {
@@ -126,7 +172,21 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
           }
         }
         if (bullets.isEmpty) bullets.add('Keep going and taste as you go.');
-        steps.add(CookModeStepPayload(title: stepTitle, heat: heat, durationMinutes: duration, bullets: bullets));
+        final ingredientsAdded = <String>[];
+        final ingredientsAddedRaw = s['ingredients_added'];
+        if (ingredientsAddedRaw is List) {
+          for (final e in ingredientsAddedRaw) {
+            final n = e.toString().trim();
+            if (n.isNotEmpty) ingredientsAdded.add(n);
+          }
+        }
+        steps.add(CookModeStepPayload(
+          title: stepTitle,
+          heat: heat,
+          durationMinutes: duration,
+          bullets: bullets,
+          ingredientsAdded: ingredientsAdded.isEmpty ? null : ingredientsAdded,
+        ));
       }
     }
 

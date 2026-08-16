@@ -90,7 +90,7 @@ class WasteLedgerCelebrationSheet extends StatelessWidget {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                 ),
                 child: Text(
-                  'Nice!',
+                  'Well done',
                   style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900),
                 ),
               ),

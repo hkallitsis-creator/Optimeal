@@ -38,6 +38,8 @@ class CookSessionStorageService {
     required Set<int> completedSteps,
     required Duration activeRemaining,
     required int? currentPortions,
+    required CookModeSurface? surface,
+    required bool isReCook,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final json = {
@@ -50,6 +52,8 @@ class CookSessionStorageService {
         'activeRemainingSeconds': activeRemaining.inSeconds,
         'currentPortions': currentPortions,
       },
+      'surface': surface?.name,
+      'isReCook': isReCook,
       'lastUpdatedAt': DateTime.now().toIso8601String(),
     };
     await prefs.setString(_activeSessionKey, jsonEncode(json));
@@ -73,6 +77,19 @@ class CookSessionStorageService {
       final recipe = _recipeFromJson(json['recipe'] as Map<String, dynamic>);
       final progress = json['progress'] as Map<String, dynamic>;
 
+      // surface/isReCook are absent on sessions saved before CLAUDE.md
+      // Roadmap item 28 — default to null/false (non-rescue-eligible)
+      // rather than guessing an origin surface that was never recorded.
+      final surfaceName = json['surface'] as String?;
+      CookModeSurface? surface;
+      if (surfaceName != null) {
+        try {
+          surface = CookModeSurface.values.byName(surfaceName);
+        } catch (_) {
+          surface = null;
+        }
+      }
+
       return ActiveCookSession(
         recipe: recipe,
         cookStarted: progress['cookStarted'] as bool? ?? false,
@@ -83,6 +100,8 @@ class CookSessionStorageService {
             .toSet(),
         activeRemaining: Duration(seconds: progress['activeRemainingSeconds'] as int? ?? 0),
         currentPortions: progress['currentPortions'] as int?,
+        surface: surface,
+        isReCook: json['isReCook'] as bool? ?? false,
         lastUpdatedAt: lastUpdatedAt,
       );
     } catch (e) {
@@ -234,6 +253,7 @@ class CookSessionStorageService {
                   'heat': s.heat,
                   'durationMinutes': s.durationMinutes,
                   'bullets': s.bullets,
+                  'ingredientsAdded': s.ingredientsAdded,
                 })
             .toList(),
         'kitchenGear': recipe.kitchenGear,
@@ -257,6 +277,7 @@ class CookSessionStorageService {
               heat: m['heat'] as String,
               durationMinutes: m['durationMinutes'] as int,
               bullets: ((m['bullets'] as List<dynamic>?) ?? const []).map((b) => b as String).toList(),
+              ingredientsAdded: (m['ingredientsAdded'] as List<dynamic>?)?.map((e) => e as String).toList(),
             );
           })
           .toList(),
@@ -291,6 +312,8 @@ class ActiveCookSession {
     required this.completedSteps,
     required this.activeRemaining,
     required this.currentPortions,
+    required this.surface,
+    required this.isReCook,
     required this.lastUpdatedAt,
   });
 
@@ -301,6 +324,14 @@ class ActiveCookSession {
   final Set<int> completedSteps;
   final Duration activeRemaining;
   final int? currentPortions;
+
+  /// The surface this session originally launched from, and whether it was
+  /// a re-cook — carried through resume so a backgrounded-then-resumed
+  /// session still logs (or doesn't log) exactly as it would have if
+  /// finished without interruption. Null [surface] on sessions saved before
+  /// CLAUDE.md Roadmap item 28 existed.
+  final CookModeSurface? surface;
+  final bool isReCook;
   final DateTime lastUpdatedAt;
 }
 

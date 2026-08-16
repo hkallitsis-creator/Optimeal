@@ -74,7 +74,14 @@ class AppRouter {
               if (extra is ActiveCookSession) {
                 return OnePanCookingRoadmapScreen(resumeSession: extra);
               }
-              return OnePanCookingRoadmapScreen(recipe: extra is CookModeRecipePayload ? extra : null);
+              if (extra is CookModeLaunchRequest) {
+                return OnePanCookingRoadmapScreen(
+                  recipe: extra.recipe,
+                  surface: extra.surface,
+                  isReCook: extra.isReCook,
+                );
+              }
+              return const OnePanCookingRoadmapScreen();
             },
           ),
           GoRoute(

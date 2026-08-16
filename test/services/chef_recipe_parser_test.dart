@@ -206,5 +206,143 @@ void main() {
       expect(result, isNotNull);
       expect(result!.description, isNull);
     });
+
+    test('ingredient with a valid cut value is parsed', () async {
+      const raw = '''
+      {
+        "title": "Cut Test",
+        "ingredients": [{"name": "Potato", "amount": 200, "unit": "g", "cut": "thin_slice"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.structuredIngredients, isNotNull);
+      expect(result.structuredIngredients![0].cut, 'thin_slice');
+    });
+
+    test('ingredient with a missing cut parses with cut null, not a crash', () async {
+      const raw = '''
+      {
+        "title": "No Cut",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.structuredIngredients, isNotNull);
+      expect(result.structuredIngredients![0].cut, isNull);
+    });
+
+    test('step listing ingredients_added is parsed', () async {
+      const raw = '''
+      {
+        "title": "Sequencing Test",
+        "ingredients": [
+          {"name": "Potato", "amount": 200, "unit": "g", "cut": "thin_slice"},
+          {"name": "Onion", "amount": 1, "unit": "piece", "cut": "thin_slice"}
+        ],
+        "kitchen_gear": ["Pan"],
+        "steps": [
+          {
+            "title": "Cook the potato",
+            "duration_minutes": 6,
+            "heat": "medium",
+            "ingredients_added": ["Potato"],
+            "bullets": ["Give it a head start."]
+          },
+          {
+            "title": "Add the onion",
+            "duration_minutes": 4,
+            "heat": "medium",
+            "ingredients_added": ["Potato", "Onion"],
+            "bullets": ["Onion joins once the potato is nearly done."]
+          }
+        ]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.steps, hasLength(2));
+      expect(result.steps[0].ingredientsAdded, ['Potato']);
+      expect(result.steps[1].ingredientsAdded, ['Potato', 'Onion']);
+    });
+
+    test('a valid declared curriculum_lesson_id is parsed', () async {
+      const raw = '''
+      {
+        "title": "Braise Test",
+        "curriculum_lesson_id": "braising",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.curriculumLessonIds, ['braising']);
+    });
+
+    test('a curriculum_lesson_id outside the known set is not passed through', () async {
+      const raw = '''
+      {
+        "title": "Unknown Key Test",
+        "curriculum_lesson_id": "underwater_basket_weaving",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.curriculumLessonIds, isEmpty);
+    });
+
+    test('a missing curriculum_lesson_id (and no legacy field) parses with curriculumLessonIds empty', () async {
+      const raw = '''
+      {
+        "title": "No Curriculum Key",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.curriculumLessonIds, isEmpty);
+    });
   });
 }

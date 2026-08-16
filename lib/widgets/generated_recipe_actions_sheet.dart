@@ -13,10 +13,15 @@ import 'package:optimeal/widgets/weekday_picker_sheet.dart';
 /// - "Cook Now" -> opens Cook Mode
 /// - "Plan for Day" -> queues an add-to-weekly-plan intent
 class GeneratedRecipeActionsSheet extends StatelessWidget {
-  const GeneratedRecipeActionsSheet({super.key, required this.recipe, required this.sourceLabel});
+  const GeneratedRecipeActionsSheet({super.key, required this.recipe, required this.sourceLabel, required this.surface});
 
   final CookModeRecipePayload recipe;
   final String sourceLabel;
+
+  /// Which surface generated [recipe] — this widget is shared by Fridge
+  /// Countdown and Custom AI Recipe Creator, which need to be
+  /// distinguishable for Waste Ledger gating (CLAUDE.md Roadmap item 28).
+  final CookModeSurface surface;
 
   @override
   Widget build(BuildContext context) {
@@ -91,7 +96,10 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
                   child: FilledButton.icon(
                     onPressed: () {
                       context.pop();
-                      context.push(AppRoutes.onePanCookingRoadmap, extra: recipe);
+                      context.push(
+                        AppRoutes.onePanCookingRoadmap,
+                        extra: CookModeLaunchRequest(recipe: recipe, surface: surface),
+                      );
                     },
                     style: FilledButton.styleFrom(
                       backgroundColor: scheme.tertiary,

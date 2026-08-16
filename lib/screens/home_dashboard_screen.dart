@@ -106,7 +106,9 @@ class HomeDashboardScreen extends StatefulWidget {
       showDragHandle: true,
       backgroundColor: isDark ? theme.colorScheme.surface : LightModeColors.lightWarmCreamSurface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => SafeArea(child: GeneratedRecipeActionsSheet(recipe: payload, sourceLabel: 'Custom AI Craving')),
+      builder: (ctx) => SafeArea(
+        child: GeneratedRecipeActionsSheet(recipe: payload, sourceLabel: 'Custom AI Craving', surface: CookModeSurface.customAiRecipeCreator),
+      ),
     );
   }
 
@@ -181,8 +183,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// [resumeSession], then refreshes the saved-session state on return so
   /// the Resume banner reflects whatever happened in Cook Mode (finished,
   /// discarded, or still in progress).
+  ///
+  /// [recipe] is only ever passed from Recently Cooked, so it's always a
+  /// re-cook (CLAUDE.md Roadmap item 28) — [surface] is null since original
+  /// provenance isn't tracked and doesn't matter: [isReCook] alone already
+  /// excludes it from Waste Ledger logging.
   Future<void> _openCookMode(BuildContext context, {CookModeRecipePayload? recipe, ActiveCookSession? resumeSession}) async {
-    await context.push(AppRoutes.onePanCookingRoadmap, extra: resumeSession ?? recipe);
+    final extra = resumeSession ?? (recipe != null ? CookModeLaunchRequest(recipe: recipe, surface: null, isReCook: true) : null);
+    await context.push(AppRoutes.onePanCookingRoadmap, extra: extra);
     if (!mounted) return;
     _loadActiveSession();
     _loadWeeklyLedger();

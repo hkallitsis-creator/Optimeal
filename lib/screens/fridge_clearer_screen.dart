@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'package:optimeal/nav.dart';
+import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/models/technique_lesson.dart' as models;
 import 'package:optimeal/services/ai_recipe_service.dart';
 import 'package:optimeal/services/chef_recipe_parser.dart';
@@ -95,21 +96,6 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     _extraController.dispose();
     _extraFocusNode.dispose();
     super.dispose();
-  }
-
-  String _buildCurriculumSearchText(CookModeRecipePayload recipe) {
-    final b = StringBuffer();
-    b.writeln(recipe.title);
-    final desc = (recipe.description ?? '').trim();
-    if (desc.isNotEmpty) b.writeln(desc);
-    for (final step in recipe.steps) {
-      b.writeln(step.title);
-      for (final bullet in step.bullets) {
-        final t = bullet.trim();
-        if (t.isNotEmpty) b.writeln(t);
-      }
-    }
-    return b.toString();
   }
 
   void _toggleIngredient(String label) {
@@ -203,8 +189,9 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       '{',
       '  "title": "...",',
       '  "description": "...",',
+      '  "curriculum_lesson_id": "...",',
       '  "ingredients": [',
-      '    {"name": "...", "amount": 0, "unit": "g|ml|tbsp|tsp|piece|clove|slice"}',
+      '    {"name": "...", "amount": 0, "unit": "g|ml|tbsp|tsp|piece|clove|slice", "cut": "${ingredientCutVocabulary.join('|')}"}',
       '  ],',
       '  "kitchen_gear": ["..."],',
       '  "steps": [',
@@ -212,6 +199,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       '      "title": "...",',
       '      "duration_minutes": 0,',
       '      "heat": "low|medium|medium_high|off_heat",',
+      '      "ingredients_added": ["..."],',
       '      "bullets": ["..."]',
       '    }',
       '  ]',
@@ -223,6 +211,9 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       '- Use 4–8 steps. Provide realistic durations (1–15 minutes each).',
       '- Heat should be one of the allowed values (default "medium").',
       '- Each ingredient must be a structured object with a numeric "amount" and a "unit", realistically scaled for $portions people — do not reuse the same quantity regardless of how many people are being served. Use "piece", "clove", or "slice" as the unit for whole/countable items instead of inventing a weight.',
+      '- Each ingredient\'s "cut" field must be exactly one of: ${ingredientCutVocabulary.join(', ')}. This is a closed set — do not write a free-text cut description in this field, and do not invent a value outside this list. Use "none" if the ingredient needs no cutting. Step bullets may still describe the cut in your own voice; the "cut" field is the structured record of it.',
+      '- SEQUENCING RULE (non-negotiable): each step\'s "ingredients_added" field must list every ingredient that step actually adds to the pan/pot, using the exact "name" values from the ingredients list above. If the ingredients in "ingredients_added" do not have comparable cook times, you may not add them at the same moment. Either stagger them within the step — the bullets must state exactly what goes in first, how many minutes it cooks alone, and when each remaining ingredient joins — or split them across separate steps instead. WHAT NOT TO DO: do not write a step like "thinly slice potatoes and onions, then cook together" — thinly sliced onion softens in a few minutes while thinly sliced potato needs several minutes longer to cook through, so the onion will burn or turn bitter well before the potato is done. Instead, add the potato first and give it a real head start before the onion joins, or cook them as two separate steps.',
+      '- The "curriculum_lesson_id" field is required and must name the ONE curriculum technique or topic this recipe actually teaches, chosen exactly from this list: ${ChefService.curriculumDrawerKeys.join(', ')}. Base the choice on what the steps physically do, not the dish\'s theme, name, or ingredients — a recipe built from fridge leftovers is not "food_storage" just because using up leftovers is this app\'s whole point; if the steps sauté something, the answer is "sauteing"; if they braise, it\'s "braising"; and so on. Choose the single best match for the technique actually demonstrated.',
     ].join('\n');
   }
 
@@ -252,7 +243,10 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     if (widget.returnCookModePayload) {
       context.pop(payload);
     } else {
-      context.push(AppRoutes.onePanCookingRoadmap, extra: payload);
+      context.push(
+        AppRoutes.onePanCookingRoadmap,
+        extra: CookModeLaunchRequest(recipe: payload, surface: CookModeSurface.fridgeClearer),
+      );
     }
   }
 
@@ -501,26 +495,13 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
         return;
       }
 
-      final matchedCurriculumKeys = _chefService.matchedCurriculumDrawerKeys(_buildCurriculumSearchText(recipe));
-
-      final merged = <String>[];
-      final seen = <String>{};
-      for (final id in matchedCurriculumKeys) {
-        if (seen.add(id)) merged.add(id);
-      }
-      for (final id in (recipe.curriculumLessonIds ?? const <String>[])) {
-        if (seen.add(id)) merged.add(id);
-      }
-      recipe = CookModeRecipePayload(
-        title: recipe.title,
-        ingredients: recipe.ingredients,
-        steps: recipe.steps,
-        kitchenGear: recipe.kitchenGear,
-        description: recipe.description,
-        structuredIngredients: recipe.structuredIngredients,
-        basePortions: recipe.basePortions,
-        curriculumLessonIds: merged,
-      );
+      // curriculumLessonIds is populated by the parser directly from the
+      // model's own declared "curriculum_lesson_id" field now — no more
+      // keyword-matching the recipe's generated text after the fact (that
+      // mechanism could match a reference drawer like food_storage on any
+      // zero-waste-flavored sentence regardless of what the recipe
+      // actually taught; see CLAUDE.md for the frittata/food_storage case
+      // that motivated this).
       debugPrint('CookModeRecipePayload constructed with curriculumLessonIds=${recipe.curriculumLessonIds}');
 
       RecentGenerationsService.instance.record(recipe.title);

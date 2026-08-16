@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/screens/fridge_clearer_screen.dart' show kFridgeClearerFreeWeeklyLimit;
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/chef_recipe_parser.dart';
@@ -79,21 +80,6 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
     }
   }
 
-  String _buildCurriculumSearchText(CookModeRecipePayload recipe) {
-    final b = StringBuffer();
-    b.writeln(recipe.title);
-    final desc = (recipe.description ?? '').trim();
-    if (desc.isNotEmpty) b.writeln(desc);
-    for (final step in recipe.steps) {
-      b.writeln(step.title);
-      for (final bullet in step.bullets) {
-        final t = bullet.trim();
-        if (t.isNotEmpty) b.writeln(t);
-      }
-    }
-    return b.toString();
-  }
-
   String _buildPrompt(FridgeItem item, int portions) {
     final urgency = item.daysRemaining <= 0
         ? '${item.ingredientName} is at (or past) its estimated freshness window — this needs to be used TODAY.'
@@ -114,8 +100,9 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
       '{',
       '  "title": "...",',
       '  "description": "...",',
+      '  "curriculum_lesson_id": "...",',
       '  "ingredients": [',
-      '    {"name": "...", "amount": 0, "unit": "g|ml|tbsp|tsp|piece|clove|slice"}',
+      '    {"name": "...", "amount": 0, "unit": "g|ml|tbsp|tsp|piece|clove|slice", "cut": "${ingredientCutVocabulary.join('|')}"}',
       '  ],',
       '  "kitchen_gear": ["..."],',
       '  "steps": [',
@@ -123,6 +110,7 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
       '      "title": "...",',
       '      "duration_minutes": 0,',
       '      "heat": "low|medium|medium_high|off_heat",',
+      '      "ingredients_added": ["..."],',
       '      "bullets": ["..."]',
       '    }',
       '  ]',
@@ -132,6 +120,9 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
       '- The "description" field should be one short sentence in Chef Harris\' voice that acknowledges the urgency (e.g. rescuing it just in time) without being alarmist.',
       '- Use 4–8 steps. Provide realistic durations (1–15 minutes each).',
       '- Each ingredient must be a structured object with a numeric "amount" and a "unit", realistically scaled for $portions people.',
+      '- Each ingredient\'s "cut" field must be exactly one of: ${ingredientCutVocabulary.join(', ')}. This is a closed set — do not write a free-text cut description in this field, and do not invent a value outside this list. Use "none" if the ingredient needs no cutting. Step bullets may still describe the cut in your own voice; the "cut" field is the structured record of it.',
+      '- SEQUENCING RULE (non-negotiable): each step\'s "ingredients_added" field must list every ingredient that step actually adds to the pan/pot, using the exact "name" values from the ingredients list above. If the ingredients in "ingredients_added" do not have comparable cook times, you may not add them at the same moment. Either stagger them within the step — the bullets must state exactly what goes in first, how many minutes it cooks alone, and when each remaining ingredient joins — or split them across separate steps instead. WHAT NOT TO DO: do not write a step like "thinly slice potatoes and onions, then cook together" — thinly sliced onion softens in a few minutes while thinly sliced potato needs several minutes longer to cook through, so the onion will burn or turn bitter well before the potato is done. Instead, add the potato first and give it a real head start before the onion joins, or cook them as two separate steps.',
+      '- The "curriculum_lesson_id" field is required and must name the ONE curriculum technique or topic this recipe actually teaches, chosen exactly from this list: ${ChefService.curriculumDrawerKeys.join(', ')}. Base the choice on what the steps physically do, not the dish\'s theme, name, or ingredients — a recipe built from fridge leftovers is not "food_storage" just because using up leftovers is this app\'s whole point; if the steps sauté something, the answer is "sauteing"; if they braise, it\'s "braising"; and so on. Choose the single best match for the technique actually demonstrated.',
     ].join('\n');
   }
 
@@ -194,18 +185,9 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
         return;
       }
 
-      final matchedCurriculumKeys = _chefService.matchedCurriculumDrawerKeys(_buildCurriculumSearchText(payload));
-      final payloadWithCurriculum = CookModeRecipePayload(
-        title: payload.title,
-        ingredients: payload.ingredients,
-        steps: payload.steps,
-        kitchenGear: payload.kitchenGear,
-        description: payload.description,
-        structuredIngredients: payload.structuredIngredients,
-        basePortions: payload.basePortions,
-        curriculumLessonIds: matchedCurriculumKeys,
-      );
-
+      // curriculumLessonIds is populated by the parser directly from the
+      // model's own declared "curriculum_lesson_id" field now — no more
+      // keyword-matching the recipe's generated text after the fact.
       if (!mounted) return;
       await AppBottomSheet.show<void>(
         context: context,
@@ -213,7 +195,9 @@ class _FridgeCountdownSheetState extends State<FridgeCountdownSheet> {
         showDragHandle: true,
         backgroundColor: AppDesignTokens.surfaceCream,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-        builder: (ctx) => SafeArea(child: GeneratedRecipeActionsSheet(recipe: payloadWithCurriculum, sourceLabel: 'Fridge Countdown')),
+        builder: (ctx) => SafeArea(
+          child: GeneratedRecipeActionsSheet(recipe: payload, sourceLabel: 'Fridge Countdown', surface: CookModeSurface.fridgeCountdown),
+        ),
       );
     } catch (e) {
       debugPrint('FridgeCountdownSheet: generation failed: $e');

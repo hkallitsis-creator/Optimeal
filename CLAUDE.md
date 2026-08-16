@@ -587,6 +587,149 @@ this session — flagging rather than assuming either way):**
   code, consistent with "once profile photos/recipe images are added"
   framing in Roadmap item 10, but not actively re-verified).
 
+## Session summary — 2026-08-16 — READ THIS FIRST
+
+Device-testing session on a physical Pixel 7 Pro (previously untested — see
+prior sessions' repeated "compiles clean, never clicked through" caveats on
+several of these same features). Covers the cut-vocabulary/curriculum-
+declared-key work (schema, prompt, and UI changes not previously recorded
+anywhere in this file — this section is the first record of them), plus a
+cost/model investigation triggered by Harris questioning an OpenAI charge.
+No code changes in this closing pass itself — see the git log for the
+session's actual commits.
+
+### Shipped and verified on-device this session
+
+- **Cut vocabulary renders in the UI.** `ingredientCutVocabulary` /
+  `ingredientCutDefinitions` / `ingredientCutLabel` (`lib/models/recipe_model.dart`)
+  back a tappable pill on each ingredient row in Cook Mode
+  (`_IngredientChecklistRow`, `one_pan_cooking_roadmap_screen.dart`) that
+  opens a plain-text definition sheet. Explicit `'none'` cut values are
+  suppressed from rendering (no grey "none" pill) but retained in the parsed
+  model and in storage — real structured data, just not shown when it
+  carries no useful information.
+- **Model-declared `curriculum_lesson_id` replaces keyword matching.** The
+  model now names which curriculum drawer a recipe teaches directly
+  (`_readDeclaredCurriculumLessonId`, `lib/services/chef_recipe_parser.dart`),
+  validated against `ChefService.curriculumDrawerKeys` — an unrecognized or
+  missing value is treated as no lesson at all, never guessed. **5/5 real
+  on-device generations declared a valid key, zero rejections logged**, and
+  `WhatYouLearnedSheet` fired correctly on every completed cook with `ids`
+  matching the declared key exactly (`sauteing`, `sauteing`, `sauteing`,
+  `deep_frying`, `roasting` across the session's 5 generations). Replaces
+  the old approach of keyword-matching the recipe's own generated text,
+  which had no way to tell a genuine technique match from an accidental one.
+- **Waste Ledger rescue-eligibility gating (`CookModeSurface`, Roadmap item
+  28) confirmed correct live** — not just by code trace, by real device
+  behavior: Custom AI Recipe Creator cooks correctly skipped the ledger
+  write 3/3 times (`surface=CookModeSurface.customAiRecipeCreator
+  isReCook=false`), a Recently Cooked re-open correctly skipped it too
+  (`surface=null isReCook=true`), and the one genuinely rescue-eligible
+  Fridge Clearer cook proceeded without hitting a skip line.
+- **Finish & Plate mid-cook skip-ahead (Roadmap item 28) confirmed
+  reachable and safe on-device**: reachable from an active cook (not only
+  once every step is checked), the confirmation sheet appears, and
+  cancelling it returns cleanly to Cook Mode with nothing fired.
+- **Chef Harris SOS is grounded**: during a live cook, SOS correctly
+  answered about the actual current step and referenced the live timer —
+  confirms the `recipeContext`/`conversationHistory` parameters on
+  `ChefService.askChefHarris` are doing real work, not just present in the
+  signature.
+- **The cut-sequencing rule** (ingredients added in the same step must have
+  comparable cook times, or be staggered/split — added to the recipe
+  generation prompt this session) **held across every generation tested**
+  this session — no observed same-step pairing of mismatched cook-time
+  ingredients.
+
+### Added this session, not yet exercised
+
+- **Positive-path ledger success log** (`_logCookSessionCompletion`,
+  `one_pan_cooking_roadmap_screen.dart`) — on a real `LedgerCompletionSuccess`,
+  now `debugPrint`s the recipe title, the credited ingredients, and the
+  ingredients present in the recipe but excluded by
+  `LedgerService.freshProduceOnly` (computed as the diff, so the exclusion
+  is visible directly in the log, not inferred from a low total). Not yet
+  seen fire on a real successful write in a device session.
+- **Rejection logging on `_readDeclaredCurriculumLessonId`** — three
+  distinct `debugPrint` cases (field absent, present but not a string,
+  present but not in `ChefService.curriculumDrawerKeys`), each naming the
+  raw value and the recipe title. Not yet exercised because this session's
+  5/5 generations all declared valid keys — the rejection paths themselves
+  remain unobserved on a real device.
+- **`minced` cut definition reworded** to drop named ingredients ("garlic
+  and ginger") that read wrong when only one of them is actually in the
+  recipe — now describes the cut itself only. Not yet visually re-confirmed
+  on-device after the wording change (the pill/sheet mechanism itself was
+  device-verified earlier in the session, before this specific wording fix).
+
+### Still unverified on device
+
+- **Post-cook sequence surviving a failed ledger write.** Roadmap item 27's
+  design (a failed `waste_ledger_events` insert falls through rather than
+  aborting What You Learned / Confidence Climb / the share card / navigation
+  home) has not been exercised against a real failure — an airplane-mode
+  test was planned but not performed this session. Still only verified by
+  code trace, same caveat item 27 already carried.
+
+### Findings recorded this session (investigation only, most led to no code change)
+
+- **The deployed app has always called `gpt-4o`, never `gpt-4o-mini`.**
+  `ChefService.askChefHarris` never sends a `model` field in its request
+  payload, on any surface (Fridge Clearer, Custom AI Recipe Creator, home
+  dashboard suggestion, SOS all share the one method) — the
+  `ask-chef-harris` edge function hardcodes `resolvedModel` to default to
+  `'gpt-4o'` whenever `model` is absent (`supabase/functions/ask-chef-harris/index.ts:110-111`).
+  `gpt-4o-mini` is whitelisted and reachable in the code (left over from the
+  2026-08-11 side-by-side trial, verdict: keep `gpt-4o` — see Roadmap item
+  5) but nothing in the shipped app has ever actually requested it.
+  Cost logging in `api_call_cost_log` uses the same `resolvedModel` value
+  to pick rates as to make the call, so the rates always match the model
+  genuinely invoked — verified against a real logged row
+  (`prompt_tokens=6034, completion_tokens=636` → computed $0.02144, matching
+  the logged `est_cost_usd` exactly). **This was a corrected assumption on
+  Harris's part, not a code bug** — the logging is accurate.
+- **Per-call cost rose from ~$0.0146 (2026-08-13's first real logged row) to
+  ~$0.0226 (this session) because input tokens grew from ~3,344 to ~6,034**
+  across this session's prompt additions (the cut vocabulary schema, the
+  `ingredients_added`/sequencing rule, the `curriculum_lesson_id` field).
+  Prompt growth is the cost driver, not a model change — ties directly into
+  the payload-size instrumentation already in `ChefService.askChefHarris`
+  (see Roadmap item 5's prompt-size measurement work).
+- **The always-on system prompt is ~7,095 characters** (persona +
+  curriculum core + difficulty rules, `chef_service.dart`'s `_systemPersona`
+  + `_curriculumCore` + `_recipeDifficultyByKitchenConfidence`) **and is
+  sent byte-identical on every call, including SOS** — already documented
+  in Roadmap item 14 (prompt caching, investigated and closed 2026-08-15 as
+  "real but small money on the table, not worth chasing further at current
+  scale"). Recording again here because the revised break-even figure below
+  changes the scale argument that closure rested on — worth Harris's own
+  call on whether to revisit, not decided here.
+- **Revised break-even: roughly 240 generations/month per subscriber**, down
+  from the 400/month figure Harris had been tracking — driven by the same
+  per-call cost increase above (higher real cost per call means fewer calls
+  needed to justify a subscription). This is Harris's own tracked economics
+  figure, not something previously recorded in this file.
+- **The always-on system prompt contains four hardcoded food examples**,
+  sent regardless of what's actually being cooked: the onion-caramelization
+  witty-remark example (`_systemPersona`, "Don't rush the onions..."), the
+  rice/risotto few-shot SOS reply ("That's rice that got impatient..."),
+  the sautéed-onions few-shot step-bullet example, and the
+  omelette/buttered-pasta reference in the Advanced/Confident difficulty
+  rule (dishes to avoid defaulting to). **One of these — the rice/risotto
+  example — surfaced inappropriately during a live SOS session about a
+  mushroom/spinach/potato dish**, confirmed live, not just theorized. Not
+  fixed this session — report only.
+- **`LedgerService.freshProduceOnly` excluded potatoes from a Fridge
+  Clearer cook of mushroom, spinach, and potatoes — confirmed live.** This
+  is the existing, intentional `_pantryStapleKeywords` design
+  (`lib/services/ledger_service.dart` — potato is explicitly listed under
+  "Long-life alliums & roots," added deliberately in the 2026-08-06 session
+  alongside onion/garlic/ginger). Not a coding defect — it's behaving
+  exactly as designed — but Harris is now flagging the real live behavior
+  (potatoes genuinely at risk of spoiling don't count as "rescued") as
+  worth reconsidering as a product decision, not something to silently
+  leave as settled. Not changed this session.
+
 ## Session summary — 2026-08-06 — READ THIS FIRST
 
 A long Claude Code session did a large batch of fixes, one architecture-debt
@@ -2037,6 +2180,212 @@ complete and uses a standard, reliable Flutter API — high confidence.
     swallow-and-continue error handling across this project **as a
     class**, not fixed one instance at a time as each is separately
     discovered. Not started.
+
+    **Contradiction above — resolved 2026-08-16.** Traced
+    `_appendWeeklyEvent` and the Supabase insert line by line: the local
+    `SharedPreferences` weekly record **does** survive a failed Supabase
+    insert — `_appendWeeklyEvent` runs first, completes (success or its
+    own internally-swallowed failure) fully before the insert is even
+    attempted, and nothing about the insert throwing later can undo a
+    disk write that already happened. So "This Week" stays correct. What
+    actually gets lost is narrower and arguably worse: the
+    `waste_ledger_events` row itself, and therefore `user_ledger_totals`'s
+    lifetime count (only updated via `trg_increment_ledger_totals`, which
+    only fires on that specific insert succeeding) — a permanent,
+    silent **local/server split** where "This Week" and "Lifetime" can
+    disagree with no reconciliation. The original "no weekly rollup"
+    claim in the first report on this item was wrong; corrected here
+    rather than left standing.
+
+    **Service/schema layer — IMPLEMENTED 2026-08-16.** Migration
+    `supabase/migrations/20260816120000_add_waste_ledger_events_idempotency_key.sql`
+    applied to the live project via `supabase db push` (pre-flight
+    checked first: `authenticated`'s INSERT grant on `waste_ledger_events`
+    is table-level, confirmed via `pg_attribute.attacl` being `null` on
+    every column — no column-level ACL override that could have silently
+    excluded the new column):
+    ```sql
+    alter table public.waste_ledger_events
+      add column idempotency_key text;
+
+    create unique index waste_ledger_events_idempotency_key_uidx
+      on public.waste_ledger_events (idempotency_key)
+      where idempotency_key is not null;
+    ```
+    Undo, if ever needed:
+    ```sql
+    drop index if exists public.waste_ledger_events_idempotency_key_uidx;
+    alter table public.waste_ledger_events drop column if exists idempotency_key;
+    ```
+    Confirmed live after push: column is `text`, nullable; index is a
+    partial unique index (`WHERE idempotency_key IS NOT NULL`) — existing
+    rows keep `NULL`, only new inserts are constrained.
+
+    Also implemented, same session: `PendingLedgerWriteService`
+    (`lib/services/pending_ledger_write_service.dart`, SharedPreferences-
+    backed, key `pending_ledger_writes_v1`); `LedgerService` restructured
+    with a sealed `LedgerCompletionSuccess`/`LedgerCompletionWriteFailed`
+    result and a three-way `try` boundary (insert, with `23505` treated
+    as success; totals read-back, which cannot flip the result to
+    failure); a `retryPendingWrite` method that checks the stored
+    `user_id` against the current session before attempting anything
+    (handles a stale uid from a post-reinstall anonymous re-auth) and is
+    **not called from anywhere yet** — dead code until the next phase, no
+    automatic trigger, no UI. `one_pan_cooking_roadmap_screen.dart`
+    touched only at the `logCompletion()` call site to consume the new
+    return type, behavior otherwise unchanged. See `test/services/`
+    for the new unit tests. **Still not wired to anything user-facing**:
+    no persistent affordance UI, no retry trigger, no automatic
+    scheduling — those remain a distinct next phase, not started.
+
+28. **Waste Ledger source accuracy, re-cook exclusion, and Finish & Plate
+    skip-ahead — BUILT 2026-08-16.** Two connected changes, implemented
+    together per Harris's explicit decisions (not re-opened/re-proposed
+    here — this is a record of what was built).
+
+    **Decision 1 — only fridge-originated cooks count as a rescue.**
+    Followed up directly from the 2026-08-16 read-only investigation (see
+    "Finding 1" earlier that session, not separately recorded in this doc
+    until now): `_logCookSessionCompletion()`'s single `logCompletion()`
+    call site had hardcoded `source: 'cook_mode'` regardless of entry
+    path, and Recently Cooked re-entry carried zero marker distinguishing
+    a re-cook from a fresh cook — both logged identically to a first cook.
+    Fixed:
+    - **`CookModeSurface` enum** (`one_pan_cooking_roadmap_screen.dart`,
+      alongside `CookModeRecipePayload`) — `fridgeClearer`,
+      `fridgeCountdown`, `customAiRecipeCreator`, `weeklyPlanner`, with
+      `isRescueEligible` (true only for the first two — both generate a
+      recipe directly from what's actually in the fridge; Custom AI
+      Recipe Creator and Weekly Planner don't) and `ledgerSourceValue`
+      (the real `waste_ledger_events.source` string for eligible
+      surfaces, null otherwise — `logCompletion` is never called for
+      non-eligible surfaces, so no value is ever needed).
+    - **`CookModeLaunchRequest`** — new envelope type (recipe + surface +
+      `isReCook`) replacing a bare `CookModeRecipePayload` as go_router's
+      `extra` for every fresh (non-resume) Cook Mode launch. `surface` is
+      nullable — null for Recently Cooked re-entry, where original
+      provenance isn't tracked and doesn't matter, since `isReCook` alone
+      already excludes it from logging.
+    - **`ActiveCookSession`** (`cook_session_storage_service.dart`) gained
+      `surface`/`isReCook` fields, threaded through
+      `saveActiveSession`/`loadActiveSession`, so a session backgrounded
+      mid-cook and resumed still logs (or doesn't) exactly as it would
+      have without the interruption. Sessions saved before this item
+      (no `surface` key in the persisted JSON) default to `surface: null`
+      — never rescue-eligible, rather than guessing an origin that was
+      never recorded.
+    - **All 5 real entry paths updated**: `fridge_clearer_screen.dart`
+      (`fridgeClearer`), `weekly_planner_screen.dart`'s single "open
+      planned meal" push (`weeklyPlanner` — applies regardless of how the
+      meal was originally added to the plan, matching Decision 1's "Weekly
+      Planner... do not log" full stop), `generated_recipe_actions_sheet.dart`
+      (shared by Fridge Countdown "Use Tonight" and Custom AI Recipe
+      Creator — gained a new required `surface` constructor param, passed
+      by its two callers as `CookModeSurface.fridgeCountdown` and
+      `CookModeSurface.customAiRecipeCreator` respectively), and Home's
+      `_openCookMode` (Recently Cooked tap → `isReCook: true, surface:
+      null`; Resume Cooking banner → passes the `ActiveCookSession`
+      through unchanged, carrying its own captured surface/re-cook state).
+    - **Gating**: `_logCookSessionCompletion()` now computes `shouldLog =
+      surface != null && surface.isRescueEligible && !isReCook` before
+      ever calling `logCompletion()`.
+    - **Migration**: `supabase/migrations/20260816130000_add_fridge_countdown_to_waste_ledger_source_check.sql`,
+      applied via `supabase db push`, confirmed live via
+      `pg_get_constraintdef`:
+      ```sql
+      alter table public.waste_ledger_events
+        drop constraint waste_ledger_events_source_check;
+
+      alter table public.waste_ledger_events
+        add constraint waste_ledger_events_source_check
+        check (source = any (array['fridge_clearer', 'cook_mode', 'custom_ai_recipe', 'fridge_countdown']));
+      ```
+      Undo, if ever needed:
+      ```sql
+      alter table public.waste_ledger_events
+        drop constraint waste_ledger_events_source_check;
+
+      alter table public.waste_ledger_events
+        add constraint waste_ledger_events_source_check
+        check (source = any (array['fridge_clearer', 'cook_mode', 'custom_ai_recipe']));
+      ```
+      `cook_mode` deliberately left in the constraint (not removed) —
+      historical rows already use it; removing it wasn't part of this fix.
+
+    **Decision 2 — Finish & Plate becomes a real skip-ahead control.**
+    Follows directly from the 2026-08-16 investigation's "Finding 3":
+    the button's render condition (`_recipeFinished`) and the last-step
+    auto-fire were the same event, so there was no real window to press
+    it. Fixed:
+    - **Render condition changed**: Finish & Plate now also appears on
+      `_CookPlayerBar` (the in-progress bar, alongside Pause/Next
+      Step/Ask Chef) — reachable from any step during an active cook, not
+      only once every step is ticked. Deliberately smaller/quieter
+      (`TextButton`, muted color) than the routine-action buttons next to
+      it, matching its rarer, more consequential nature. The original
+      `_CookModeBottomBar` appearance (at `_recipeFinished`) is unchanged
+      and still there too — combined, the control is now reachable
+      throughout the entire `_cookStarted` lifetime. The existing
+      last-step auto-fire itself is untouched.
+    - **Confirmation added**: `_FinishAndPlateConfirmSheet` (new, modeled
+      on `ConfidenceTierUpSheet`'s accept/decline pattern) — shown via a
+      new shared `_confirmAndFinish()` method before the sequence ever
+      fires. Wired to both the new mid-cook button and the existing
+      `_CookModeBottomBar` button's not-yet-started branch (the
+      already-started branch is pure recovery navigation per the existing
+      Roadmap item 21 comment — nothing new fires there, so no
+      confirmation needed). Its old ad-hoc "Nice work — plate up and
+      enjoy" snackbar was removed as part of this — redundant now that a
+      real confirmation gate sits in front of the same action.
+    - On confirm: cancels the active timer, nulls `_activeStepIndex`
+      (matching what the last-step auto-fire branch already does), then
+      calls the same `_logCookSessionCompletion()` the last-step tick
+      calls — genuinely the same completion sequence, not a parallel one.
+
+    **How the sequence was decoupled from the ledger result (required
+    check before this was allowed to proceed — see below).**
+    `_logCookSessionCompletion()` restructured so `ledgerSuccess` (now a
+    nullable local, `LedgerCompletionSuccess?`) only gates the Waste
+    Ledger celebration sheet itself. Everything after it — What You
+    Learned, the Confidence Climb evaluation + tier-up offer, the share
+    card, the upgrade nudge, and navigation home — moved outside that
+    condition and now runs unconditionally, whether the cook was
+    non-eligible, a re-cook, or the write simply failed (a failed write
+    now falls through instead of aborting the whole method — a small
+    included fix beyond the letter of the ask, since "the sequence must
+    not depend on a ledger result existing" applies equally to a failed
+    attempt as to a skipped one, and the old abort-on-failure behavior
+    meant a transient network error could already rob a legitimate Fridge
+    Clearer cook of What You Learned and Home navigation). The share
+    card's `ingredientsRescued` now reads `LedgerService.freshProduceOnly(_ingredients)`
+    directly instead of `ledgerSuccess.ingredientsRescuedList`, so it
+    renders identically regardless of whether a ledger write happened —
+    same filtering logic `logCompletion` applies internally, just called
+    directly rather than round-tripped through a ledger result.
+    `_ledgerSessionLogged` (the guard/back-button/Weekly-Planner-completion
+    signal) was renamed to `_cookSequenceStarted` throughout, since it now
+    means "the post-cook sequence began," deliberately independent of
+    whether the ledger portion of it succeeded.
+
+    **Pre-check required before the restructure, done and reported before
+    any code changed**: whether Confidence Climb's rep counting or What
+    You Learned assume every step was completed (skipping steps could
+    otherwise produce a wrong claim). Traced both directly —
+    `ConfidenceClimbService.evaluate` operates purely on cook-history
+    entries (`CookSessionStorageService.loadCookHistory()`) and each
+    entry's `recipe.curriculumLessonIds`, a whole-recipe field set once
+    at generation time; `WhatYouLearnedSheet`'s `ids` is
+    `payload?.curriculumLessonIds` directly. Neither reads
+    `_completedSteps`/`_activeStepIndex` at all. Cook-history population
+    itself already happens in `initState` on Cook Mode **open** (via
+    `_recordRecentlyCooked`/`_appendToHistory`), not on completion — so
+    both were already fully decoupled from step completion before this
+    item, and skipping steps via Finish & Plate introduces no new
+    inaccuracy. Confirmed safe to proceed without design changes to
+    either.
+
+    **`flutter analyze`: 61 issues, unchanged from baseline** — no new
+    issues introduced.
 
 ## Retention Features Backlog
 

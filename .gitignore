@@ -72,3 +72,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Local device-test log captures
+device_log_*.txt
