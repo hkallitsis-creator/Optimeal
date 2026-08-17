@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
@@ -264,6 +265,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
               'bullets': s.bullets,
               'ingredients_added': s.ingredientsAdded,
               'sensory_cue': s.sensoryCue,
+              'technique_diagram_id': s.techniqueDiagramId,
             })
         .toList(growable: false),
     'description': payload.description,
@@ -319,6 +321,9 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
               ingredientsAddedRaw is List ? ingredientsAddedRaw.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList() : null;
           final sensoryCueRaw = s['sensory_cue'] ?? s['sensoryCue'];
           final sensoryCue = SensoryCueVocabulary.allKeys.contains(sensoryCueRaw) ? sensoryCueRaw as String : SensoryCueVocabulary.noCueKey;
+          final techniqueDiagramIdRaw = s['technique_diagram_id'] ?? s['techniqueDiagramId'];
+          final techniqueDiagramId =
+              allTechniqueDiagramKeys.contains(techniqueDiagramIdRaw) ? techniqueDiagramIdRaw as String : noTechniqueDiagramKey;
           steps.add(CookModeStepPayload(
             title: stepTitle,
             heat: heat,
@@ -326,6 +331,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
             bullets: bullets,
             ingredientsAdded: (ingredientsAdded?.isEmpty ?? true) ? null : ingredientsAdded,
             sensoryCue: sensoryCue,
+            techniqueDiagramId: techniqueDiagramId,
           ));
         }
       }

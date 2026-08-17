@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
@@ -103,6 +104,29 @@ String _readDeclaredSensoryCueForStep(dynamic stepJson, String stepTitle) {
   if (!SensoryCueVocabulary.allKeys.contains(trimmed)) {
     debugPrint('parseChefRecipeJson: sensory_cue "$raw" not in known set for step "$stepTitle"');
     return SensoryCueVocabulary.noCueKey;
+  }
+  return trimmed;
+}
+
+/// Reads a single step's declared "technique_diagram_id" — fourth instance
+/// of the closed-vocabulary pattern (after cut, curriculum_lesson_id, and
+/// sensory_cue). Unlike [_readDeclaredSensoryCueForStep], this field is
+/// OPTIONAL on the model's side: absence is the expected common case for
+/// most steps, not a rejection, so it's logged at a lower noise level than
+/// a genuinely invalid declared value.
+String _readDeclaredTechniqueDiagramIdForStep(dynamic stepJson, String stepTitle) {
+  if (stepJson is! Map) return noTechniqueDiagramKey;
+  final raw = stepJson['technique_diagram_id'];
+
+  if (raw == null) return noTechniqueDiagramKey;
+  if (raw is! String) {
+    debugPrint('parseChefRecipeJson: technique_diagram_id present but not a string (got: $raw) for step "$stepTitle"');
+    return noTechniqueDiagramKey;
+  }
+  final trimmed = raw.trim();
+  if (!allTechniqueDiagramKeys.contains(trimmed)) {
+    debugPrint('parseChefRecipeJson: technique_diagram_id "$raw" not in known set for step "$stepTitle"');
+    return noTechniqueDiagramKey;
   }
   return trimmed;
 }
@@ -218,6 +242,7 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
           bullets: bullets,
           ingredientsAdded: ingredientsAdded.isEmpty ? null : ingredientsAdded,
           sensoryCue: _readDeclaredSensoryCueForStep(s, stepTitle),
+          techniqueDiagramId: _readDeclaredTechniqueDiagramIdForStep(s, stepTitle),
         ));
       }
     }

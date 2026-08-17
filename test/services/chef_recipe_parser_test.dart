@@ -404,5 +404,65 @@ void main() {
       expect(result!.steps, hasLength(1));
       expect(result.steps[0].sensoryCue, 'no_cue');
     });
+
+    test('a step with a valid declared technique_diagram_id is parsed', () async {
+      const raw = '''
+      {
+        "title": "Technique Diagram Test",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "technique_diagram_id": "pan_crowding", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.steps, hasLength(1));
+      expect(result.steps[0].techniqueDiagramId, 'pan_crowding');
+    });
+
+    test('a step with a technique_diagram_id outside the known set falls back to none', () async {
+      const raw = '''
+      {
+        "title": "Unknown Technique Diagram Test",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "technique_diagram_id": "deep_fat_frying", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.steps, hasLength(1));
+      expect(result.steps[0].techniqueDiagramId, 'none');
+    });
+
+    test('a step with an absent technique_diagram_id field falls back to none, not a crash', () async {
+      const raw = '''
+      {
+        "title": "Absent Technique Diagram Test",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.steps, hasLength(1));
+      expect(result.steps[0].techniqueDiagramId, 'none');
+    });
   });
 }

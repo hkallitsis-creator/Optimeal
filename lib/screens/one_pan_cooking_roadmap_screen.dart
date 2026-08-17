@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
@@ -20,6 +21,7 @@ import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/confidence_tier_up_sheet.dart';
 import 'package:optimeal/widgets/curriculum_drawer_content.dart';
+import 'package:optimeal/widgets/diagram_sheet.dart';
 import 'package:optimeal/widgets/post_cook_share_card.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 import 'package:optimeal/widgets/waste_ledger_celebration_sheet.dart';
@@ -136,7 +138,8 @@ class CookModeStepPayload {
       required this.durationMinutes,
       required this.bullets,
       this.ingredientsAdded,
-      this.sensoryCue = SensoryCueVocabulary.noCueKey});
+      this.sensoryCue = SensoryCueVocabulary.noCueKey,
+      this.techniqueDiagramId = noTechniqueDiagramKey});
 
   final String title;
   final String heat;
@@ -155,6 +158,13 @@ class CookModeStepPayload {
   /// equality check against [SensoryCueVocabulary.noCueKey]. Defaults to
   /// that same sentinel for recipes saved before this field existed.
   final String sensoryCue;
+
+  /// Declared key from [techniqueDiagramKeys], or [noTechniqueDiagramKey]
+  /// when absent or not a valid key — this field is optional on the
+  /// model's side (most steps have no value here), so absence is the
+  /// expected common case, not a rejection. Never null, same reasoning as
+  /// [sensoryCue].
+  final String techniqueDiagramId;
 }
 
 class OnePanCookingRoadmapScreen extends StatefulWidget {
@@ -408,6 +418,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                   .map((b) => b.trim())
                   .toList(growable: false),
               sensoryCue: s.sensoryCue,
+              techniqueDiagramId: s.techniqueDiagramId,
+              cutDiagramKey: _resolveCutDiagramKey(
+                  s.ingredientsAdded, payload.structuredIngredients),
             ),
           )
           .toList(growable: false);
@@ -471,6 +484,38 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
           ? const ['Get your ingredients and tools ready before you start cooking.']
           : names,
     );
+  }
+
+  /// Resolves the cut-diagram pill for a step, per Package C3: the cut
+  /// value of the first ingredient this step adds (matched by name,
+  /// case-insensitive) against [structuredIngredients] that has a real
+  /// built diagram asset (see [diagramFor]). Null if the step adds no
+  /// ingredients, none match, or the matched ingredient's cut has no
+  /// built asset — callers render nothing in all of those cases, no
+  /// placeholder.
+  static String? _resolveCutDiagramKey(
+    List<String>? ingredientsAdded,
+    List<RecipeIngredient>? structuredIngredients,
+  ) {
+    if (ingredientsAdded == null ||
+        ingredientsAdded.isEmpty ||
+        structuredIngredients == null ||
+        structuredIngredients.isEmpty) {
+      return null;
+    }
+    for (final addedName in ingredientsAdded) {
+      final normalizedAdded = addedName.trim().toLowerCase();
+      if (normalizedAdded.isEmpty) continue;
+      for (final ingredient in structuredIngredients) {
+        final cut = ingredient.cut;
+        if (cut == null) continue;
+        if (ingredient.name.trim().toLowerCase() == normalizedAdded &&
+            diagramFor(cut) != null) {
+          return cut;
+        }
+      }
+    }
+    return null;
   }
 
   static _HeatLevel _parseHeat(String raw) {
@@ -1366,7 +1411,9 @@ class _CookStep {
       required this.duration,
       required this.bullets,
       this.sensoryCue = SensoryCueVocabulary.noCueKey,
-      this.hasTimer = true});
+      this.hasTimer = true,
+      this.techniqueDiagramId = noTechniqueDiagramKey,
+      this.cutDiagramKey});
 
   final String actionTitle;
   final _HeatLevel heat;
@@ -1380,6 +1427,21 @@ class _CookStep {
   /// UI in [_CookStepCard]. Testers found the timer stressful on the very
   /// first step, and rushing knife work is a real cut risk.
   final bool hasTimer;
+
+  /// The step's own declared technique diagram key (see
+  /// [CookModeStepPayload.techniqueDiagramId]) — carried through unchanged,
+  /// [noTechniqueDiagramKey] when none.
+  final String techniqueDiagramId;
+
+  /// Resolved ONCE at construction (see the mapping in [initState]), not
+  /// re-derived per render: the cut value of the first ingredient this step
+  /// adds (via [CookModeStepPayload.ingredientsAdded], matched against
+  /// [CookModeRecipePayload.structuredIngredients] by name) that has a real
+  /// built diagram asset (see lib/widgets/diagram_sheet.dart's
+  /// `diagramFor`). Null when the step adds no ingredient with a
+  /// diagrammed cut — the common case, since only 'julienne' has an asset
+  /// in this pilot phase.
+  final String? cutDiagramKey;
 }
 
 class _CookModeHeader extends StatelessWidget {
@@ -2099,11 +2161,6 @@ class _SensoryCueDetailSheet extends StatelessWidget {
 /// "counted" verdict has no equivalent widget — the existing
 /// [WasteLedgerCelebrationSheet] already serves that role; this sheet is
 /// only ever shown for the other cases (never both in the same sequence).
-/// Renders the "not counted" / "write failed and queued" Waste Ledger
-/// verdicts (docs/DECISIONS.md "Waste Ledger legibility — option B"). The
-/// "counted" verdict has no equivalent widget — the existing
-/// [WasteLedgerCelebrationSheet] already serves that role; this sheet is
-/// only ever shown for the other cases (never both in the same sequence).
 class _LedgerVerdictSheet extends StatelessWidget {
   const _LedgerVerdictSheet({required this.lines});
 
@@ -2326,6 +2383,30 @@ class _CookStepCardState extends State<_CookStepCard> {
               const SizedBox(height: 14),
               for (final b in widget.step.bullets) ...[
                 _BulletLine(text: b),
+                const SizedBox(height: 10),
+              ],
+              if ((widget.step.techniqueDiagramId != noTechniqueDiagramKey &&
+                      diagramFor(widget.step.techniqueDiagramId) != null) ||
+                  widget.step.cutDiagramKey != null) ...[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (widget.step.techniqueDiagramId !=
+                            noTechniqueDiagramKey &&
+                        diagramFor(widget.step.techniqueDiagramId) != null)
+                      DiagramPill(
+                        diagramKey: widget.step.techniqueDiagramId,
+                        title: diagramFor(widget.step.techniqueDiagramId)!
+                            .title,
+                      ),
+                    if (widget.step.cutDiagramKey != null)
+                      DiagramPill(
+                        diagramKey: widget.step.cutDiagramKey!,
+                        title: diagramFor(widget.step.cutDiagramKey!)!.title,
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 10),
               ],
               if (widget.step.sensoryCue != SensoryCueVocabulary.noCueKey)

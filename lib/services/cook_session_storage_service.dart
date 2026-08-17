@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
@@ -256,6 +257,7 @@ class CookSessionStorageService {
                   'bullets': s.bullets,
                   'ingredientsAdded': s.ingredientsAdded,
                   'sensoryCue': s.sensoryCue,
+                  'techniqueDiagramId': s.techniqueDiagramId,
                 })
             .toList(),
         'kitchenGear': recipe.kitchenGear,
@@ -283,6 +285,9 @@ class CookSessionStorageService {
               sensoryCue: SensoryCueVocabulary.allKeys.contains(m['sensoryCue'])
                   ? m['sensoryCue'] as String
                   : SensoryCueVocabulary.noCueKey,
+              techniqueDiagramId: allTechniqueDiagramKeys.contains(m['techniqueDiagramId'])
+                  ? m['techniqueDiagramId'] as String
+                  : noTechniqueDiagramKey,
             );
           })
           .toList(),

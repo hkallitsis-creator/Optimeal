@@ -5,6 +5,7 @@ import 'package:optimeal/models/user_profile.dart';
 import 'package:optimeal/chef_curiculum_techniques.dart';
 import 'package:optimeal/chef_curiculum_reference.dart';
 import 'package:optimeal/chef_curiculum_lookups.dart';
+import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 
 /// Service for "Ask Chef Harris" AI help.
@@ -76,6 +77,23 @@ class ChefService {
     'spices_bloomed': 'spices turn from dusty to warm and fragrant',
     'tastes_seasoned': 'salt level correct now, not left to the end',
     'juices_run_clear': 'opaque white flesh, clear juices, zero pink anywhere',
+  };
+
+  /// Compact, non-voice prompt declaration for technique diagrams — fourth
+  /// instance of the closed-vocabulary pattern (after cut vocabulary,
+  /// curriculum_lesson_id, and sensory_cue). Kept deliberately lean: 5
+  /// keys, one short hint each, no descriptions — this field is optional,
+  /// unlike sensory_cue, so most steps are expected to omit it entirely.
+  static final String techniqueDiagramPromptDeclaration = techniqueDiagramKeys
+      .map((key) => '$key: ${_techniqueDiagramPromptHints[key] ?? ''}')
+      .join('\n');
+
+  static const Map<String, String> _techniqueDiagramPromptHints = {
+    'pan_crowding': 'too much food at once, steams instead of browning',
+    'cold_vs_hot_pan': 'starting in a cold pan instead of a hot one',
+    'oil_depth': 'how much oil the pan actually needs',
+    'tray_spacing': 'pieces spaced apart on the tray, not touching',
+    'staggered_adds': 'ingredients added at different times, not all together',
   };
 
   /// Full Chef Harris persona. Keep this unshortened so responses stay consistent.
