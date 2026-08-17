@@ -341,7 +341,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       ];
       _baseStructuredIngredients = null;
       _basePortions = 1;
-      _steps = const [
+      const rawSteps = [
         _CookStep(
           actionTitle: 'The Caramelization Base',
           heat: _HeatLevel.mediumHigh,
@@ -382,6 +382,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
           ],
         ),
       ];
+      _steps = [_buildPrepStep(_staticIngredients), ...rawSteps];
     } else {
       _recipeTitle =
           payload.title.trim().isEmpty ? 'Cook Mode' : payload.title.trim();
@@ -410,7 +411,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             ),
           )
           .toList(growable: false);
-      _steps = resolvedSteps.isEmpty
+      final rawSteps = resolvedSteps.isEmpty
           ? const [
               _CookStep(
                 actionTitle: 'Cook',
@@ -420,6 +421,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
               ),
             ]
           : resolvedSteps;
+      _steps = [_buildPrepStep(_staticIngredients), ...rawSteps];
     }
 
     _estimatedCookTime =
@@ -450,6 +452,25 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     _stepKeys = List.generate(_steps.length, (_) => GlobalKey());
     // Covers resuming straight into an already-active step.
     _postFrame(_scrollToActiveStep);
+  }
+
+  /// Synthesizes a timerless "prepare ingredients" step, client-side only —
+  /// no generation prompt change, never AI-generated. Prepended to every
+  /// fresh, saved, and resumed session alike (built here in [initState],
+  /// which resume also goes through). Testers found a timer on the very
+  /// first step stressful, and rushing knife work during prep is a real cut
+  /// risk — see CLAUDE.md.
+  static _CookStep _buildPrepStep(List<String> ingredientNames) {
+    final names = ingredientNames.map((e) => e.trim()).where((e) => e.isNotEmpty).toList(growable: false);
+    return _CookStep(
+      actionTitle: 'Prepare Your Ingredients',
+      heat: _HeatLevel.offHeat,
+      duration: Duration.zero,
+      hasTimer: false,
+      bullets: names.isEmpty
+          ? const ['Get your ingredients and tools ready before you start cooking.']
+          : names,
+    );
   }
 
   static _HeatLevel _parseHeat(String raw) {
@@ -811,11 +832,25 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     if (!mounted) return;
     if (_activeStepIndex == null) return;
     if (_completedSteps?.contains(_activeStepIndex!) ?? false) return;
+
+    _activeTicker?.cancel();
+
+    // Timerless step (currently only the synthesized prep step, see
+    // _buildPrepStep) — mark active/unpaused so the UI reads correctly, but
+    // never start a countdown. The only way forward is the manual
+    // mark-complete action, which already calls _advanceToNextStep()
+    // directly regardless of whether a timer was ever running.
+    if (!_steps[_activeStepIndex!].hasTimer) {
+      _activeRemaining = Duration.zero;
+      if (mounted) setState(() => _cookPaused = false);
+      unawaited(_persistActiveSession());
+      return;
+    }
+
     if (_activeRemaining <= Duration.zero) {
       _activeRemaining = _steps[_activeStepIndex!].duration;
     }
 
-    _activeTicker?.cancel();
     if (mounted) setState(() => _cookPaused = false);
     unawaited(_persistActiveSession());
     _activeTicker = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -1330,13 +1365,21 @@ class _CookStep {
       required this.heat,
       required this.duration,
       required this.bullets,
-      this.sensoryCue = SensoryCueVocabulary.noCueKey});
+      this.sensoryCue = SensoryCueVocabulary.noCueKey,
+      this.hasTimer = true});
 
   final String actionTitle;
   final _HeatLevel heat;
   final Duration duration;
   final List<String> bullets;
   final String sensoryCue;
+
+  /// False only for the client-synthesized "prepare ingredients" step
+  /// (see [_buildPrepStep]) — no AI-generated step is ever timerless.
+  /// Gates both the countdown ticker ([_resumeTimer]) and the timer-related
+  /// UI in [_CookStepCard]. Testers found the timer stressful on the very
+  /// first step, and rushing knife work is a real cut risk.
+  final bool hasTimer;
 }
 
 class _CookModeHeader extends StatelessWidget {
@@ -2239,19 +2282,25 @@ class _CookStepCardState extends State<_CookStepCard> {
                         Wrap(
                           spacing: 10,
                           runSpacing: 10,
-                          children: [
-                            _HeatBadge(heat: widget.step.heat),
-                            _MiniPill(
-                                icon: Icons.timelapse,
-                                text: '~${widget.step.duration.inMinutes} min'),
-                            if (widget.cookStarted)
-                              _MiniPill(
-                                icon: Icons.timer_outlined,
-                                text: widget.isActive
-                                    ? _format(widget.remaining)
-                                    : _format(widget.step.duration),
-                              ),
-                          ],
+                          children: widget.step.hasTimer
+                              ? [
+                                  _HeatBadge(heat: widget.step.heat),
+                                  _MiniPill(
+                                      icon: Icons.timelapse,
+                                      text: '~${widget.step.duration.inMinutes} min'),
+                                  if (widget.cookStarted)
+                                    _MiniPill(
+                                      icon: Icons.timer_outlined,
+                                      text: widget.isActive
+                                          ? _format(widget.remaining)
+                                          : _format(widget.step.duration),
+                                    ),
+                                ]
+                              : const [
+                                  _MiniPill(
+                                      icon: Icons.self_improvement_rounded,
+                                      text: 'Go at your own pace'),
+                                ],
                         ),
                       ],
                     ),
@@ -2315,14 +2364,19 @@ class _CookStepCardState extends State<_CookStepCard> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.play_circle_fill,
+                      Icon(
+                          widget.step.hasTimer
+                              ? Icons.play_circle_fill
+                              : Icons.self_improvement_rounded,
                           color: theme.colorScheme.tertiary),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           widget.isCompleted
                               ? 'Completed'
-                              : 'Hands-free timer is running for this step.',
+                              : (widget.step.hasTimer
+                                  ? 'Hands-free timer is running for this step.'
+                                  : 'Take your time — mark it complete when you\'re ready.'),
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                             height: 1.35,

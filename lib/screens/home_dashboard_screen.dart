@@ -36,7 +36,6 @@ const int kChefHarrisChatFreeDailyLimit = 5;
 class HomeDashboardScreen extends StatefulWidget {
   const HomeDashboardScreen({super.key});
 
-  static const Color _sageBackground = Color(0xFFC5D3C1);
   static const Color _deepForest = Color(0xFF1E3A2B);
   static const Color _terracotta = Color(0xFFD96B43);
   static const double _cardRadius = 16.0;
@@ -246,7 +245,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final activeSession = _activeSession;
 
     return Scaffold(
-      backgroundColor: HomeDashboardScreen._sageBackground,
+      backgroundColor: AppDesignTokens.backgroundSage,
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
@@ -285,14 +284,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   childAspectRatio: 0.95,
                 ),
                 delegate: SliverChildListDelegate.fixed([
-                  _ActionCard(
-                    title: 'Weekly Plan & Shop',
-                    subtitle: 'Plan Mon–Sun & export shopping lists.',
-                    emoji: '📅',
-                    accent: HomeDashboardScreen._terracotta,
-                    icon: Icons.calendar_month_rounded,
-                    onTap: () => context.push(AppRoutes.weeklyPlan),
-                  ),
+                  // Reordered 2026-08-17 (docs/decisions_2026-08-17.md):
+                  // Fridge Clearer leads as the hero action, the AI
+                  // generator (Custom AI Recipe Creator) second, everything
+                  // else after. No destination removed, only reweighted.
                   _ActionCard(
                     title: 'Fridge Clearer',
                     subtitle: 'Turn leftover ingredients into great meals.',
@@ -300,14 +295,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     accent: HomeDashboardScreen._deepForest,
                     icon: Icons.auto_awesome_rounded,
                     onTap: () => context.push(AppRoutes.aiFridgeScrapGenerator),
-                  ),
-                  _ActionCard(
-                    title: 'Recipe Library',
-                    subtitle: 'Browse technique matrixes & saved favorites.',
-                    emoji: '📚',
-                    accent: HomeDashboardScreen._deepForest,
-                    icon: Icons.menu_book_rounded,
-                    onTap: () => context.go(AppRoutes.homeTab(3)),
                   ),
                   _ActionCard(
                     title: 'Custom AI Recipe Creator',
@@ -318,6 +305,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     onTap: () => HomeDashboardScreen._showCustomAiRecipeCreator(context),
                   ),
                   _ActionCard(
+                    title: 'Weekly Plan & Shop',
+                    subtitle: 'Plan Mon–Sun & export shopping lists.',
+                    emoji: '📅',
+                    accent: HomeDashboardScreen._terracotta,
+                    icon: Icons.calendar_month_rounded,
+                    onTap: () => context.push(AppRoutes.weeklyPlan),
+                  ),
+                  _ActionCard(
+                    title: 'Recipe Library',
+                    subtitle: 'Browse technique matrixes & saved favorites.',
+                    emoji: '📚',
+                    accent: HomeDashboardScreen._deepForest,
+                    icon: Icons.menu_book_rounded,
+                    onTap: () => context.go(AppRoutes.homeTab(3)),
+                  ),
+                  _ActionCard(
                     title: 'Recently Cooked',
                     subtitle: 'Revisit or remake your last few dishes.',
                     emoji: '🕒',
@@ -325,6 +328,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     icon: Icons.history_rounded,
                     onTap: () => _showRecentlyCooked(context),
                   ),
+                  // Waste Ledger summary — stays visible on Home, per
+                  // instruction (it's the app's identity). Reweighted to
+                  // last position, not removed.
                   _ActionCard(
                     title: 'This Week',
                     subtitle: _weeklyIngredientsRescued == 0
