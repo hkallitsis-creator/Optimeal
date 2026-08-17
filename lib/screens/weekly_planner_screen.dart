@@ -3,18 +3,15 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
-import 'package:optimeal/theme.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/custom_ai_recipe_creator_sheet.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
-import 'package:optimeal/state/ingredient_prep_controller.dart';
 
 class WeeklyPlannerScreen extends StatefulWidget {
   const WeeklyPlannerScreen({super.key});
@@ -164,7 +161,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
     if (structured != null && structured.isNotEmpty) {
       final out = structured
-          .map((ing) => _AisleItem(aisle: _inferAisle(ing.name), item: ing.name, amount: ing.amount, unit: ing.unit))
+          .map((ing) => _AisleItem(aisle: _inferAisle(ing.name), item: ing.name))
           .toList(growable: false);
       return out.isEmpty ? fallback : out;
     }
@@ -176,55 +173,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       out.add(_AisleItem(aisle: _inferAisle(s), item: s));
     }
     return out.isEmpty ? fallback : out;
-  }
-
-  /// Merges same-name items within an aisle so the same ingredient across
-  /// multiple meals shows as one combined line instead of duplicate rows.
-  /// Sums cleanly when every entry shares a unit; otherwise combines
-  /// whatever quantity info is available as distinct fragments rather than
-  /// silently dropping it.
-  List<_AisleItem> _mergeAisleItems(List<_AisleItem> items) {
-    final byKey = <String, List<_AisleItem>>{};
-    final order = <String>[];
-    for (final it in items) {
-      final key = it.item.trim().toLowerCase();
-      if (key.isEmpty) continue;
-      if (!byKey.containsKey(key)) order.add(key);
-      (byKey[key] ??= <_AisleItem>[]).add(it);
-    }
-
-    String formatAmount(double amount) => amount == amount.roundToDouble() ? amount.toInt().toString() : amount.toStringAsFixed(1);
-
-    final out = <_AisleItem>[];
-    for (final key in order) {
-      final group = byKey[key]!;
-      final first = group.first;
-      if (group.length == 1) {
-        out.add(first);
-        continue;
-      }
-
-      final unit = first.unit?.trim().toLowerCase();
-      final sameUnit = unit != null && unit.isNotEmpty && group.every((e) => e.unit?.trim().toLowerCase() == unit);
-      final allNumeric = sameUnit && group.every((e) => e.amount != null);
-
-      if (allNumeric) {
-        final total = group.fold<double>(0, (sum, e) => sum + e.amount!);
-        out.add(_AisleItem(aisle: first.aisle, item: first.item, qty: '${formatAmount(total)} ${first.unit}'));
-      } else {
-        final fragments = group
-            .map((e) {
-              if (e.qty != null && e.qty!.trim().isNotEmpty) return e.qty!.trim();
-              if (e.amount != null) return '${formatAmount(e.amount!)}${e.unit == null || e.unit!.isEmpty ? '' : ' ${e.unit}'}';
-              return null;
-            })
-            .whereType<String>()
-            .where((s) => s.isNotEmpty)
-            .toList(growable: false);
-        out.add(_AisleItem(aisle: first.aisle, item: first.item, qty: fragments.isEmpty ? null : fragments.join(' + ')));
-      }
-    }
-    return out;
   }
 
   _Aisle _inferAisle(String ingredient) {
@@ -612,75 +560,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }
   }
 
-  /// Best-effort background sync into `shopping_list_items`. This must NEVER
-  /// be allowed to roll back a meal-slot save/delete that already succeeded —
-  /// callers wrap this separately and only log failures here.
-  ///
-  /// Matches the live schema: user_id (uuid), ingredient_name (text),
-  /// source (text), updated_at (timestamptz). There's no `aisle` column —
-  /// the in-app shopping list sheet builds its aisle grouping from local
-  /// planner state, not by reading this table back, so that's fine.
-  Future<void> _upsertShoppingListItemsForMeal(_PlannedMeal meal) async {
-    final user = _currentUser();
-    if (user == null) return;
-    try {
-      final db = Supabase.instance.client;
-      final rows = meal.aisleItems
-          .map(
-            (e) => {
-              'user_id': user.id,
-              'ingredient_name': e.item,
-              'source': meal.source,
-              'updated_at': DateTime.now().toUtc().toIso8601String(),
-            },
-          )
-          .toList(growable: false);
-      if (rows.isEmpty) return;
-
-      await db.from('shopping_list_items').upsert(rows);
-    } catch (e) {
-      debugPrint('WeeklyPlanner: upsertShoppingListItemsForMeal failed: $e');
-      // Non-fatal for planner UX; we keep local UI state.
-    }
-  }
-
-  Future<void> _deleteShoppingListItemsNoLongerNeeded() async {
-    final user = _currentUser();
-    if (user == null) return;
-
-    try {
-      final desired = <String>{};
-      for (final meals in _planned.values) {
-        for (final meal in meals) {
-          for (final it in meal.aisleItems) {
-            final label = it.item.trim();
-            if (label.isNotEmpty) desired.add(label);
-          }
-        }
-      }
-
-      final db = Supabase.instance.client;
-
-      // Fetch current list so we can delete only what disappeared.
-      final rows = await db.from('shopping_list_items').select('ingredient_name').eq('user_id', user.id);
-      final existing = <String>{};
-      if (rows is List) {
-        for (final r in rows) {
-          if (r is! Map) continue;
-          final item = (r['ingredient_name'] ?? '').toString().trim();
-          if (item.isNotEmpty) existing.add(item);
-        }
-      }
-
-      final toDelete = existing.difference(desired).toList(growable: false);
-      if (toDelete.isEmpty) return;
-
-      await db.from('shopping_list_items').delete().eq('user_id', user.id).inFilter('ingredient_name', toDelete);
-    } catch (e) {
-      debugPrint('WeeklyPlanner: deleteShoppingListItemsNoLongerNeeded failed: $e');
-    }
-  }
-
   void _optimisticallyAddMeal({required int dayIndex, required _PlannedMeal meal}) {
     final meals = _planned[dayIndex] ??= <_PlannedMeal>[];
     if (meals.length >= 2) return;
@@ -693,10 +572,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       meals.add(meal);
     });
 
-    // 1) Persist the plan row (critical — a failure here rolls back the
-    //    optimistic UI update).
-    // 2) Then, separately, best-effort sync into the shopping list. A failure
-    //    in step 2 must never undo the already-successful save in step 1.
     unawaited(() async {
       try {
         await _persistMealSlot(dayIndex: dayIndex, slotIndex: slotIndex, meal: meal);
@@ -710,11 +585,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           }
           _slotInlineErrors[key] = 'Couldn\'t save. Tap to retry.';
         });
-        return;
       }
-
-      await _upsertShoppingListItemsForMeal(meal);
-      await _deleteShoppingListItemsNoLongerNeeded();
     }());
   }
 
@@ -731,9 +602,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       meals.removeAt(slotIndex);
     });
 
-    // Same critical/non-critical split as _optimisticallyAddMeal above: the
-    // shopping-list cleanup must never resurrect a meal that was already
-    // successfully deleted.
     unawaited(() async {
       try {
         await _deleteMealSlot(dayIndex: dayIndex, slotIndex: slotIndex);
@@ -745,10 +613,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           list.insert(slotIndex.clamp(0, list.length), removed);
           _slotInlineErrors[key] = 'Couldn\'t remove. Tap to retry.';
         });
-        return;
       }
-
-      await _deleteShoppingListItemsNoLongerNeeded();
     }());
   }
 
@@ -810,9 +675,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           });
           return;
         }
-
-        await _upsertShoppingListItemsForMeal(meal);
-        await _deleteShoppingListItemsNoLongerNeeded();
       }());
     } else {
       // Nothing in this slot locally anymore: ensure Supabase row is deleted.
@@ -831,47 +693,8 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           });
           return;
         }
-
-        await _deleteShoppingListItemsNoLongerNeeded();
       }());
     }
-  }
-
-  void _showCombinedShoppingList() {
-    final combined = <_Aisle, List<_AisleItem>>{};
-    for (final meals in _planned.values) {
-      for (final meal in meals) {
-        for (final item in meal.aisleItems) {
-          (combined[item.aisle] ??= <_AisleItem>[]).add(item);
-        }
-      }
-    }
-    combined.updateAll((aisle, items) => _mergeAisleItems(items));
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      AppBottomSheet.show<void>(
-        context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        // Keep the modal container consistent with the app’s primary card surfaces.
-        backgroundColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
-        builder: (ctx) => SafeArea(
-          child: Material(
-            color: AppDesignTokens.surfaceCream,
-            elevation: 4,
-            shadowColor: Colors.black12,
-            borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-            clipBehavior: Clip.antiAlias,
-            child: _ShoppingListSheet(
-              byAisle: combined,
-              hasAnyMeals: _planned.values.any((e) => e.isNotEmpty),
-            ),
-          ),
-        ),
-      );
-    });
   }
 
   @override
@@ -901,14 +724,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           ),
         ),
         title: Text('Weekly Planner', style: AppDesignTokens.headline),
-        actions: [
-          IconButton(
-            onPressed: _showCombinedShoppingList,
-            icon: const Icon(Icons.shopping_cart_checkout_rounded, color: AppDesignTokens.textCharcoal),
-            tooltip: 'View combined shopping list',
-          ),
-          const SizedBox(width: 6),
-        ],
       ),
       body: Column(
         children: [
@@ -987,18 +802,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed: _showCombinedShoppingList,
-                  icon: const Icon(Icons.shopping_bag_rounded, color: Colors.white),
-                  label: Text('🛒 View Combined Shopping List', style: AppDesignTokens.subheadline.copyWith(color: Colors.white, fontWeight: FontWeight.w800)),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppDesignTokens.ctaTerracotta,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
-                    minimumSize: const Size.fromHeight(AppSizing.primaryButtonHeight),
-                  ),
-                ),
               ],
             ),
           ),
@@ -1475,153 +1278,17 @@ class _SheetOptionTile extends StatelessWidget {
   }
 }
 
-class _ShoppingListSheet extends StatelessWidget {
-  const _ShoppingListSheet({required this.byAisle, required this.hasAnyMeals});
-
-  final Map<_Aisle, List<_AisleItem>> byAisle;
-  final bool hasAnyMeals;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final prepController = context.watch<IngredientPrepController>();
-
-    final aisleOrder = <_Aisle>[_Aisle.produce, _Aisle.dairy, _Aisle.meat, _Aisle.pantry];
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                height: 38,
-                width: 38,
-                decoration: BoxDecoration(
-                  color: scheme.secondary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: scheme.secondary.withValues(alpha: 0.18)),
-                ),
-                child: Icon(Icons.shopping_bag_rounded, color: scheme.secondary, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text('Combined Shopping List', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
-              ),
-              IconButton(
-                onPressed: () => WidgetsBinding.instance.addPostFrameCallback((_) => context.pop()),
-                icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
-                style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (!hasAnyMeals)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppDesignTokens.spaceSM),
-              decoration: BoxDecoration(
-                color: AppDesignTokens.surfaceCream,
-                borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-                border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
-                boxShadow: AppDesignTokens.cardShadow,
-              ),
-              child: Text(
-                "Nothing here yet — pick a meal or two and I'll build this out.",
-                style: AppDesignTokens.body.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
-              ),
-            )
-          else
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  for (final aisle in aisleOrder)
-                    if ((byAisle[aisle] ?? const <_AisleItem>[]).isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(aisle.label, style: AppDesignTokens.subheadline),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppDesignTokens.surfaceCream,
-                          borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-                          border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
-                          boxShadow: AppDesignTokens.cardShadow,
-                        ),
-                        child: Column(
-                          children: [
-                            for (final item in byAisle[aisle]!)
-                              ListTile(
-                                dense: true,
-                                leading: Icon(
-                                   prepController.isPrepped(item.item) ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
-                                    color: prepController.isPrepped(item.item) ? AppDesignTokens.ctaTerracotta : AppDesignTokens.textCharcoal.withValues(alpha: 0.65),
-                                 ),
-                                title: Text(item.item, style: AppDesignTokens.body.copyWith(fontWeight: FontWeight.w800)),
-                                subtitle: (item.qty == null || item.qty!.trim().isEmpty)
-                                    ? null
-                                    : Text(item.qty!, style: AppDesignTokens.caption.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.70))),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: AppDesignTokens.spaceSM, vertical: 2),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                ],
-              ),
-            ),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            onPressed: () => WidgetsBinding.instance.addPostFrameCallback((_) => context.pop()),
-            icon: const Icon(Icons.check_rounded, color: Colors.white),
-            label: const Text('Back to planner', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppDesignTokens.ctaTerracotta,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
-              minimumSize: const Size.fromHeight(AppSizing.primaryButtonHeight),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 enum _Aisle { produce, dairy, meat, pantry }
 
-extension _AisleExt on _Aisle {
-  String get label {
-    switch (this) {
-      case _Aisle.produce:
-        return 'Produce';
-      case _Aisle.dairy:
-        return 'Dairy';
-      case _Aisle.meat:
-        return 'Meat';
-      case _Aisle.pantry:
-        return 'Pantry';
-    }
-  }
-}
-
 class _AisleItem {
-  const _AisleItem({required this.aisle, required this.item, this.qty, this.amount, this.unit});
+  const _AisleItem({required this.aisle, required this.item, this.qty});
 
   final _Aisle aisle;
   final String item;
 
-  /// Free-text quantity, used for legacy/unstructured ingredients or once
-  /// merged across meals (see [_mergeAisleItems]).
+  /// Free-text quantity, when known — used for the ingredient-pill preview
+  /// on a planned meal's card.
   final String? qty;
-
-  /// Structured quantity, when this item came from a recipe's
-  /// [CookModeRecipePayload.structuredIngredients] — enables real summing
-  /// across meals instead of listing the same ingredient twice.
-  final double? amount;
-  final String? unit;
 }
 
 class _PlannedMeal {
