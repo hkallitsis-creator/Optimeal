@@ -5,10 +5,12 @@ import 'package:provider/provider.dart';
 
 import 'theme.dart';
 import 'nav.dart';
+import 'package:optimeal/config/app_environment.dart';
 import 'package:optimeal/services/user_profile_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
+import 'package:optimeal/widgets/dev_environment_badge.dart';
 
 /// Main entry point for the application
 ///
@@ -19,14 +21,15 @@ import 'package:optimeal/state/ingredient_prep_controller.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // NOTE:
-  // - In Dreamflow, please also connect Supabase via the Supabase panel.
-  // - These credentials are safe to embed client-side (anon/publishable key).
-  //   Still, for production you may prefer environment-based config.
-  const supabaseUrl = 'https://xwugnhzlnfgmczkbbcbh.supabase.co';
-  const supabaseAnonKey = 'sb_publishable_fflcK-rDIAE4-wyuHLdjLw_IVrB7Rzn';
+  // Resolves OPTIMEAL_ENV and throws immediately (before Supabase is ever
+  // touched) if it's an unrecognized value, or if dev is active but its
+  // placeholder credentials haven't been replaced yet. See
+  // lib/config/app_environment.dart.
+  AppEnvironmentConfig.assertConfigured();
+  AppEnvironmentConfig.printStartupBanner();
 
-  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  final supabaseConfig = AppEnvironmentConfig.supabase;
+  await Supabase.initialize(url: supabaseConfig.url, anonKey: supabaseConfig.anonKey);
 
   // Ensure there is always a valid session (auth.uid()) for RLS-protected writes,
   // even when the user never explicitly signs up.
@@ -134,6 +137,15 @@ class MyApp extends StatelessWidget {
         theme: _buildUnifiedTheme(),
         themeMode: ThemeMode.light,
         routerConfig: AppRouter.createRouter(profileController),
+        // kIsDevEnvironment is a compile-time constant — this whole branch,
+        // including DevEnvironmentBadge, is stripped by the release
+        // compiler when built with --dart-define=OPTIMEAL_ENV=prod. It
+        // cannot appear in a prod build, not just "is hidden" in one.
+        builder: kIsDevEnvironment
+            ? (context, child) => Stack(
+                children: [if (child != null) child, const DevEnvironmentBadge()],
+              )
+            : null,
       ),
     );
   }
