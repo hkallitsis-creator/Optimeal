@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
@@ -262,6 +263,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
               'duration_minutes': s.durationMinutes,
               'bullets': s.bullets,
               'ingredients_added': s.ingredientsAdded,
+              'sensory_cue': s.sensoryCue,
             })
         .toList(growable: false),
     'description': payload.description,
@@ -315,12 +317,15 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           final ingredientsAddedRaw = s['ingredients_added'] ?? s['ingredientsAdded'];
           final ingredientsAdded =
               ingredientsAddedRaw is List ? ingredientsAddedRaw.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList() : null;
+          final sensoryCueRaw = s['sensory_cue'] ?? s['sensoryCue'];
+          final sensoryCue = SensoryCueVocabulary.allKeys.contains(sensoryCueRaw) ? sensoryCueRaw as String : SensoryCueVocabulary.noCueKey;
           steps.add(CookModeStepPayload(
             title: stepTitle,
             heat: heat,
             durationMinutes: duration,
             bullets: bullets,
             ingredientsAdded: (ingredientsAdded?.isEmpty ?? true) ? null : ingredientsAdded,
+            sensoryCue: sensoryCue,
           ));
         }
       }

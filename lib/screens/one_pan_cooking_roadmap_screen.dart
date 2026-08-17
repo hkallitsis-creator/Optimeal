@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/chef_service.dart';
@@ -133,7 +134,8 @@ class CookModeStepPayload {
       required this.heat,
       required this.durationMinutes,
       required this.bullets,
-      this.ingredientsAdded});
+      this.ingredientsAdded,
+      this.sensoryCue = SensoryCueVocabulary.noCueKey});
 
   final String title;
   final String heat;
@@ -145,6 +147,13 @@ class CookModeStepPayload {
   /// read: recipes saved before this field existed parse with this null,
   /// same as a missing/older [RecipeIngredient.cut].
   final List<String>? ingredientsAdded;
+
+  /// Declared key from [SensoryCueVocabulary.allKeys], or
+  /// [SensoryCueVocabulary.noCueKey] when the model declared nothing valid
+  /// — never null, so "does this step have a real cue" is always a plain
+  /// equality check against [SensoryCueVocabulary.noCueKey]. Defaults to
+  /// that same sentinel for recipes saved before this field existed.
+  final String sensoryCue;
 }
 
 class OnePanCookingRoadmapScreen extends StatefulWidget {
@@ -396,6 +405,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                   .where((b) => b.trim().isNotEmpty)
                   .map((b) => b.trim())
                   .toList(growable: false),
+              sensoryCue: s.sensoryCue,
             ),
           )
           .toList(growable: false);
@@ -1289,12 +1299,14 @@ class _CookStep {
       {required this.actionTitle,
       required this.heat,
       required this.duration,
-      required this.bullets});
+      required this.bullets,
+      this.sensoryCue = SensoryCueVocabulary.noCueKey});
 
   final String actionTitle;
   final _HeatLevel heat;
   final Duration duration;
   final List<String> bullets;
+  final String sensoryCue;
 }
 
 class _CookModeHeader extends StatelessWidget {
@@ -1816,6 +1828,204 @@ class _CutDefinitionSheet extends StatelessWidget {
   }
 }
 
+/// Renders a step's declared sensory cue (harrisSays, always visible) with
+/// the ifNotReady/ifOvershot remedies behind a tappable reveal, in the same
+/// tap-to-open-sheet style as [_IngredientChecklistRow]'s cut pill. Renders
+/// nothing if the key isn't in [SensoryCueVocabulary.entries] (defensive —
+/// [CookModeStepPayload.sensoryCue] should already be a valid key or
+/// [SensoryCueVocabulary.noCueKey] by the time it reaches here, but this
+/// widget only ever gets built when it's already confirmed not to be
+/// [SensoryCueVocabulary.noCueKey]).
+///
+/// Deliberately display-only — no readiness gate blocking the timer from
+/// starting, and no doneness auto-completion. That gating behavior is a
+/// separate design decision, not built here.
+class _SensoryCueCard extends StatelessWidget {
+  const _SensoryCueCard({required this.cueKey});
+
+  final String cueKey;
+
+  String _phaseLabel(CuePhase phase) {
+    switch (phase) {
+      case CuePhase.readiness:
+        return 'BEFORE IT GOES IN';
+      case CuePhase.during:
+        return 'WHILE IT COOKS';
+      case CuePhase.doneness:
+        // Doneness cues are the authority on "actually done" — the timer
+        // is only ever an estimate of when to start checking.
+        return 'HOW YOU KNOW IT\'S DONE';
+    }
+  }
+
+  void _showRemedies(BuildContext context, SensoryCue cue) {
+    AppBottomSheet.show<void>(
+      context: context,
+      backgroundColor: AppDesignTokens.surfaceCream,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(child: _SensoryCueDetailSheet(cue: cue)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cue = SensoryCueVocabulary.byKey(cueKey);
+    if (cue == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final hasRemedy = cue.ifNotReady != null || cue.ifOvershot != null;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppDesignTokens.deepForest.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.spa_outlined, size: 18, color: AppDesignTokens.deepForest),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _phaseLabel(cue.phase),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.4,
+                      color: AppDesignTokens.deepForest),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  cue.harrisSays,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: AppDesignTokens.textCharcoal,
+                      height: 1.35),
+                ),
+                if (hasRemedy) ...[
+                  const SizedBox(height: 6),
+                  InkWell(
+                    onTap: () => _showRemedies(context, cue),
+                    borderRadius: BorderRadius.circular(999),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Not there yet, or gone too far?',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: AppDesignTokens.ctaTerracotta),
+                        ),
+                        const SizedBox(width: 3),
+                        const Icon(Icons.info_outline_rounded, size: 12, color: AppDesignTokens.ctaTerracotta),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Reached by tapping a sensory cue card's remedy prompt — shows
+/// [SensoryCue.ifNotReady]/[SensoryCue.ifOvershot] (and [SensoryCue.safetyNote]
+/// when present), never shown inline on the step card itself. Mirrors
+/// [_CutDefinitionSheet]'s layout.
+class _SensoryCueDetailSheet extends StatelessWidget {
+  const _SensoryCueDetailSheet({required this.cue});
+
+  final SensoryCue cue;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Material(
+      color: AppDesignTokens.surfaceCream,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+                  decoration: BoxDecoration(
+                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                  ),
+                  child: const Icon(Icons.spa_outlined, color: AppDesignTokens.deepForest, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    cue.harrisSays,
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => context.pop(),
+                  icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+            if (cue.ifNotReady != null) ...[
+              const SizedBox(height: 14),
+              Text('Not there yet',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.6))),
+              const SizedBox(height: 4),
+              Text(cue.ifNotReady!,
+                  style: theme.textTheme.bodyMedium?.copyWith(color: AppDesignTokens.textCharcoal, height: 1.4, fontWeight: FontWeight.w600)),
+            ],
+            if (cue.ifOvershot != null) ...[
+              const SizedBox(height: 14),
+              Text('Gone too far',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.6))),
+              const SizedBox(height: 4),
+              Text(cue.ifOvershot!,
+                  style: theme.textTheme.bodyMedium?.copyWith(color: AppDesignTokens.textCharcoal, height: 1.4, fontWeight: FontWeight.w600)),
+            ],
+            if (cue.safetyNote != null) ...[
+              const SizedBox(height: 14),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.warning_amber_rounded, size: 16, color: scheme.error),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(cue.safetyNote!, style: theme.textTheme.bodySmall?.copyWith(color: scheme.error, fontWeight: FontWeight.w800)),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Renders the "not counted" / "write failed and queued" Waste Ledger
+/// verdicts (docs/DECISIONS.md "Waste Ledger legibility — option B"). The
+/// "counted" verdict has no equivalent widget — the existing
+/// [WasteLedgerCelebrationSheet] already serves that role; this sheet is
+/// only ever shown for the other cases (never both in the same sequence).
 class _CookStepCard extends StatefulWidget {
   const _CookStepCard({
     super.key,
@@ -1963,6 +2173,8 @@ class _CookStepCardState extends State<_CookStepCard> {
                 _BulletLine(text: b),
                 const SizedBox(height: 10),
               ],
+              if (widget.step.sensoryCue != SensoryCueVocabulary.noCueKey)
+                _SensoryCueCard(cueKey: widget.step.sensoryCue),
               if (hasScience) ...[
                 const SizedBox(height: 4),
                 _ScienceNoteDisclosure(

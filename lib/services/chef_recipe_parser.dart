@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/chef_service.dart';
@@ -72,6 +73,36 @@ String? _readDeclaredCurriculumLessonId(dynamic decoded) {
   if (!ChefService.curriculumDrawerKeys.contains(trimmed)) {
     debugPrint('parseChefRecipeJson: curriculum_lesson_id "$raw" not in known set for "$title"');
     return null;
+  }
+  return trimmed;
+}
+
+/// Reads a single step's declared "sensory_cue" — third instance of the
+/// closed-vocabulary pattern (after cut and curriculum_lesson_id). Unlike
+/// [_readDeclaredCurriculumLessonId], this NEVER returns null: anything
+/// invalid or absent is treated as [SensoryCueVocabulary.noCueKey] itself,
+/// per instruction — a wrong cue is worse than no cue, and "no cue" is
+/// already a real, valid, declarable value in this vocabulary (unlike
+/// curriculum_lesson_id, which has no such escape value). Every rejection
+/// is logged via [debugPrint] (compiles out of release builds), naming the
+/// step title and the raw value received, so real-world rejection rate is
+/// visible from a device log.
+String _readDeclaredSensoryCueForStep(dynamic stepJson, String stepTitle) {
+  if (stepJson is! Map) return SensoryCueVocabulary.noCueKey;
+  final raw = stepJson['sensory_cue'];
+
+  if (raw == null) {
+    debugPrint('parseChefRecipeJson: sensory_cue absent for step "$stepTitle"');
+    return SensoryCueVocabulary.noCueKey;
+  }
+  if (raw is! String) {
+    debugPrint('parseChefRecipeJson: sensory_cue present but not a string (got: $raw) for step "$stepTitle"');
+    return SensoryCueVocabulary.noCueKey;
+  }
+  final trimmed = raw.trim();
+  if (!SensoryCueVocabulary.allKeys.contains(trimmed)) {
+    debugPrint('parseChefRecipeJson: sensory_cue "$raw" not in known set for step "$stepTitle"');
+    return SensoryCueVocabulary.noCueKey;
   }
   return trimmed;
 }
@@ -186,6 +217,7 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
           durationMinutes: duration,
           bullets: bullets,
           ingredientsAdded: ingredientsAdded.isEmpty ? null : ingredientsAdded,
+          sensoryCue: _readDeclaredSensoryCueForStep(s, stepTitle),
         ));
       }
     }

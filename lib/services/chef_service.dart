@@ -5,6 +5,7 @@ import 'package:optimeal/models/user_profile.dart';
 import 'package:optimeal/chef_curiculum_techniques.dart';
 import 'package:optimeal/chef_curiculum_reference.dart';
 import 'package:optimeal/chef_curiculum_lookups.dart';
+import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 
 /// Service for "Ask Chef Harris" AI help.
 ///
@@ -27,6 +28,55 @@ class ChefService {
     ...chefTechniqueDrawers.keys,
     ...chefReferenceDrawers.keys.where((k) => k != 'general_tips'),
   ];
+
+  /// Compact, non-voice prompt declaration for the sensory cue vocabulary
+  /// (third instance of the closed-vocabulary pattern, after cut vocabulary
+  /// and curriculum drawer keys). Deliberately built from ONLY structural
+  /// fields ([SensoryCue.key]/[senses]/[phase], read live from
+  /// [SensoryCueVocabulary.entries]) plus a short hint written here, in app
+  /// code — never [SensoryCue.harrisSays]/[observable]/[ifNotReady]/
+  /// [ifOvershot], which are Harris's signed voice text and must never
+  /// reach a prompt. This keeps lib/data/sensory_cue_vocabulary.dart itself
+  /// untouched by anything prompt-related; it exists purely so the app can
+  /// render Harris's voice after the model declares a key.
+  ///
+  /// [_sensoryCuePromptHints] must have an entry for every key in
+  /// [SensoryCueVocabulary.entries] — a missing hint renders as an empty
+  /// string rather than crashing, but should be treated as a bug to fix if
+  /// Harris ever adds a new signed entry.
+  static final String sensoryCuePromptDeclaration = SensoryCueVocabulary.entries
+      .map((c) => '${c.key} [${c.phase.name}, ${c.senses.map((s) => s.name).join('+')}]: ${_sensoryCuePromptHints[c.key] ?? ''}')
+      .join('\n');
+
+  static const Map<String, String> _sensoryCuePromptHints = {
+    'water_beads_and_dances': 'water drops bead and skate, do not evaporate',
+    'oil_shimmers': 'oil runs thin, visible shimmer when tilted',
+    'bubbles_around_spoon': 'steady bubbles around a dipped wooden spoon',
+    'butter_foam_subsides': 'foam stops, smell turns nutty',
+    'rolling_boil': 'large bubbles whole surface, do not stop when stirred',
+    'oven_actually_preheated': 'beep sounds well before oven reaches temperature',
+    'sizzle_on_contact': 'food sizzles instantly the moment it touches pan',
+    'surface_dry': 'no visible moisture on food before it hits pan',
+    'sizzle_steady': 'even continuous sizzle, not silent or spitting',
+    'pan_gone_quiet': 'sizzle stops, the liquid has evaporated away',
+    'aggressive_roar': 'loud continuous roar, correct only for a wok',
+    'fork_slides_easily': 'fork in thickest piece meets almost no resistance',
+    'fork_meets_resistance': 'fork goes in firmly, pulls back out reluctant',
+    'released_from_pan': 'piece releases from pan instead of sticking',
+    'flakes_apart': 'gentle pressure separates it along its natural lines',
+    'springs_back': 'firm with a little bounce under a finger',
+    'edges_browned': 'golden to deep brown on the pan-facing side',
+    'sides_browned': 'colour on sides, centre still pale, oven only',
+    'translucent_no_colour': 'softened, glassy edges, zero browning at all',
+    'deep_mahogany': 'deep even brown, jammy, roughly 35+ minutes',
+    'reduced_by_half': 'liquid level roughly halved from where it started',
+    'coats_the_spoon': 'finger drawn across spoon back leaves a holding line',
+    'alcohol_cooked_off': 'sharp alcoholic edge is gone from the steam',
+    'aroma_sweetened': 'raw sharp smell has turned sweet',
+    'spices_bloomed': 'spices turn from dusty to warm and fragrant',
+    'tastes_seasoned': 'salt level correct now, not left to the end',
+    'juices_run_clear': 'opaque white flesh, clear juices, zero pink anywhere',
+  };
 
   /// Full Chef Harris persona. Keep this unshortened so responses stay consistent.
   static const String _systemPersona =

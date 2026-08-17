@@ -344,5 +344,65 @@ void main() {
       expect(result, isNotNull);
       expect(result!.curriculumLessonIds, isEmpty);
     });
+
+    test('a step with a valid declared sensory_cue is parsed', () async {
+      const raw = '''
+      {
+        "title": "Sensory Cue Test",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "sensory_cue": "oil_shimmers", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.steps, hasLength(1));
+      expect(result.steps[0].sensoryCue, 'oil_shimmers');
+    });
+
+    test('a step with a sensory_cue outside the known set falls back to no_cue', () async {
+      const raw = '''
+      {
+        "title": "Unknown Sensory Cue Test",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "sensory_cue": "underwater_basket_weaving", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.steps, hasLength(1));
+      expect(result.steps[0].sensoryCue, 'no_cue');
+    });
+
+    test('a step with an absent sensory_cue field falls back to no_cue, not a crash', () async {
+      const raw = '''
+      {
+        "title": "Absent Sensory Cue Test",
+        "ingredients": [{"name": "Egg", "amount": 2, "unit": "piece"}],
+        "kitchen_gear": ["Pan"],
+        "steps": [{"title": "Cook", "duration_minutes": 5, "heat": "medium", "bullets": ["Go"]}]
+      }
+      ''';
+      final result = await parseChefRecipeJson(
+        raw: raw,
+        portions: 2,
+        fallbackTitle: 'Fallback',
+        surface: ChefRecipeSurface.fridgeClearer,
+      );
+      expect(result, isNotNull);
+      expect(result!.steps, hasLength(1));
+      expect(result.steps[0].sensoryCue, 'no_cue');
+    });
   });
 }
