@@ -432,6 +432,39 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
             weeklyCount == 0 ? 'No rescued ingredients logged yet.' : '$weeklyCount ingredient${weeklyCount == 1 ? '' : 's'} rescued so far this week.',
             style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
           ),
+          const SizedBox(height: 12),
+          // Permanent explainer — docs/DECISIONS.md "Waste Ledger legibility
+          // — option B": correct behavior was reading as inconsistent
+          // because nothing in the UI explained the rules. Always visible,
+          // not a tap-to-reveal.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: HomeDashboardScreen._deepForest.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: HomeDashboardScreen._deepForest.withValues(alpha: 0.16)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "This tracks real fridge rescues — cooking food that would've gone to waste.",
+                  style: theme.textTheme.labelSmall?.copyWith(color: HomeDashboardScreen._deepForest, fontWeight: FontWeight.w700, height: 1.35),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Fridge Clearer and Fridge Countdown cooks count toward it.',
+                  style: theme.textTheme.labelSmall?.copyWith(color: HomeDashboardScreen._deepForest, fontWeight: FontWeight.w700, height: 1.35),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "Other recipes and re-cooks don't count again.",
+                  style: theme.textTheme.labelSmall?.copyWith(color: HomeDashboardScreen._deepForest, fontWeight: FontWeight.w700, height: 1.35),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 16),
           if (rows.isEmpty)
             Container(

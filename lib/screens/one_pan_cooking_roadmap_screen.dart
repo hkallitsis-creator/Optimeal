@@ -12,6 +12,7 @@ import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/confidence_climb_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
+import 'package:optimeal/services/ledger_verdict.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
@@ -598,8 +599,20 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         );
       }
 
+      // Verdict selection — see docs/DECISIONS.md "Waste Ledger legibility —
+      // option B". Pure, display-only classification over state already
+      // computed above; does not touch LedgerService or CookModeSurface.
+      final verdict = selectLedgerVerdict(
+        hasPayload: _payload != null,
+        isReCook: _isReCook,
+        surface: surface,
+        result: shouldLog
+            ? (ledgerSuccess ?? const LedgerCompletionWriteFailed(payload: {}, error: 'unknown'))
+            : null,
+      );
+
       final successResult = ledgerSuccess;
-      if (successResult != null) {
+      if (verdict == LedgerVerdict.counted && successResult != null) {
         if (!mounted) return;
         await AppBottomSheet.show<void>(
           context: context,
@@ -616,6 +629,23 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             ),
           ),
         );
+      } else {
+        final lines = ledgerVerdictCopy[verdict];
+        // No entry for LedgerVerdict.demo (and none needed for .counted,
+        // handled above) — demo shows no verdict at all, see
+        // lib/services/ledger_verdict.dart.
+        if (lines != null) {
+          if (!mounted) return;
+          await AppBottomSheet.show<void>(
+            context: context,
+            isScrollControlled: true,
+            showDragHandle: true,
+            backgroundColor: AppDesignTokens.surfaceCream,
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+            builder: (ctx) => SafeArea(child: _LedgerVerdictSheet(lines: lines)),
+          );
+        }
       }
 
       // Everything below runs unconditionally — What You Learned,
@@ -2026,6 +2056,82 @@ class _SensoryCueDetailSheet extends StatelessWidget {
 /// "counted" verdict has no equivalent widget — the existing
 /// [WasteLedgerCelebrationSheet] already serves that role; this sheet is
 /// only ever shown for the other cases (never both in the same sequence).
+/// Renders the "not counted" / "write failed and queued" Waste Ledger
+/// verdicts (docs/DECISIONS.md "Waste Ledger legibility — option B"). The
+/// "counted" verdict has no equivalent widget — the existing
+/// [WasteLedgerCelebrationSheet] already serves that role; this sheet is
+/// only ever shown for the other cases (never both in the same sequence).
+class _LedgerVerdictSheet extends StatelessWidget {
+  const _LedgerVerdictSheet({required this.lines});
+
+  final List<String> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Material(
+      color: AppDesignTokens.surfaceCream,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+                  decoration: BoxDecoration(
+                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                  ),
+                  child: const Icon(Icons.eco_outlined, color: AppDesignTokens.deepForest, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Waste Ledger',
+                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            for (final line in lines) ...[
+              Text(
+                line,
+                style: theme.textTheme.bodyMedium?.copyWith(color: AppDesignTokens.textCharcoal, height: 1.4, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+            ],
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: AppSizing.primaryButtonHeight,
+              child: FilledButton(
+                onPressed: () => context.pop(),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppDesignTokens.ctaTerracotta,
+                  foregroundColor: scheme.onTertiary,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                ),
+                child: Text(
+                  'Got it',
+                  style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CookStepCard extends StatefulWidget {
   const _CookStepCard({
     super.key,
