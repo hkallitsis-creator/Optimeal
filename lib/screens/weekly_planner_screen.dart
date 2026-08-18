@@ -716,6 +716,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     final mealsToday = _mealsForSelectedDay();
 
     return Scaffold(
+      backgroundColor: AppDesignTokens.backgroundSage,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,

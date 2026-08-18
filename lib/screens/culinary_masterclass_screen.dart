@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:optimeal/theme/app_design_tokens.dart';
+
 class CulinaryMasterclassScreen extends StatelessWidget {
   const CulinaryMasterclassScreen({super.key});
 
@@ -7,6 +9,7 @@ class CulinaryMasterclassScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
+      backgroundColor: AppDesignTokens.backgroundSage,
       appBar: AppBar(
         title: const Text('Culinary Masterclass & Avatar Video Guides'),
       ),

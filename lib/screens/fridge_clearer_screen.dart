@@ -67,6 +67,12 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
   String? _generationError;
   bool _scienceNotesExpanded = false;
 
+  /// Attached to [_GeneratedRecipeCard] so a fresh generation can scroll
+  /// itself into view (device-test round F7) — the result previously
+  /// landed below several sections of the fold with no cue to scroll down
+  /// to it.
+  final _generatedRecipeKey = GlobalKey();
+
   static const List<String> _quickIngredients = [
     'Zucchini',
     'Eggs',
@@ -97,6 +103,25 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     _extraController.dispose();
     _extraFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Scrolls the freshly-generated recipe card into view (device-test
+  /// round F7). Runs on the next frame so [_generatedRecipeKey] has
+  /// already attached to the newly-built card.
+  void _scrollToGeneratedRecipe() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final cardContext = _generatedRecipeKey.currentContext;
+      if (cardContext == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          cardContext,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic,
+          alignment: 0.05,
+        ),
+      );
+    });
   }
 
   void _toggleIngredient(String label) {
@@ -167,12 +192,22 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     return '$p People';
   }
 
-  String _buildCookModePrompt(_RecipeIdea idea, int portions, {String? excludeTitle}) {
-    final ingredients = _selectedIngredients.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    final ingredientsText = ingredients.isEmpty ? 'No ingredients specified.' : ingredients.join(', ');
+  String _buildCookModePrompt(_RecipeIdea idea, int portions,
+      {String? excludeTitle}) {
+    final ingredients = _selectedIngredients.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final ingredientsText = ingredients.isEmpty
+        ? 'No ingredients specified.'
+        : ingredients.join(', ');
 
-    final timeText = _timePreset == null ? 'not specified' : _timeLabel(_timePreset!);
-    final cookwareText = _cookware.isEmpty ? 'not specified' : (_cookware.toList()..sort((a, b) => _cookwareLabel(a).compareTo(_cookwareLabel(b)))).map(_cookwareLabel).join(', ');
+    final timeText =
+        _timePreset == null ? 'not specified' : _timeLabel(_timePreset!);
+    final cookwareText = _cookware.isEmpty
+        ? 'not specified'
+        : (_cookware.toList()
+              ..sort((a, b) => _cookwareLabel(a).compareTo(_cookwareLabel(b))))
+            .map(_cookwareLabel)
+            .join(', ');
 
     return [
       'Create a cook-mode recipe for this specific idea: "${idea.title}" (tag: ${idea.tag}).',
@@ -223,14 +258,18 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
   }
 
   _RecipeIdea _buildCookModeIdeaFromCurrentInputs() {
-    final ingredients = _selectedIngredients.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final ingredients = _selectedIngredients.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     final title = ingredients.isEmpty
         ? 'Fridge Clearer One-Pan'
         : 'Fridge Clearer: ${ingredients.take(2).join(' + ')}${ingredients.length > 2 ? ' + …' : ''}';
 
     final cookware = _cookware.isEmpty
         ? const <String>['Pan/Skillet', 'One-Pot']
-        : (_cookware.toList()..sort((a, b) => _cookwareLabel(a).compareTo(_cookwareLabel(b)))).map(_cookwareLabel).toList(growable: false);
+        : (_cookware.toList()
+              ..sort((a, b) => _cookwareLabel(a).compareTo(_cookwareLabel(b))))
+            .map(_cookwareLabel)
+            .toList(growable: false);
 
     final prepMinutes = switch (_timePreset) {
       _FridgeTimePreset.min15 => 15,
@@ -239,7 +278,11 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       null => 30,
     };
 
-    return _RecipeIdea(tag: 'Cook Mode', title: title, prepMinutes: prepMinutes, cookware: cookware);
+    return _RecipeIdea(
+        tag: 'Cook Mode',
+        title: title,
+        prepMinutes: prepMinutes,
+        cookware: cookware);
   }
 
   void _cookNow() {
@@ -250,7 +293,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     } else {
       context.push(
         AppRoutes.onePanCookingRoadmap,
-        extra: CookModeLaunchRequest(recipe: payload, surface: CookModeSurface.fridgeClearer),
+        extra: CookModeLaunchRequest(
+            recipe: payload, surface: CookModeSurface.fridgeClearer),
       );
     }
   }
@@ -264,11 +308,13 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       isScrollControlled: false,
       showDragHandle: true,
       backgroundColor: AppDesignTokens.surfaceCream,
-      builder: (ctx) => const SafeArea(child: WeekdayPickerSheet(title: '📅 Plan for which day?')),
+      builder: (ctx) => const SafeArea(
+          child: WeekdayPickerSheet(title: '📅 Plan for which day?')),
     );
     if (!mounted || dayIndex == null) return;
 
-    WeeklyPlannerIntentService.instance.queueAddMeal(dayIndex: dayIndex, recipe: payload, source: 'Clear Fridge Leftovers');
+    WeeklyPlannerIntentService.instance.queueAddMeal(
+        dayIndex: dayIndex, recipe: payload, source: 'Clear Fridge Leftovers');
 
     if (widget.returnCookModePayload) {
       // We were pushed FROM the Weekly Planner (e.g. "Add Meal" -> "Clear
@@ -287,7 +333,9 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
 
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Added to ${WeekdayPickerSheet.labelsLong[dayIndex]}!'), behavior: SnackBarBehavior.floating),
+      SnackBar(
+          content: Text('Added to ${WeekdayPickerSheet.labelsLong[dayIndex]}!'),
+          behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -313,7 +361,9 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       pieces.add('$k=$vs');
     }
     if (pieces.isEmpty) return null;
-    return pieces.length <= 3 ? pieces.join('  ') : '${pieces.take(3).join('  ')}  +…';
+    return pieces.length <= 3
+        ? pieces.join('  ')
+        : '${pieces.take(3).join('  ')}  +…';
   }
 
   String _formatSubstitutes(Map<String, dynamic>? subs) {
@@ -333,7 +383,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
   /// Fetches the precision/technique notes cards. May hit the cache; is a
   /// nice-to-have, so failures are swallowed here (never thrown) rather than
   /// blocking the actual recipe generation running alongside it.
-  Future<List<models.CulinaryMatrixCard>> _fetchPrecisionCards(List<String> ingredients) async {
+  Future<List<models.CulinaryMatrixCard>> _fetchPrecisionCards(
+      List<String> ingredients) async {
     final cards = <models.CulinaryMatrixCard>[];
     try {
       final precision = await _aiRecipeService.getPrecisionData(
@@ -353,7 +404,9 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
           id: 'precision_core',
           title: 'Chef\'s Precision Notes',
           heatCue: heatCue,
-          timingNote: salt.isEmpty ? 'Salt in layers: early for diffusion, finish for brightness.' : salt,
+          timingNote: salt.isEmpty
+              ? 'Salt in layers: early for diffusion, finish for brightness.'
+              : salt,
           knifeCutSpec: precision.knifeCutSpec,
           whyThisWorks: precision.source == 'cache'
               ? 'This is pulled from Chef Harris\' reference playbook — fast, consistent, and very Swiss-kitchen friendly.'
@@ -377,7 +430,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     } catch (e, st) {
       // Non-fatal: the actual recipe is the priority. If this fails, the
       // Science Notes section is simply omitted for this generation.
-      debugPrint('Fridge Clearer: precision notes fetch failed (non-fatal): $e');
+      debugPrint(
+          'Fridge Clearer: precision notes fetch failed (non-fatal): $e');
       debugPrint('$st');
     }
     return cards;
@@ -398,7 +452,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
         SnackBar(
           content: Text(
             'Add at least 1 ingredient so Chef Harris can suggest ideas.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onInverseSurface),
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.onInverseSurface),
           ),
           backgroundColor: theme.colorScheme.inverseSurface,
           behavior: SnackBarBehavior.floating,
@@ -411,7 +466,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     final isPro = await EntitlementService.instance.isPro();
     if (!mounted) return;
     if (!isPro) {
-      final weeklyCount = await UsageCapService.instance.getRollingWeekCount(UsageFeature.fridgeClearerGeneration);
+      final weeklyCount = await UsageCapService.instance
+          .getRollingWeekCount(UsageFeature.fridgeClearerGeneration);
       if (!mounted) return;
       if (weeklyCount >= kFridgeClearerFreeWeeklyLimit) {
         await UpgradePromptSheet.show(
@@ -435,7 +491,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     });
 
     try {
-      final ingredients = _selectedIngredients.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      final ingredients = _selectedIngredients.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
       final idea = _buildCookModeIdeaFromCurrentInputs();
       final profile = context.read<UserProfileController>().profile;
       final portions = _selectedPortions ?? profile.householdServings;
@@ -445,14 +502,16 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       // data in any way. Kick both off before awaiting either so they run
       // concurrently instead of serially doubling the user's wait.
       final precisionCardsFuture = _fetchPrecisionCards(ingredients);
-      final prompt = _buildCookModePrompt(idea, portions, excludeTitle: previousTitle);
+      final prompt =
+          _buildCookModePrompt(idea, portions, excludeTitle: previousTitle);
       // Usage tracking is unconditional and independent of entitlement
       // (CLAUDE.md roadmap item 11 follow-up, 2026-08-13) — always counts
       // this real attempted call, regardless of Pro/kDebugMode status. Only
       // the cap CHECK above (weeklyCount >= kFridgeClearerFreeWeeklyLimit)
       // stays gated on isPro; tracking and gating must not share a
       // conditional, or a bypass in one silently breaks the other.
-      unawaited(UsageCapService.instance.increment(UsageFeature.fridgeClearerGeneration));
+      unawaited(UsageCapService.instance
+          .increment(UsageFeature.fridgeClearerGeneration));
       // Recipe variety (CLAUDE.md roadmap item 13): steer away from
       // recently cooked dishes so the same handful (frittata, stir-fry,
       // etc.) doesn't keep recurring regardless of actual ingredients.
@@ -462,7 +521,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       // not) — the latter is what closes the gap where 5 straight "Try
       // Another"/"Generate" calls in one sitting previously had nothing to
       // exclude against.
-      final recentCookHistory = await CookSessionStorageService().loadCookHistory();
+      final recentCookHistory =
+          await CookSessionStorageService().loadCookHistory();
       final recentDishTitles = [
         ...RecentGenerationsService.instance.recent(),
         ...recentCookHistory.map((e) => e.recipe.title),
@@ -492,10 +552,12 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
         readDescription: true,
       );
       if (recipe == null) {
-        debugPrint('FridgeClearer: cook-mode generation returned invalid JSON. Raw: $reply');
+        debugPrint(
+            'FridgeClearer: cook-mode generation returned invalid JSON. Raw: $reply');
         if (!mounted) return;
         setState(() {
-          _generationError = 'Couldn\'t generate a recipe right now. Please try again.';
+          _generationError =
+              'Couldn\'t generate a recipe right now. Please try again.';
         });
         return;
       }
@@ -507,19 +569,22 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       // zero-waste-flavored sentence regardless of what the recipe
       // actually taught; see CLAUDE.md for the frittata/food_storage case
       // that motivated this).
-      debugPrint('CookModeRecipePayload constructed with curriculumLessonIds=${recipe.curriculumLessonIds}');
+      debugPrint(
+          'CookModeRecipePayload constructed with curriculumLessonIds=${recipe.curriculumLessonIds}');
 
       RecentGenerationsService.instance.record(recipe.title);
       // Fridge nudge (docs/decisions_2026-08-17.md item 5): a generated
       // recipe is the earliest durable signal that these ingredients were
       // "entered" — schedules a single 2-day-out nudge if the user never
       // actually cooks it.
-      unawaited(FridgeNudgeService.instance.onFridgeClearerIngredientsGenerated());
+      unawaited(
+          FridgeNudgeService.instance.onFridgeClearerIngredientsGenerated());
 
       setState(() {
         _precisionCards = cards;
         _generatedRecipe = recipe;
       });
+      _scrollToGeneratedRecipe();
     } catch (e, st) {
       debugPrint('Fridge Clearer recipe generation failed: $e');
       debugPrint('$st');
@@ -562,12 +627,14 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
           }
         }());
       } catch (logErr) {
-        debugPrint('Fridge Clearer generation: failed to extract raw response details: $logErr');
+        debugPrint(
+            'Fridge Clearer generation: failed to extract raw response details: $logErr');
       }
 
       if (!mounted) return;
       setState(() {
-        _generationError = 'Couldn\'t generate a recipe right now. Please try again.';
+        _generationError =
+            'Couldn\'t generate a recipe right now. Please try again.';
       });
     } finally {
       if (!mounted) return;
@@ -581,6 +648,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     final effectivePortions = _selectedPortions ?? profile.householdServings;
 
     return Scaffold(
+      backgroundColor: AppDesignTokens.backgroundSage,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -592,9 +660,11 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
             decoration: BoxDecoration(
               color: AppDesignTokens.surfaceCream.withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
-              border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+              border: Border.all(
+                  color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
             ),
-            child: const Icon(Icons.arrow_back, color: AppDesignTokens.textCharcoal),
+            child: const Icon(Icons.arrow_back,
+                color: AppDesignTokens.textCharcoal),
           ),
         ),
         title: const Text('Fridge Clearer', style: AppDesignTokens.headline),
@@ -603,7 +673,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       body: SafeArea(
         bottom: false,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceMD, AppDesignTokens.spaceSM, AppDesignTokens.spaceMD, 140),
+          padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceMD,
+              AppDesignTokens.spaceSM, AppDesignTokens.spaceMD, 140),
           children: [
             _SectionCard(
               title: 'What\'s in your fridge?',
@@ -623,9 +694,16 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
                           selected: _selectedIngredients.contains(label),
                           onTap: () => _toggleIngredient(label),
                         ),
-                      for (final label in _selectedIngredients.where((e) => !_quickIngredients.contains(e)).toList()
-                        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())))
-                        _TapChip(label: label, selected: true, onTap: () => _toggleIngredient(label), removable: true),
+                      for (final label in _selectedIngredients
+                          .where((e) => !_quickIngredients.contains(e))
+                          .toList()
+                        ..sort((a, b) =>
+                            a.toLowerCase().compareTo(b.toLowerCase())))
+                        _TapChip(
+                            label: label,
+                            selected: true,
+                            onTap: () => _toggleIngredient(label),
+                            removable: true),
                     ],
                   ),
                   const SizedBox(height: AppDesignTokens.spaceSM),
@@ -638,22 +716,35 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
                           textInputAction: TextInputAction.done,
                           onSubmitted: (_) => _addExtraIngredient(),
                           decoration: InputDecoration(
-                            hintText: 'Type an ingredient (e.g., spinach, chicken)…',
+                            hintText:
+                                'Type an ingredient (e.g., spinach, chicken)…',
                             filled: true,
                             fillColor: AppDesignTokens.surfaceCream,
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton),
-                              borderSide: BorderSide(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+                              borderRadius: BorderRadius.circular(
+                                  AppDesignTokens.radiusButton),
+                              borderSide: BorderSide(
+                                  color: AppDesignTokens.textCharcoal
+                                      .withValues(alpha: 0.12)),
                             ),
                             enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton),
-                              borderSide: BorderSide(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+                              borderRadius: BorderRadius.circular(
+                                  AppDesignTokens.radiusButton),
+                              borderSide: BorderSide(
+                                  color: AppDesignTokens.textCharcoal
+                                      .withValues(alpha: 0.12)),
                             ),
                             focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton),
-                              borderSide: BorderSide(color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.75), width: 1.4),
+                              borderRadius: BorderRadius.circular(
+                                  AppDesignTokens.radiusButton),
+                              borderSide: BorderSide(
+                                  color: AppDesignTokens.ctaTerracotta
+                                      .withValues(alpha: 0.75),
+                                  width: 1.4),
                             ),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: AppDesignTokens.spaceSM, vertical: AppDesignTokens.spaceSM),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: AppDesignTokens.spaceSM,
+                                vertical: AppDesignTokens.spaceSM),
                           ),
                         ),
                       ),
@@ -665,11 +756,17 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
                           style: FilledButton.styleFrom(
                             backgroundColor: AppDesignTokens.ctaTerracotta,
                             foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
-                            padding: const EdgeInsets.symmetric(horizontal: AppDesignTokens.spaceSM),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                    AppDesignTokens.radiusButton)),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: AppDesignTokens.spaceSM),
                           ),
                           icon: const Icon(Icons.add, color: Colors.white),
-                          label: const Text('Add', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white)),
+                          label: const Text('Add',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white)),
                         ),
                       ),
                     ],
@@ -692,7 +789,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
                         selected: _timePreset == p,
                         onTap: () => setState(() => _timePreset = p),
                       ),
-                      if (p != _FridgeTimePreset.values.last) const SizedBox(width: AppDesignTokens.spaceXS),
+                      if (p != _FridgeTimePreset.values.last)
+                        const SizedBox(width: AppDesignTokens.spaceXS),
                     ],
                   ],
                 ),
@@ -701,7 +799,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
             const SizedBox(height: AppDesignTokens.spaceSM),
             _SectionCard(
               title: 'What cookware are you using?',
-              subtitle: 'Select one or more so Chef Harris can adapt the ideas.',
+              subtitle:
+                  'Select one or more so Chef Harris can adapt the ideas.',
               child: Wrap(
                 spacing: AppDesignTokens.spaceXS,
                 runSpacing: AppDesignTokens.spaceXS,
@@ -720,7 +819,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
             const SizedBox(height: AppDesignTokens.spaceSM),
             _SectionCard(
               title: 'How many people are you cooking for?',
-              subtitle: 'Defaults to your profile — tap to adjust just for this recipe.',
+              subtitle:
+                  'Defaults to your profile — tap to adjust just for this recipe.',
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
@@ -732,7 +832,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
                         selected: effectivePortions == p,
                         onTap: () => setState(() => _selectedPortions = p),
                       ),
-                      if (p != _portionOptions.last) const SizedBox(width: AppDesignTokens.spaceXS),
+                      if (p != _portionOptions.last)
+                        const SizedBox(width: AppDesignTokens.spaceXS),
                     ],
                   ],
                 ),
@@ -744,11 +845,13 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
             ],
             if (_generationError != null) ...[
               const SizedBox(height: AppDesignTokens.spaceSM),
-              _InlineErrorCard(message: _generationError!, onRetry: _generateRecipe),
+              _InlineErrorCard(
+                  message: _generationError!, onRetry: _generateRecipe),
             ],
             if (_generatedRecipe != null) ...[
               const SizedBox(height: AppDesignTokens.spaceSM),
               _GeneratedRecipeCard(
+                key: _generatedRecipeKey,
                 recipe: _generatedRecipe!,
                 portions: effectivePortions,
                 showPlanForDay: !widget.returnCookModePayload,
@@ -761,21 +864,29 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
                 _ScienceNotesDisclosure(
                   cards: _precisionCards,
                   expanded: _scienceNotesExpanded,
-                  onToggle: () => setState(() => _scienceNotesExpanded = !_scienceNotesExpanded),
+                  onToggle: () => setState(
+                      () => _scienceNotesExpanded = !_scienceNotesExpanded),
                 ),
               ],
             ],
           ],
         ),
       ),
-bottomNavigationBar: _generatedRecipe == null
-          ? _GenerateCtaBar(isLoading: _isGenerating, onPressed: _isGenerating ? null : _generateRecipe)
-          : null,    );
+      bottomNavigationBar: _generatedRecipe == null
+          ? _GenerateCtaBar(
+              isLoading: _isGenerating,
+              onPressed: _isGenerating ? null : _generateRecipe)
+          : null,
+    );
   }
 }
 
 class _RecipeIdea {
-  const _RecipeIdea({required this.tag, required this.title, required this.prepMinutes, required this.cookware});
+  const _RecipeIdea(
+      {required this.tag,
+      required this.title,
+      required this.prepMinutes,
+      required this.cookware});
   final String tag;
   final String title;
   final int prepMinutes;
@@ -783,7 +894,8 @@ class _RecipeIdea {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.subtitle, required this.child});
+  const _SectionCard(
+      {required this.title, required this.subtitle, required this.child});
   final String title;
   final String subtitle;
   final Widget child;
@@ -793,13 +905,16 @@ class _SectionCard extends StatelessWidget {
     return Card(
       color: AppDesignTokens.surfaceCream,
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
       child: Padding(
         padding: const EdgeInsets.all(AppDesignTokens.spaceMD),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: AppDesignTokens.subheadline.copyWith(fontWeight: FontWeight.w800)),
+            Text(title,
+                style: AppDesignTokens.subheadline
+                    .copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 4),
             Text(subtitle, style: AppDesignTokens.body.copyWith(height: 1.35)),
             const SizedBox(height: AppDesignTokens.spaceSM),
@@ -812,7 +927,13 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _TapChip extends StatelessWidget {
-  const _TapChip({required this.label, required this.selected, required this.onTap, this.leadingIcon, this.removable = false, this.dense = false});
+  const _TapChip(
+      {required this.label,
+      required this.selected,
+      required this.onTap,
+      this.leadingIcon,
+      this.removable = false,
+      this.dense = false});
 
   final String label;
   final bool selected;
@@ -823,7 +944,8 @@ class _TapChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
+    final bg =
+        selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
     final fg = selected ? Colors.white : AppDesignTokens.textCharcoal;
 
     return ConstrainedBox(
@@ -834,7 +956,9 @@ class _TapChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: selected ? 0 : 0.12)),
+          border: Border.all(
+              color: AppDesignTokens.textCharcoal
+                  .withValues(alpha: selected ? 0 : 0.12)),
           boxShadow: selected
               ? [
                   BoxShadow(
@@ -854,26 +978,30 @@ class _TapChip extends StatelessWidget {
           child: Padding(
             padding: EdgeInsets.symmetric(
               horizontal: AppDesignTokens.spaceSM,
-              vertical: dense ? AppDesignTokens.spaceXS : AppDesignTokens.spaceSM,
+              vertical:
+                  dense ? AppDesignTokens.spaceXS : AppDesignTokens.spaceSM,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (leadingIcon != null) ...[
-                  Icon(leadingIcon, size: 18, color: fg.withValues(alpha: 0.95)),
+                  Icon(leadingIcon,
+                      size: 18, color: fg.withValues(alpha: 0.95)),
                   const SizedBox(width: AppDesignTokens.spaceXS),
                 ],
                 Flexible(
                   child: Text(
                     label,
-                    style: AppDesignTokens.body.copyWith(color: fg, fontWeight: FontWeight.w800),
+                    style: AppDesignTokens.body
+                        .copyWith(color: fg, fontWeight: FontWeight.w800),
                     softWrap: false,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 if (removable) ...[
                   const SizedBox(width: AppDesignTokens.spaceXS),
-                  Icon(Icons.close_rounded, size: 18, color: fg.withValues(alpha: 0.9)),
+                  Icon(Icons.close_rounded,
+                      size: 18, color: fg.withValues(alpha: 0.9)),
                 ],
               ],
             ),
@@ -885,7 +1013,11 @@ class _TapChip extends StatelessWidget {
 }
 
 class _PillOption extends StatelessWidget {
-  const _PillOption({required this.label, required this.selected, required this.onTap, this.leadingIcon});
+  const _PillOption(
+      {required this.label,
+      required this.selected,
+      required this.onTap,
+      this.leadingIcon});
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -893,7 +1025,8 @@ class _PillOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
+    final bg =
+        selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
     final fg = selected ? Colors.white : AppDesignTokens.textCharcoal;
 
     return ConstrainedBox(
@@ -904,7 +1037,9 @@ class _PillOption extends StatelessWidget {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: selected ? 0 : 0.12)),
+          border: Border.all(
+              color: AppDesignTokens.textCharcoal
+                  .withValues(alpha: selected ? 0 : 0.12)),
           boxShadow: selected
               ? [
                   BoxShadow(
@@ -922,15 +1057,20 @@ class _PillOption extends StatelessWidget {
           hoverColor: Colors.transparent,
           borderRadius: BorderRadius.circular(999),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppDesignTokens.spaceSM, vertical: AppDesignTokens.spaceSM),
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppDesignTokens.spaceSM,
+                vertical: AppDesignTokens.spaceSM),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (leadingIcon != null) ...[
-                  Icon(leadingIcon, size: 18, color: fg.withValues(alpha: 0.95)),
+                  Icon(leadingIcon,
+                      size: 18, color: fg.withValues(alpha: 0.95)),
                   const SizedBox(width: AppDesignTokens.spaceXS),
                 ],
-                Text(label, style: AppDesignTokens.body.copyWith(color: fg, fontWeight: FontWeight.w800)),
+                Text(label,
+                    style: AppDesignTokens.body
+                        .copyWith(color: fg, fontWeight: FontWeight.w800)),
               ],
             ),
           ),
@@ -945,6 +1085,7 @@ class _PillOption extends StatelessWidget {
 /// once a recipe exists.
 class _GeneratedRecipeCard extends StatelessWidget {
   const _GeneratedRecipeCard({
+    super.key,
     required this.recipe,
     required this.portions,
     this.showPlanForDay = true,
@@ -962,18 +1103,22 @@ class _GeneratedRecipeCard extends StatelessWidget {
 
   Widget _infoPill(String label, IconData icon) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppDesignTokens.spaceSM, vertical: 6),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppDesignTokens.spaceSM, vertical: 6),
       decoration: BoxDecoration(
         color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.22)),
+        border: Border.all(
+            color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.22)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 14, color: AppDesignTokens.ctaTerracotta),
           const SizedBox(width: 4),
-          Text(label, style: AppDesignTokens.caption.copyWith(fontWeight: FontWeight.w800)),
+          Text(label,
+              style: AppDesignTokens.caption
+                  .copyWith(fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -981,35 +1126,43 @@ class _GeneratedRecipeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ingredientsPreview = recipe.ingredients.take(6).toList(growable: false);
+    final ingredientsPreview =
+        recipe.ingredients.take(6).toList(growable: false);
     final overflow = recipe.ingredients.length - ingredientsPreview.length;
-    final totalMinutes = recipe.steps.fold<int>(0, (sum, s) => sum + s.durationMinutes);
+    final totalMinutes =
+        recipe.steps.fold<int>(0, (sum, s) => sum + s.durationMinutes);
     final description = (recipe.description ?? '').trim();
 
     return DecoratedBox(
       decoration: BoxDecoration(
         color: AppDesignTokens.surfaceCream,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-        border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+        border: Border.all(
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(AppDesignTokens.spaceMD),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(recipe.title, style: AppDesignTokens.headline.copyWith(fontWeight: FontWeight.w900, height: 1.15)),
+            Text(recipe.title,
+                style: AppDesignTokens.headline
+                    .copyWith(fontWeight: FontWeight.w900, height: 1.15)),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (totalMinutes > 0) _infoPill('~$totalMinutes min', Icons.timelapse),
-                _infoPill(portions == 1 ? '1 Person' : '$portions People', Icons.people_alt_outlined),
+                if (totalMinutes > 0)
+                  _infoPill('~$totalMinutes min', Icons.timelapse),
+                _infoPill(portions == 1 ? '1 Person' : '$portions People',
+                    Icons.people_alt_outlined),
               ],
             ),
             if (description.isNotEmpty) ...[
               const SizedBox(height: 10),
-              Text(description, style: AppDesignTokens.body.copyWith(height: 1.4)),
+              Text(description,
+                  style: AppDesignTokens.body.copyWith(height: 1.4)),
             ],
             const SizedBox(height: 12),
             Wrap(
@@ -1018,23 +1171,33 @@ class _GeneratedRecipeCard extends StatelessWidget {
               children: [
                 for (final ing in ingredientsPreview)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+                      border: Border.all(
+                          color: AppDesignTokens.textCharcoal
+                              .withValues(alpha: 0.12)),
                     ),
-                    child: Text(ing, style: AppDesignTokens.caption.copyWith(fontWeight: FontWeight.w800)),
+                    child: Text(ing,
+                        style: AppDesignTokens.caption
+                            .copyWith(fontWeight: FontWeight.w800)),
                   ),
                 if (overflow > 0)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+                      border: Border.all(
+                          color: AppDesignTokens.textCharcoal
+                              .withValues(alpha: 0.12)),
                     ),
-                    child: Text('+$overflow more', style: AppDesignTokens.caption.copyWith(fontWeight: FontWeight.w800)),
+                    child: Text('+$overflow more',
+                        style: AppDesignTokens.caption
+                            .copyWith(fontWeight: FontWeight.w800)),
                   ),
               ],
             ),
@@ -1049,15 +1212,20 @@ class _GeneratedRecipeCard extends StatelessWidget {
                       style: FilledButton.styleFrom(
                         backgroundColor: AppDesignTokens.ctaTerracotta,
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                                AppDesignTokens.radiusButton)),
                       ),
                       icon: Icon(
-                        showPlanForDay ? Icons.local_fire_department_rounded : Icons.check_circle_rounded,
+                        showPlanForDay
+                            ? Icons.local_fire_department_rounded
+                            : Icons.check_circle_rounded,
                         color: Colors.white,
                       ),
                       label: Text(
                         showPlanForDay ? '🔥 Cook Now' : '✅ Add to Planner',
-                        style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, color: Colors.white),
                       ),
                     ),
                   ),
@@ -1071,12 +1239,21 @@ class _GeneratedRecipeCard extends StatelessWidget {
                       style: OutlinedButton.styleFrom(
                         backgroundColor: AppDesignTokens.surfaceCream,
                         foregroundColor: AppDesignTokens.textCharcoal,
-                        side: BorderSide(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.22), width: 1.2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
-                      ).copyWith(overlayColor: const WidgetStatePropertyAll(Colors.transparent)),
+                        side: BorderSide(
+                            color: AppDesignTokens.textCharcoal
+                                .withValues(alpha: 0.22),
+                            width: 1.2),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                                AppDesignTokens.radiusButton)),
+                      ).copyWith(
+                          overlayColor:
+                              const WidgetStatePropertyAll(Colors.transparent)),
                       child: Text(
                         showPlanForDay ? '📅 Plan for Day' : '🔄 Generate New',
-                        style: const TextStyle(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: AppDesignTokens.textCharcoal),
                       ),
                     ),
                   ),
@@ -1089,10 +1266,14 @@ class _GeneratedRecipeCard extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: onTryAnother,
                   style: TextButton.styleFrom(
-                    foregroundColor: AppDesignTokens.textCharcoal.withValues(alpha: 0.75),
-                  ).copyWith(overlayColor: const WidgetStatePropertyAll(Colors.transparent)),
+                    foregroundColor:
+                        AppDesignTokens.textCharcoal.withValues(alpha: 0.75),
+                  ).copyWith(
+                      overlayColor:
+                          const WidgetStatePropertyAll(Colors.transparent)),
                   icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('Try Another', style: TextStyle(fontWeight: FontWeight.w800)),
+                  label: const Text('Try Another',
+                      style: TextStyle(fontWeight: FontWeight.w800)),
                 ),
               ),
           ],
@@ -1106,7 +1287,8 @@ class _GeneratedRecipeCard extends StatelessWidget {
 /// recipe card, collapsed by default, matching the same disclosure pattern
 /// used inside Cook Mode's per-step science notes.
 class _ScienceNotesDisclosure extends StatelessWidget {
-  const _ScienceNotesDisclosure({required this.cards, required this.expanded, required this.onToggle});
+  const _ScienceNotesDisclosure(
+      {required this.cards, required this.expanded, required this.onToggle});
 
   final List<models.CulinaryMatrixCard> cards;
   final bool expanded;
@@ -1117,7 +1299,8 @@ class _ScienceNotesDisclosure extends StatelessWidget {
     return Card(
       color: AppDesignTokens.surfaceCream,
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
       child: Padding(
         padding: const EdgeInsets.all(AppDesignTokens.spaceMD),
         child: Column(
@@ -1134,7 +1317,9 @@ class _ScienceNotesDisclosure extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Chef\'s Science Notes', style: AppDesignTokens.subheadline.copyWith(fontWeight: FontWeight.w800)),
+                        Text('Chef\'s Science Notes',
+                            style: AppDesignTokens.subheadline
+                                .copyWith(fontWeight: FontWeight.w800)),
                         const SizedBox(height: 4),
                         Text(
                           'Heat cues, cut specs, timing, and Swiss-kitchen swaps — tailored to your fridge.',
@@ -1146,7 +1331,8 @@ class _ScienceNotesDisclosure extends StatelessWidget {
                   AnimatedRotation(
                     duration: const Duration(milliseconds: 180),
                     turns: expanded ? 0.5 : 0,
-                    child: const Icon(Icons.expand_more_rounded, color: AppDesignTokens.textCharcoal),
+                    child: const Icon(Icons.expand_more_rounded,
+                        color: AppDesignTokens.textCharcoal),
                   ),
                 ],
               ),
@@ -1157,7 +1343,8 @@ class _ScienceNotesDisclosure extends StatelessWidget {
               child: !expanded
                   ? const SizedBox.shrink()
                   : Padding(
-                      padding: const EdgeInsets.only(top: AppDesignTokens.spaceSM),
+                      padding:
+                          const EdgeInsets.only(top: AppDesignTokens.spaceSM),
                       child: Column(
                         children: [
                           for (final card in cards) ...[
@@ -1217,7 +1404,8 @@ class _InlineGeneratingCardState extends State<_InlineGeneratingCard> {
       decoration: BoxDecoration(
         color: AppDesignTokens.surfaceCream,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-        border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+        border: Border.all(
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(AppDesignTokens.spaceMD),
@@ -1226,7 +1414,8 @@ class _InlineGeneratingCardState extends State<_InlineGeneratingCard> {
             const SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2.2, color: AppDesignTokens.ctaTerracotta),
+              child: CircularProgressIndicator(
+                  strokeWidth: 2.2, color: AppDesignTokens.ctaTerracotta),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1235,7 +1424,8 @@ class _InlineGeneratingCardState extends State<_InlineGeneratingCard> {
                 child: Text(
                   _statusMessages[_index],
                   key: ValueKey(_index),
-                  style: AppDesignTokens.body.copyWith(fontWeight: FontWeight.w800),
+                  style: AppDesignTokens.body
+                      .copyWith(fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -1258,20 +1448,25 @@ class _InlineErrorCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppDesignTokens.surfaceCream,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-        border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+        border: Border.all(
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(AppDesignTokens.spaceMD),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.error_outline_rounded, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.8), size: 18),
+            Icon(Icons.error_outline_rounded,
+                color: AppDesignTokens.textCharcoal.withValues(alpha: 0.8),
+                size: 18),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(message, style: AppDesignTokens.body.copyWith(color: AppDesignTokens.textCharcoal, height: 1.25)),
+                  Text(message,
+                      style: AppDesignTokens.body.copyWith(
+                          color: AppDesignTokens.textCharcoal, height: 1.25)),
                   const SizedBox(height: 10),
                   Align(
                     alignment: Alignment.centerLeft,
@@ -1280,10 +1475,20 @@ class _InlineErrorCard extends StatelessWidget {
                       style: OutlinedButton.styleFrom(
                         backgroundColor: AppDesignTokens.surfaceCream,
                         foregroundColor: AppDesignTokens.textCharcoal,
-                        side: BorderSide(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.22), width: 1.2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
-                      ).copyWith(overlayColor: const WidgetStatePropertyAll(Colors.transparent)),
-                      child: const Text('Try Again', style: TextStyle(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal)),
+                        side: BorderSide(
+                            color: AppDesignTokens.textCharcoal
+                                .withValues(alpha: 0.22),
+                            width: 1.2),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                                AppDesignTokens.radiusButton)),
+                      ).copyWith(
+                          overlayColor:
+                              const WidgetStatePropertyAll(Colors.transparent)),
+                      child: const Text('Try Again',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: AppDesignTokens.textCharcoal)),
                     ),
                   ),
                 ],
@@ -1306,15 +1511,26 @@ class _GenerateCtaBar extends StatelessWidget {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
     final disabled = onPressed == null;
 
-    final bg = (isLoading || disabled) ? AppDesignTokens.surfaceCream : AppDesignTokens.ctaTerracotta;
-    final fg = (isLoading || disabled) ? AppDesignTokens.textCharcoal : Colors.white;
-    final border = BorderSide(color: AppDesignTokens.textCharcoal.withValues(alpha: (isLoading || disabled) ? 0.14 : 0));
+    final bg = (isLoading || disabled)
+        ? AppDesignTokens.surfaceCream
+        : AppDesignTokens.ctaTerracotta;
+    final fg =
+        (isLoading || disabled) ? AppDesignTokens.textCharcoal : Colors.white;
+    final border = BorderSide(
+        color: AppDesignTokens.textCharcoal
+            .withValues(alpha: (isLoading || disabled) ? 0.14 : 0));
 
     return Container(
-      padding: EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, AppDesignTokens.spaceSM, AppDesignTokens.spaceSM, AppDesignTokens.spaceSM + bottom),
+      padding: EdgeInsets.fromLTRB(
+          AppDesignTokens.spaceSM,
+          AppDesignTokens.spaceSM,
+          AppDesignTokens.spaceSM,
+          AppDesignTokens.spaceSM + bottom),
       decoration: BoxDecoration(
         color: AppDesignTokens.surfaceCream,
-        border: Border(top: BorderSide(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12))),
+        border: Border(
+            top: BorderSide(
+                color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12))),
       ),
       child: SizedBox(
         height: AppSizing.primaryButtonHeight,
@@ -1323,7 +1539,9 @@ class _GenerateCtaBar extends StatelessWidget {
           style: ButtonStyle(
             backgroundColor: WidgetStatePropertyAll(bg),
             foregroundColor: WidgetStatePropertyAll(fg),
-            shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton))),
+            shape: WidgetStatePropertyAll(RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(AppDesignTokens.radiusButton))),
             side: WidgetStatePropertyAll(border),
             overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           ),
@@ -1331,13 +1549,19 @@ class _GenerateCtaBar extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (isLoading) ...[
-                const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppDesignTokens.ctaTerracotta)),
+                const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: AppDesignTokens.ctaTerracotta)),
                 const SizedBox(width: 12),
               ],
               Flexible(
                 child: Text(
                   isLoading ? 'Chef Harris is thinking…' : 'Let\'s Cook',
-                  style: AppDesignTokens.subheadline.copyWith(color: fg, fontWeight: FontWeight.w900),
+                  style: AppDesignTokens.subheadline
+                      .copyWith(color: fg, fontWeight: FontWeight.w900),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

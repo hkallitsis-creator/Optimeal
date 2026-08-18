@@ -51,6 +51,7 @@ class _TechniquesMediaScreenState extends State<TechniquesMediaScreen> {
     final lessons = _lessons.where((l) => l.category == _selectedCategory).toList(growable: false);
 
     return Scaffold(
+      backgroundColor: AppDesignTokens.backgroundSage,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,

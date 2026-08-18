@@ -727,9 +727,16 @@ class ChefService {
     userMessage.writeln('Reply with concise, actionable steps.');
     if (!forceJsonObject) {
       // Defensive: the system persona includes JSON-structured recipe rules.
-      // For conversational/SOS/suggestion calls, explicitly forbid JSON.
+      // For conversational/SOS/suggestion calls, explicitly forbid JSON —
+      // and markdown (device-test round F9: the Chef Harris Suggestion
+      // sheet renders this text in a plain Text widget, so literal
+      // **asterisks**/markdown syntax leaked straight to the screen).
+      // Cheaper than adding a markdown renderer: every conversational
+      // surface (SOS, Suggestion) shares this one instruction.
       userMessage.writeln(
-        'Respond in plain, friendly conversational prose only — do NOT return JSON, code fences, or field-labeled output, even if this looks like a recipe request.',
+        'Respond in plain, friendly conversational prose only — do NOT return JSON, code fences, field-labeled output, or any markdown formatting '
+        '(no **bold**, no _italics_, no bullet/numbered list syntax, no # headers), even if this looks like a recipe request. '
+        'If you need to list steps or points, write them as plain sentences on their own line instead.',
       );
       userMessage.writeln('End with: Happy cooking! — Chef Harris');
     }

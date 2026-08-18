@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 
 /// Centralized, additive design tokens.
-///
-/// Note: This file is intentionally not referenced anywhere yet.
-/// It only defines static constants to be used by future UI work.
 abstract final class AppDesignTokens {
   // Colors
-  static const Color backgroundSage = Color(0xFFE8EFEA);
+
+  /// The single app-wide sage background — unified (device-test round F10,
+  /// Harris's decision) to the darker value Cook Mode always showed via the
+  /// implicit theme default (`LightModeColors.lightBackground`), replacing
+  /// the lighter `0xFFE8EFEA` most other screens explicitly requested.
+  /// Every screen's Scaffold now reads this token explicitly rather than
+  /// relying on the theme default, so there's one source of truth.
+  static const Color backgroundSage = Color(0xFFC5D3C1);
   static const Color surfaceCream = Color(0xFFFBF9F4);
   static const Color ctaTerracotta = Color(0xFFD94A1E);
   static const Color deepForest = Color(0xFF1E3A2B);

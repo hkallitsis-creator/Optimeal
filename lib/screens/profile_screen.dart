@@ -13,7 +13,6 @@ import 'package:optimeal/widgets/curriculum_drawer_content.dart';
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
-  static const Color sageBackground = Color(0xFFC5D3C1);
   static const Color deepForest = Color(0xFF1E3A2B);
   static const Color terracotta = Color(0xFFD96B43);
   static const double cardRadius = 16.0;
@@ -163,7 +162,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final userEmail = Supabase.instance.client.auth.currentUser?.email;
 
     return Scaffold(
-      backgroundColor: ProfileScreen.sageBackground,
+      backgroundColor: AppDesignTokens.backgroundSage,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
