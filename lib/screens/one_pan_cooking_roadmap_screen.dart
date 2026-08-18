@@ -12,6 +12,7 @@ import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/confidence_climb_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
+import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_verdict.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
@@ -639,6 +640,14 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       final surface = _surface;
       final shouldLog =
           surface != null && surface.isRescueEligible && !_isReCook;
+
+      // Fridge nudge cancellation (docs/decisions_2026-08-17.md item 5): a
+      // genuine Fridge Clearer completion means these ingredients did get
+      // used — cancel the pending "did you forget?" nudge, if any.
+      if (surface == CookModeSurface.fridgeClearer && !_isReCook) {
+        unawaited(FridgeNudgeService.instance.onRelevantCookCompleted());
+      }
+
       LedgerCompletionSuccess? ledgerSuccess;
       if (shouldLog) {
         final result = await _ledgerService.logCompletion(

@@ -8,7 +8,6 @@ import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
-import 'package:optimeal/services/fridge_countdown_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
@@ -19,7 +18,6 @@ import 'package:optimeal/theme.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/curriculum_drawer_content.dart';
 import 'package:optimeal/widgets/custom_ai_recipe_creator_sheet.dart';
-import 'package:optimeal/widgets/fridge_countdown_sheet.dart';
 import 'package:optimeal/widgets/generated_recipe_actions_sheet.dart';
 import 'package:optimeal/widgets/branded_avatar_glyph.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
@@ -118,7 +116,6 @@ class HomeDashboardScreen extends StatefulWidget {
 class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   final _sessionStorage = CookSessionStorageService();
   final _ledgerService = LedgerService();
-  final _fridgeCountdownService = FridgeCountdownService();
 
   /// Null means either "no saved session" or "not loaded yet" — both render
   /// the same way (banner hidden), so no separate loading flag is needed.
@@ -128,32 +125,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   List<String> _weeklyIngredientsList = const [];
   int _lifetimeIngredientsRescued = 0;
 
-  int _expiringSoonCount = 0;
-
   @override
   void initState() {
     super.initState();
     _loadActiveSession();
     _loadWeeklyLedger();
-    _loadFridgeCountdown();
+    _checkDeepLinkIntent();
   }
 
-  Future<void> _loadFridgeCountdown() async {
-    final count = await _fridgeCountdownService.countExpiringSoon();
-    if (!mounted) return;
-    setState(() => _expiringSoonCount = count);
-  }
-
-  Future<void> _showFridgeCountdown(BuildContext context) async {
-    await AppBottomSheet.show<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: AppDesignTokens.surfaceCream,
-      builder: (ctx) => const SafeArea(child: FridgeCountdownSheet()),
-    );
-    if (!mounted) return;
-    _loadFridgeCountdown();
+  /// Handles the fridge nudge notification's "AI generator" action, which
+  /// lands here via AppRoutes.homeOpenAiGenerator ('/?open=ai_generator') —
+  /// there's no bottom sheet to deep-link to directly, so it's opened here
+  /// on first frame instead. Runs once; the query param isn't re-checked on
+  /// rebuild.
+  void _checkDeepLinkIntent() {
+    final open = GoRouterState.of(context).uri.queryParameters['open'];
+    if (open != 'ai_generator') return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      HomeDashboardScreen._showCustomAiRecipeCreator(context);
+    });
   }
 
   Future<void> _loadActiveSession() async {
@@ -318,7 +309,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     emoji: '📚',
                     accent: HomeDashboardScreen._deepForest,
                     icon: Icons.menu_book_rounded,
-                    onTap: () => context.go(AppRoutes.homeTab(3)),
+                    // Index 2 — Techniques & Media moved up a slot when the
+                    // Fridge tab was cut (docs/decisions_2026-08-17.md item 5).
+                    onTap: () => context.go(AppRoutes.homeTab(2)),
                   ),
                   _ActionCard(
                     title: 'Recently Cooked',
@@ -344,16 +337,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 ]),
               ),
             ),
-            if (_expiringSoonCount > 0)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-                  child: _FridgeCountdownChip(
-                    count: _expiringSoonCount,
-                    onTap: () => _showFridgeCountdown(context),
-                  ),
-                ),
-              ),
             const SliverToBoxAdapter(
               child: Padding(
                 padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
@@ -646,47 +629,6 @@ class _ResumeSessionBanner extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _FridgeCountdownChip extends StatelessWidget {
-  const _FridgeCountdownChip({required this.count, required this.onTap});
-
-  final int count;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: HomeDashboardScreen._terracotta.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: HomeDashboardScreen._terracotta.withValues(alpha: 0.22)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.hourglass_bottom_rounded, size: 16, color: HomeDashboardScreen._terracotta),
-              const SizedBox(width: 8),
-              Text(
-                '$count item${count == 1 ? '' : 's'} expiring soon',
-                style: theme.textTheme.labelMedium?.copyWith(color: HomeDashboardScreen._terracotta, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_right_rounded, size: 16, color: HomeDashboardScreen._terracotta),
-            ],
-          ),
-        ),
       ),
     );
   }

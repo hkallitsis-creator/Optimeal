@@ -24,7 +24,14 @@ import 'package:optimeal/state/user_profile_controller.dart';
 /// 3. Navigate using context.go() or context.push()
 /// 4. Use context.pop() to go back.
 class AppRouter {
-  static GoRouter createRouter(UserProfileController profile) => GoRouter(
+  /// The most recently created router, so code outside the widget tree
+  /// (currently: the fridge nudge notification's tap/action handler, see
+  /// FridgeNudgeService) can navigate without a BuildContext. Set at the
+  /// end of [createRouter], which MyApp calls once at startup.
+  static GoRouter? lastRouter;
+
+  static GoRouter createRouter(UserProfileController profile) {
+    final router = GoRouter(
         initialLocation: profile.isOnboarded ? AppRoutes.home : AppRoutes.onboarding,
         refreshListenable: profile,
         redirect: (context, state) {
@@ -59,7 +66,9 @@ class AppRouter {
             path: AppRoutes.weeklyPlan,
             name: 'weekly_plan',
             // Keep bottom navigation persistent when navigating by route.
-            pageBuilder: (context, state) => const NoTransitionPage(child: MainLayout(currentIndex: 2)),
+            // Index 1 — Weekly moved up a slot when the Fridge tab was cut
+            // (docs/decisions_2026-08-17.md item 5).
+            pageBuilder: (context, state) => const NoTransitionPage(child: MainLayout(currentIndex: 1)),
           ),
           GoRoute(
             path: AppRoutes.recipe,
@@ -87,8 +96,11 @@ class AppRouter {
           GoRoute(
             path: AppRoutes.aiFridgeScrapGenerator,
             name: 'ai_fridge_scrap_generator',
-            // Keep bottom navigation persistent when navigating by route.
-            pageBuilder: (context, state) => const NoTransitionPage(child: MainLayout(currentIndex: 1)),
+            // No longer a bottom-nav tab (docs/decisions_2026-08-17.md item
+            // 5) — pushed directly instead, same as fridgeClearerPicker.
+            // This is also the deep-link target for the "Fridge Clearer"
+            // fridge-nudge notification action.
+            builder: (context, state) => const FridgeClearerScreen(),
           ),
           GoRoute(
             path: AppRoutes.fridgeClearerPicker,
@@ -112,6 +124,9 @@ class AppRouter {
           ),
         ],
       );
+    lastRouter = router;
+    return router;
+  }
 }
 
 /// Route path constants
@@ -126,6 +141,13 @@ class AppRoutes {
   static const String onePanCookingRoadmap = '/one-pan-cooking-roadmap';
   static const String aiFridgeScrapGenerator = '/ai-fridge-scrap-generator';
   static const String fridgeClearerPicker = '/fridge-clearer-picker';
+
+  /// Deep-link target for the fridge nudge notification's "AI generator"
+  /// action: lands on Home, which opens the Custom AI Recipe Creator sheet
+  /// on first frame when it sees this query param (see
+  /// HomeDashboardScreen._checkDeepLinkIntent). Not a distinct GoRoute —
+  /// '/' already matches it, the query param is read from GoRouterState.
+  static const String homeOpenAiGenerator = '/?open=ai_generator';
   static const String profile = '/profile';
   static const String culinaryMasterclass = '/culinary-masterclass';
   static const String paywall = '/paywall';

@@ -8,6 +8,7 @@ import 'nav.dart';
 import 'package:optimeal/config/app_environment.dart';
 import 'package:optimeal/services/user_profile_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
+import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/widgets/dev_environment_badge.dart';
@@ -53,6 +54,11 @@ Future<void> main() async {
     debugPrint('EntitlementService.configure failed (continuing startup): $e');
     debugPrint('$st');
   }
+
+  // Wires the fridge nudge notification's tap/action callback so a
+  // cold-start tap has somewhere to land. Never requests permission or
+  // schedules anything by itself — see fridge_nudge_service.dart.
+  await FridgeNudgeService.instance.initialize();
 
   final profileController = UserProfileController(UserProfileService());
   await profileController.load();

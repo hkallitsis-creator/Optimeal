@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:optimeal/nav.dart';
-import 'package:optimeal/screens/fridge_clearer_screen.dart';
 import 'package:optimeal/screens/home_dashboard_screen.dart';
 import 'package:optimeal/screens/techniques_media_screen.dart';
 import 'package:optimeal/screens/weekly_planner_screen.dart';
@@ -11,7 +10,7 @@ import 'package:optimeal/theme/app_design_tokens.dart';
 
 class MainLayout extends StatefulWidget {
   final int currentIndex;
-  
+
   const MainLayout({super.key, this.currentIndex = 0});
 
   @override
@@ -21,9 +20,12 @@ class MainLayout extends StatefulWidget {
 class _MainLayoutState extends State<MainLayout> {
   late int _currentIndex;
 
+  // Fridge Clearer is no longer a bottom-nav tab (docs/decisions_2026-08-17.md
+  // item 5 — the tab is cut in favor of a scheduled nudge notification).
+  // FridgeClearerScreen itself is unaffected — it's still reachable as a
+  // pushed screen via AppRoutes.aiFridgeScrapGenerator / fridgeClearerPicker.
   final List<Widget> _pages = [
     const HomeDashboardScreen(),
-    const FridgeClearerScreen(),
     const WeeklyPlannerScreen(),
     const TechniquesMediaScreen(),
   ];
@@ -94,9 +96,8 @@ class _MainLayoutState extends State<MainLayout> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 Expanded(child: _buildNavItem(0, Icons.home_rounded, 'Home')),
-                Expanded(child: _buildNavItem(1, Icons.kitchen_rounded, 'Fridge')),
-                Expanded(child: _buildNavItem(2, Icons.calendar_month_rounded, 'Weekly')),
-                Expanded(child: _buildNavItem(3, Icons.play_circle_rounded, 'Techniques & Media')),
+                Expanded(child: _buildNavItem(1, Icons.calendar_month_rounded, 'Weekly')),
+                Expanded(child: _buildNavItem(2, Icons.play_circle_rounded, 'Techniques & Media')),
               ],
             ),
           ),

@@ -12,6 +12,7 @@ import 'package:optimeal/services/chef_recipe_parser.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
+import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
@@ -509,6 +510,11 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       debugPrint('CookModeRecipePayload constructed with curriculumLessonIds=${recipe.curriculumLessonIds}');
 
       RecentGenerationsService.instance.record(recipe.title);
+      // Fridge nudge (docs/decisions_2026-08-17.md item 5): a generated
+      // recipe is the earliest durable signal that these ingredients were
+      // "entered" — schedules a single 2-day-out nudge if the user never
+      // actually cooks it.
+      unawaited(FridgeNudgeService.instance.onFridgeClearerIngredientsGenerated());
 
       setState(() {
         _precisionCards = cards;
