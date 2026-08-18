@@ -4,11 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
 import 'theme.dart';
+import 'theme/app_design_tokens.dart';
 import 'nav.dart';
 import 'package:optimeal/config/app_environment.dart';
 import 'package:optimeal/services/user_profile_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/fridge_nudge_service.dart';
+import 'package:optimeal/services/ledger_sync_coordinator.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/widgets/dev_environment_badge.dart';
@@ -30,7 +32,8 @@ Future<void> main() async {
   AppEnvironmentConfig.printStartupBanner();
 
   final supabaseConfig = AppEnvironmentConfig.supabase;
-  await Supabase.initialize(url: supabaseConfig.url, anonKey: supabaseConfig.anonKey);
+  await Supabase.initialize(
+      url: supabaseConfig.url, anonKey: supabaseConfig.anonKey);
 
   // Ensure there is always a valid session (auth.uid()) for RLS-protected writes,
   // even when the user never explicitly signs up.
@@ -60,17 +63,32 @@ Future<void> main() async {
   // schedules anything by itself — see fridge_nudge_service.dart.
   await FridgeNudgeService.instance.initialize();
 
+  // Starts listening for connectivity restore + flushes any pending ledger
+  // writes left over from a previous session that's now reopened already
+  // online. Never blocks startup — see ledger_sync_coordinator.dart.
+  try {
+    await LedgerSyncCoordinator.instance.start();
+  } catch (e, st) {
+    debugPrint('LedgerSyncCoordinator.start failed (continuing startup): $e');
+    debugPrint('$st');
+  }
+
   final profileController = UserProfileController(UserProfileService());
   await profileController.load();
 
   final ingredientPrepController = IngredientPrepController();
   await ingredientPrepController.load();
 
-  runApp(MyApp(profileController: profileController, ingredientPrepController: ingredientPrepController));
+  runApp(MyApp(
+      profileController: profileController,
+      ingredientPrepController: ingredientPrepController));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key, required this.profileController, required this.ingredientPrepController});
+  const MyApp(
+      {super.key,
+      required this.profileController,
+      required this.ingredientPrepController});
 
   final UserProfileController profileController;
   final IngredientPrepController ingredientPrepController;
@@ -100,7 +118,9 @@ class MyApp extends StatelessWidget {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: LightModeColors.lightBackground,
+      // Every screen now sets this explicitly too (device-test round F10) —
+      // kept here as the app-wide fallback default, same token.
+      scaffoldBackgroundColor: AppDesignTokens.backgroundSage,
       textTheme: textTheme,
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -111,7 +131,8 @@ class MyApp extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: LightModeColors.lightPrimary,
           foregroundColor: LightModeColors.lightOnPrimary,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           textStyle: const TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
@@ -120,7 +141,8 @@ class MyApp extends StatelessWidget {
         elevation: 0,
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(16))),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: LightModeColors.lightSurface,
@@ -149,8 +171,11 @@ class MyApp extends StatelessWidget {
         // cannot appear in a prod build, not just "is hidden" in one.
         builder: kIsDevEnvironment
             ? (context, child) => Stack(
-                children: [if (child != null) child, const DevEnvironmentBadge()],
-              )
+                  children: [
+                    if (child != null) child,
+                    const DevEnvironmentBadge()
+                  ],
+                )
             : null,
       ),
     );

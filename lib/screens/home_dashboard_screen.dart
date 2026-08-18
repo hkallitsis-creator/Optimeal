@@ -9,6 +9,7 @@ import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
+import 'package:optimeal/services/ledger_sync_coordinator.dart';
 import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
@@ -66,7 +67,8 @@ class HomeDashboardScreen extends StatefulWidget {
     );
   }
 
-  static Future<void> _showTechniqueOfTheWeek(BuildContext context, ResolvedDrawerEntry entry) async {
+  static Future<void> _showTechniqueOfTheWeek(
+      BuildContext context, ResolvedDrawerEntry entry) async {
     await AppBottomSheet.show<void>(
       context: context,
       isScrollControlled: true,
@@ -84,12 +86,16 @@ class HomeDashboardScreen extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: isDark ? theme.colorScheme.surface : LightModeColors.lightWarmCreamSurface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      backgroundColor: isDark
+          ? theme.colorScheme.surface
+          : LightModeColors.lightWarmCreamSurface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => const SafeArea(
         child: CustomAiRecipeCreatorSheet(
           title: 'What are you in the mood for?',
-          subtitle: 'Type any dish, craving, or diet — I\'ll generate an instant Cook Mode recipe.',
+          subtitle:
+              'Type any dish, craving, or diet — I\'ll generate an instant Cook Mode recipe.',
         ),
       ),
     );
@@ -101,10 +107,16 @@ class HomeDashboardScreen extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: isDark ? theme.colorScheme.surface : LightModeColors.lightWarmCreamSurface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      backgroundColor: isDark
+          ? theme.colorScheme.surface
+          : LightModeColors.lightWarmCreamSurface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(
-        child: GeneratedRecipeActionsSheet(recipe: payload, sourceLabel: 'Custom AI Craving', surface: CookModeSurface.customAiRecipeCreator),
+        child: GeneratedRecipeActionsSheet(
+            recipe: payload,
+            sourceLabel: 'Custom AI Craving',
+            surface: CookModeSurface.customAiRecipeCreator),
       ),
     );
   }
@@ -113,7 +125,8 @@ class HomeDashboardScreen extends StatefulWidget {
   State<HomeDashboardScreen> createState() => _HomeDashboardScreenState();
 }
 
-class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
+class _HomeDashboardScreenState extends State<HomeDashboardScreen>
+    with WidgetsBindingObserver, RouteAware {
   final _sessionStorage = CookSessionStorageService();
   final _ledgerService = LedgerService();
 
@@ -128,9 +141,44 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadActiveSession();
     _loadWeeklyLedger();
     _checkDeepLinkIntent();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    routeObserver.subscribe(
+        this, ModalRoute.of(context)! as PageRoute<dynamic>);
+  }
+
+  @override
+  void dispose() {
+    routeObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Fires when a route pushed on top of Home (Fridge Clearer, Cook Mode,
+  /// Recently Cooked's re-entry, etc.) is popped and Home becomes the
+  /// top-of-stack route again. Home's own [State] is never disposed by
+  /// that push/pop — it just sits underneath — so without this, nothing
+  /// ever tells it a cook may have just completed. See device-test-round
+  /// I1 investigation.
+  @override
+  void didPopNext() {
+    _loadActiveSession();
+    _loadWeeklyLedger();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadWeeklyLedger();
+      LedgerSyncCoordinator.instance.onAppResume();
+    }
   }
 
   /// Handles the fridge nudge notification's "AI generator" action, which
@@ -163,9 +211,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final summary = await _ledgerService.getWeeklySummary();
     if (!mounted) return;
     setState(() {
-      _weeklyIngredientsRescued = (summary['weeklyIngredientsRescued'] as int?) ?? 0;
-      _weeklyIngredientsList = (summary['weeklyIngredientsList'] as List?)?.cast<String>() ?? const [];
-      _lifetimeIngredientsRescued = (summary['lifetimeIngredientsRescued'] as int?) ?? 0;
+      _weeklyIngredientsRescued =
+          (summary['weeklyIngredientsRescued'] as int?) ?? 0;
+      _weeklyIngredientsList =
+          (summary['weeklyIngredientsList'] as List?)?.cast<String>() ??
+              const [];
+      _lifetimeIngredientsRescued =
+          (summary['lifetimeIngredientsRescued'] as int?) ?? 0;
     });
   }
 
@@ -178,8 +230,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// re-cook (CLAUDE.md Roadmap item 28) — [surface] is null since original
   /// provenance isn't tracked and doesn't matter: [isReCook] alone already
   /// excludes it from Waste Ledger logging.
-  Future<void> _openCookMode(BuildContext context, {CookModeRecipePayload? recipe, ActiveCookSession? resumeSession}) async {
-    final extra = resumeSession ?? (recipe != null ? CookModeLaunchRequest(recipe: recipe, surface: null, isReCook: true) : null);
+  Future<void> _openCookMode(BuildContext context,
+      {CookModeRecipePayload? recipe, ActiveCookSession? resumeSession}) async {
+    final extra = resumeSession ??
+        (recipe != null
+            ? CookModeLaunchRequest(
+                recipe: recipe, surface: null, isReCook: true)
+            : null);
     await context.push(AppRoutes.onePanCookingRoadmap, extra: extra);
     if (!mounted) return;
     _loadActiveSession();
@@ -193,8 +250,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: isDark ? theme.colorScheme.surface : LightModeColors.lightWarmCreamSurface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      backgroundColor: isDark
+          ? theme.colorScheme.surface
+          : LightModeColors.lightWarmCreamSurface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (sheetContext) => SafeArea(
         child: _ThisWeekLedgerSheet(
           weeklyIngredients: _weeklyIngredientsList,
@@ -213,7 +273,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       isScrollControlled: true,
       showDragHandle: true,
       backgroundColor: AppDesignTokens.surfaceCream,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (sheetContext) => SafeArea(
         child: _RecentlyCookedSheet(
           entries: entries,
@@ -230,9 +291,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   Widget build(BuildContext context) {
     final profile = context.watch<UserProfileController>().profile;
 
-    final displayName = profile.displayName.trim().isEmpty ? 'Chef' : profile.displayName.trim();
+    final displayName = profile.displayName.trim().isEmpty
+        ? 'Chef'
+        : profile.displayName.trim();
     final dietLabel = HomeDashboardScreen._dietLabel(profile.diet.name);
-    final allergyLabels = profile.allergies.map((e) => e.trim()).where((e) => e.isNotEmpty).toList(growable: false);
+    final allergyLabels = profile.allergies
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
     final activeSession = _activeSession;
 
     return Scaffold(
@@ -248,7 +314,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   dietLabel: dietLabel,
                   allergyLabels: allergyLabels,
                   onProfileTap: () => context.push(AppRoutes.profile),
-                  onGetIdeaTap: () => HomeDashboardScreen._showChefSuggestion(context),
+                  onGetIdeaTap: () =>
+                      HomeDashboardScreen._showChefSuggestion(context),
                 ),
               ),
             ),
@@ -258,7 +325,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
                   child: _ResumeSessionBanner(
                     session: activeSession,
-                    onResume: () => _openCookMode(context, resumeSession: activeSession),
+                    onResume: () =>
+                        _openCookMode(context, resumeSession: activeSession),
                     onDiscard: _discardActiveSession,
                   ),
                 ),
@@ -289,11 +357,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ),
                   _ActionCard(
                     title: 'Custom AI Recipe Creator',
-                    subtitle: 'Type any dish, craving, or diet to generate an instant recipe.',
+                    subtitle:
+                        'Type any dish, craving, or diet to generate an instant recipe.',
                     emoji: '🪄',
                     accent: HomeDashboardScreen._terracotta,
                     icon: Icons.restaurant_rounded,
-                    onTap: () => HomeDashboardScreen._showCustomAiRecipeCreator(context),
+                    onTap: () =>
+                        HomeDashboardScreen._showCustomAiRecipeCreator(context),
                   ),
                   _ActionCard(
                     title: 'Weekly Plan & Shop',
@@ -347,7 +417,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                 child: _TechniqueOfTheWeekCard(
-                  onTap: (entry) => HomeDashboardScreen._showTechniqueOfTheWeek(context, entry),
+                  onTap: (entry) => HomeDashboardScreen._showTechniqueOfTheWeek(
+                      context, entry),
                 ),
               ),
             ),
@@ -359,7 +430,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 }
 
 class _ThisWeekLedgerSheet extends StatelessWidget {
-  const _ThisWeekLedgerSheet({required this.weeklyIngredients, required this.weeklyCount, required this.lifetimeCount});
+  const _ThisWeekLedgerSheet(
+      {required this.weeklyIngredients,
+      required this.weeklyCount,
+      required this.lifetimeCount});
 
   final List<String> weeklyIngredients;
   final int weeklyCount;
@@ -375,7 +449,8 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
       if (existing == null) {
         map[key] = _IngredientTally(label: trimmed, count: 1);
       } else {
-        map[key] = _IngredientTally(label: existing.label, count: existing.count + 1);
+        map[key] =
+            _IngredientTally(label: existing.label, count: existing.count + 1);
       }
     }
     return map;
@@ -387,7 +462,8 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     final tallied = _tallyIngredients();
-    final rows = tallied.values.toList()..sort((a, b) => b.count.compareTo(a.count));
+    final rows = tallied.values.toList()
+      ..sort((a, b) => b.count.compareTo(a.count));
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
@@ -401,25 +477,36 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: HomeDashboardScreen._deepForest.withValues(alpha: 0.12),
+                  color:
+                      HomeDashboardScreen._deepForest.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: HomeDashboardScreen._deepForest.withValues(alpha: 0.18)),
+                  border: Border.all(
+                      color: HomeDashboardScreen._deepForest
+                          .withValues(alpha: 0.18)),
                 ),
-                child: const Icon(Icons.eco_rounded, color: HomeDashboardScreen._deepForest, size: 20),
+                child: const Icon(Icons.eco_rounded,
+                    color: HomeDashboardScreen._deepForest, size: 20),
               ),
               const SizedBox(width: 12),
-              Expanded(child: Text('This Week', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900))),
+              Expanded(
+                  child: Text('This Week',
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w900))),
               IconButton(
                 onPressed: () => context.pop(),
                 icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
-                style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+                style: const ButtonStyle(
+                    overlayColor: WidgetStatePropertyAll(Colors.transparent)),
               ),
             ],
           ),
           const SizedBox(height: 6),
           Text(
-            weeklyCount == 0 ? 'No rescued ingredients logged yet.' : '$weeklyCount ingredient${weeklyCount == 1 ? '' : 's'} rescued so far this week.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            weeklyCount == 0
+                ? 'No rescued ingredients logged yet.'
+                : '$weeklyCount ingredient${weeklyCount == 1 ? '' : 's'} rescued so far this week.',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 12),
           // Permanent explainer — docs/DECISIONS.md "Waste Ledger legibility
@@ -432,24 +519,35 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
             decoration: BoxDecoration(
               color: HomeDashboardScreen._deepForest.withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: HomeDashboardScreen._deepForest.withValues(alpha: 0.16)),
+              border: Border.all(
+                  color:
+                      HomeDashboardScreen._deepForest.withValues(alpha: 0.16)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   "This tracks real fridge rescues — cooking food that would've gone to waste.",
-                  style: theme.textTheme.labelSmall?.copyWith(color: HomeDashboardScreen._deepForest, fontWeight: FontWeight.w700, height: 1.35),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      color: HomeDashboardScreen._deepForest,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Fridge Clearer cooks count toward it.',
-                  style: theme.textTheme.labelSmall?.copyWith(color: HomeDashboardScreen._deepForest, fontWeight: FontWeight.w700, height: 1.35),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      color: HomeDashboardScreen._deepForest,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   "Other recipes and re-cooks don't count again.",
-                  style: theme.textTheme.labelSmall?.copyWith(color: HomeDashboardScreen._deepForest, fontWeight: FontWeight.w700, height: 1.35),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      color: HomeDashboardScreen._deepForest,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35),
                 ),
               ],
             ),
@@ -462,11 +560,13 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
               decoration: BoxDecoration(
                 color: scheme.surfaceContainerHighest.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: scheme.outline.withValues(alpha: 0.14)),
+                border:
+                    Border.all(color: scheme.outline.withValues(alpha: 0.14)),
               ),
               child: Text(
                 'Cook something that uses up fresh items in your fridge, and your rescued list will show up here.',
-                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: scheme.onSurfaceVariant),
               ),
             )
           else
@@ -476,7 +576,8 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
                 shrinkWrap: true,
                 itemCount: rows.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, i) => _RescuedIngredientRow(tally: rows[i]),
+                itemBuilder: (context, i) =>
+                    _RescuedIngredientRow(tally: rows[i]),
               ),
             ),
           const SizedBox(height: 14),
@@ -490,7 +591,8 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
             ),
             child: Text(
               'Lifetime: $lifetimeCount ingredient${lifetimeCount == 1 ? '' : 's'} rescued',
-              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w900),
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w900),
             ),
           ),
         ],
@@ -525,10 +627,14 @@ class _RescuedIngredientRow extends StatelessWidget {
               color: HomeDashboardScreen._deepForest.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(Icons.local_florist_rounded, color: HomeDashboardScreen._deepForest, size: 20),
+            child: const Icon(Icons.local_florist_rounded,
+                color: HomeDashboardScreen._deepForest, size: 20),
           ),
           const SizedBox(width: 12),
-          Expanded(child: Text(tally.label, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900))),
+          Expanded(
+              child: Text(tally.label,
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w900))),
           const SizedBox(width: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -537,7 +643,9 @@ class _RescuedIngredientRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
               border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
             ),
-            child: Text('×${tally.count}', style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w900)),
+            child: Text('×${tally.count}',
+                style: theme.textTheme.labelMedium
+                    ?.copyWith(fontWeight: FontWeight.w900)),
           ),
         ],
       ),
@@ -553,7 +661,8 @@ class _IngredientTally {
 }
 
 class _ResumeSessionBanner extends StatelessWidget {
-  const _ResumeSessionBanner({required this.session, required this.onResume, required this.onDiscard});
+  const _ResumeSessionBanner(
+      {required this.session, required this.onResume, required this.onDiscard});
 
   final ActiveCookSession session;
   final VoidCallback onResume;
@@ -569,7 +678,8 @@ class _ResumeSessionBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: HomeDashboardScreen._terracotta.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(HomeDashboardScreen._cardRadius),
-        border: Border.all(color: HomeDashboardScreen._terracotta.withValues(alpha: 0.24)),
+        border: Border.all(
+            color: HomeDashboardScreen._terracotta.withValues(alpha: 0.24)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -580,21 +690,27 @@ class _ResumeSessionBanner extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: HomeDashboardScreen._terracotta.withValues(alpha: 0.16),
+                  color:
+                      HomeDashboardScreen._terracotta.withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(Icons.restaurant_menu_rounded, color: HomeDashboardScreen._terracotta),
+                child: const Icon(Icons.restaurant_menu_rounded,
+                    color: HomeDashboardScreen._terracotta),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Pick up where you left off', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900)),
+                    Text('Pick up where you left off',
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
                     const SizedBox(height: 2),
                     Text(
                       session.recipe.title,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant, fontWeight: FontWeight.w700),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w700),
                     ),
                   ],
                 ),
@@ -609,9 +725,11 @@ class _ResumeSessionBanner extends StatelessWidget {
                   onPressed: onDiscard,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: scheme.onSurfaceVariant,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
-                  child: const Text('Discard', style: TextStyle(fontWeight: FontWeight.w800)),
+                  child: const Text('Discard',
+                      style: TextStyle(fontWeight: FontWeight.w800)),
                 ),
               ),
               const SizedBox(width: 10),
@@ -621,9 +739,11 @@ class _ResumeSessionBanner extends StatelessWidget {
                   style: FilledButton.styleFrom(
                     backgroundColor: HomeDashboardScreen._terracotta,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
-                  child: const Text('Resume Cooking', style: TextStyle(fontWeight: FontWeight.w900)),
+                  child: const Text('Resume Cooking',
+                      style: TextStyle(fontWeight: FontWeight.w900)),
                 ),
               ),
             ],
@@ -656,8 +776,10 @@ class _TechniqueOfTheWeekCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: scheme.surface,
-            borderRadius: BorderRadius.circular(HomeDashboardScreen._cardRadius),
-            border: Border.all(color: HomeDashboardScreen._deepForest.withValues(alpha: 0.16)),
+            borderRadius:
+                BorderRadius.circular(HomeDashboardScreen._cardRadius),
+            border: Border.all(
+                color: HomeDashboardScreen._deepForest.withValues(alpha: 0.16)),
             boxShadow: HomeDashboardScreen._cardShadow,
           ),
           child: Row(
@@ -666,10 +788,12 @@ class _TechniqueOfTheWeekCard extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: HomeDashboardScreen._deepForest.withValues(alpha: 0.12),
+                  color:
+                      HomeDashboardScreen._deepForest.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(Icons.auto_stories_rounded, color: HomeDashboardScreen._deepForest),
+                child: const Icon(Icons.auto_stories_rounded,
+                    color: HomeDashboardScreen._deepForest),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -685,7 +809,9 @@ class _TechniqueOfTheWeekCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text(entry.title, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900)),
+                    Text(entry.title,
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
                   ],
                 ),
               ),
@@ -725,15 +851,20 @@ class _TechniqueOfTheWeekSheet extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                    border: Border.all(
+                        color:
+                            AppDesignTokens.deepForest.withValues(alpha: 0.18)),
                   ),
-                  child: const Icon(Icons.auto_stories_rounded, color: AppDesignTokens.deepForest, size: 20),
+                  child: const Icon(Icons.auto_stories_rounded,
+                      color: AppDesignTokens.deepForest, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     'Technique of the Week',
-                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
+                    style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: AppDesignTokens.textCharcoal),
                   ),
                 ),
               ],
@@ -749,11 +880,13 @@ class _TechniqueOfTheWeekSheet extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: AppDesignTokens.ctaTerracotta,
                   foregroundColor: scheme.onTertiary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18)),
                 ),
                 child: Text(
                   'Got it',
-                  style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900),
+                  style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.onTertiary, fontWeight: FontWeight.w900),
                 ),
               ),
             ),
@@ -791,11 +924,14 @@ class _RecentlyCookedSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Recently Cooked', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+          Text('Recently Cooked',
+              style: theme.textTheme.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w900)),
           const SizedBox(height: 4),
           Text(
             'The last few recipes you\'ve actually cooked.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 16),
           if (entries.isEmpty)
@@ -805,11 +941,13 @@ class _RecentlyCookedSheet extends StatelessWidget {
               decoration: BoxDecoration(
                 color: scheme.surfaceContainerHighest.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: scheme.outline.withValues(alpha: 0.14)),
+                border:
+                    Border.all(color: scheme.outline.withValues(alpha: 0.14)),
               ),
               child: Text(
                 'Nothing here yet — recipes you open in Cook Mode will show up here.',
-                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: scheme.onSurfaceVariant),
               ),
             )
           else
@@ -828,7 +966,8 @@ class _RecentlyCookedSheet extends StatelessWidget {
 }
 
 class _RecentlyCookedRow extends StatelessWidget {
-  const _RecentlyCookedRow({required this.entry, required this.relativeTime, required this.onTap});
+  const _RecentlyCookedRow(
+      {required this.entry, required this.relativeTime, required this.onTap});
 
   final RecentlyCookedEntry entry;
   final String relativeTime;
@@ -857,19 +996,25 @@ class _RecentlyCookedRow extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: HomeDashboardScreen._deepForest.withValues(alpha: 0.10),
+                  color:
+                      HomeDashboardScreen._deepForest.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(Icons.history_rounded, color: HomeDashboardScreen._deepForest),
+                child: const Icon(Icons.history_rounded,
+                    color: HomeDashboardScreen._deepForest),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(entry.recipe.title, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900)),
+                    Text(entry.recipe.title,
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
                     const SizedBox(height: 2),
-                    Text(relativeTime, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+                    Text(relativeTime,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: scheme.onSurfaceVariant)),
                   ],
                 ),
               ),
@@ -883,7 +1028,12 @@ class _RecentlyCookedRow extends StatelessWidget {
 }
 
 class _HeaderSection extends StatelessWidget {
-  const _HeaderSection({required this.displayName, required this.dietLabel, required this.allergyLabels, required this.onProfileTap, required this.onGetIdeaTap});
+  const _HeaderSection(
+      {required this.displayName,
+      required this.dietLabel,
+      required this.allergyLabels,
+      required this.onProfileTap,
+      required this.onGetIdeaTap});
 
   final String displayName;
   final String dietLabel;
@@ -907,7 +1057,8 @@ class _HeaderSection extends StatelessWidget {
                 children: [
                   Text(
                     'Hello, $displayName!',
-                    style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900, height: 1.1),
+                    style: theme.textTheme.headlineMedium
+                        ?.copyWith(fontWeight: FontWeight.w900, height: 1.1),
                   ),
                   const SizedBox(height: 6),
                   Row(
@@ -916,7 +1067,8 @@ class _HeaderSection extends StatelessWidget {
                       Expanded(
                         child: Text(
                           'What are we cooking today? I’ll keep it fast, simple, and delicious.',
-                          style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant, height: 1.35),
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                              color: scheme.onSurfaceVariant, height: 1.35),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -936,9 +1088,13 @@ class _HeaderSection extends StatelessWidget {
           runSpacing: 10,
           children: [
             _PreferenceBadge(icon: Icons.restaurant_rounded, label: dietLabel),
-            ...allergyLabels.take(4).map((a) => _PreferenceBadge(icon: Icons.warning_amber_rounded, label: a)),
+            ...allergyLabels.take(4).map((a) =>
+                _PreferenceBadge(icon: Icons.warning_amber_rounded, label: a)),
             if (allergyLabels.length > 4)
-              _PreferenceBadge(icon: Icons.more_horiz_rounded, label: '+${allergyLabels.length - 4} more', isActive: false),
+              _PreferenceBadge(
+                  icon: Icons.more_horiz_rounded,
+                  label: '+${allergyLabels.length - 4} more',
+                  isActive: false),
           ],
         ),
       ],
@@ -973,14 +1129,18 @@ class _GetIdeaChipState extends State<_GetIdeaChip> {
         onTapUp: (_) => setState(() => _pressed = false),
         child: OutlinedButton.icon(
           onPressed: widget.onTap,
-          icon: Icon(Icons.lightbulb_outline_rounded, size: 18, color: scheme.secondary),
-          label: Text('Get an idea', style: theme.textTheme.labelLarge?.copyWith(color: scheme.secondary, fontWeight: FontWeight.w900)),
+          icon: Icon(Icons.lightbulb_outline_rounded,
+              size: 18, color: scheme.secondary),
+          label: Text('Get an idea',
+              style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.secondary, fontWeight: FontWeight.w900)),
           style: OutlinedButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             minimumSize: const Size(0, 38),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             side: BorderSide(color: scheme.secondary.withValues(alpha: 0.35)),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999)),
             foregroundColor: scheme.secondary,
           ).copyWith(
             overlayColor: const WidgetStatePropertyAll(Colors.transparent),
@@ -1038,7 +1198,8 @@ class _ProfileAvatarButtonState extends State<_ProfileAvatarButton> {
 }
 
 class _PreferenceBadge extends StatelessWidget {
-  const _PreferenceBadge({required this.icon, required this.label, this.isActive = true});
+  const _PreferenceBadge(
+      {required this.icon, required this.label, this.isActive = true});
 
   final IconData icon;
   final String label;
@@ -1049,9 +1210,11 @@ class _PreferenceBadge extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    final background = isActive ? AppDesignTokens.ctaTerracotta : scheme.surface;
+    final background =
+        isActive ? AppDesignTokens.ctaTerracotta : scheme.surface;
     final contentColor = isActive ? Colors.white : scheme.onSurfaceVariant;
-    final borderColor = isActive ? Colors.transparent : scheme.outline.withValues(alpha: 0.18);
+    final borderColor =
+        isActive ? Colors.transparent : scheme.outline.withValues(alpha: 0.18);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1065,7 +1228,9 @@ class _PreferenceBadge extends StatelessWidget {
         children: [
           Icon(icon, size: 16, color: contentColor),
           const SizedBox(width: 8),
-          Text(label, style: theme.textTheme.labelMedium?.copyWith(color: contentColor, fontWeight: FontWeight.w800)),
+          Text(label,
+              style: theme.textTheme.labelMedium
+                  ?.copyWith(color: contentColor, fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -1119,11 +1284,12 @@ class _ActionCardState extends State<_ActionCard> {
           child: Container(
             decoration: BoxDecoration(
               color: scheme.surface,
-              borderRadius: BorderRadius.circular(HomeDashboardScreen._cardRadius),
+              borderRadius:
+                  BorderRadius.circular(HomeDashboardScreen._cardRadius),
               border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
               boxShadow: HomeDashboardScreen._cardShadow,
             ),
-              padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: SingleChildScrollView(
               physics: const NeverScrollableScrollPhysics(),
               child: Column(
@@ -1138,12 +1304,16 @@ class _ActionCardState extends State<_ActionCard> {
                         decoration: BoxDecoration(
                           color: widget.accent.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: widget.accent.withValues(alpha: 0.18)),
+                          border: Border.all(
+                              color: widget.accent.withValues(alpha: 0.18)),
                         ),
-                        child: Icon(widget.icon, color: widget.accent, size: 22),
+                        child:
+                            Icon(widget.icon, color: widget.accent, size: 22),
                       ),
                       const Spacer(),
-                      Text(widget.emoji, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+                      Text(widget.emoji,
+                          style: theme.textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900)),
                     ],
                   ),
                   const SizedBox(height: 10),
@@ -1160,7 +1330,8 @@ class _ActionCardState extends State<_ActionCard> {
                     widget.subtitle,
                     maxLines: 4,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.35),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant, height: 1.35),
                   ),
                 ],
               ),
@@ -1192,11 +1363,18 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
     // Try to pull something like:
     // - "Dish name: ..."
     // - "1) Dish name: ..."
-    final lines = trimmed.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    final lines = trimmed
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
     if (lines.isEmpty) return null;
     final firstLine = lines.first;
 
-    final labeled = RegExp(r'^(?:\d+\)|[-•])?\s*(?:dish name|recipe|suggestion)\s*[:\-]\s*(.+)$', caseSensitive: false).firstMatch(firstLine);
+    final labeled = RegExp(
+            r'^(?:\d+\)|[-•])?\s*(?:dish name|recipe|suggestion)\s*[:\-]\s*(.+)$',
+            caseSensitive: false)
+        .firstMatch(firstLine);
     if (labeled != null) {
       final value = (labeled.group(1) ?? '').trim();
       return value.isEmpty ? null : value;
@@ -1207,7 +1385,8 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
     if (firstSentence.isEmpty) return null;
 
     // Avoid storing generic pattern-only openers like "You've been on...".
-    if (firstSentence.toLowerCase().startsWith("you've been") || firstSentence.toLowerCase().startsWith('you have been')) {
+    if (firstSentence.toLowerCase().startsWith("you've been") ||
+        firstSentence.toLowerCase().startsWith('you have been')) {
       if (lines.length >= 2) {
         final candidate = lines[1].split(RegExp(r'[.!?]')).first.trim();
         return candidate.isEmpty ? null : candidate;
@@ -1227,7 +1406,8 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
           .where((e) => e.isNotEmpty)
           .take(5)
           .toList();
-      final ingredientsText = ingredients.isEmpty ? '' : ' — ${ingredients.join(', ')}';
+      final ingredientsText =
+          ingredients.isEmpty ? '' : ' — ${ingredients.join(', ')}';
       lines.add('• $title$ingredientsText');
     }
 
@@ -1247,13 +1427,15 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
     final isPro = await EntitlementService.instance.isPro();
     if (!mounted) return;
     if (!isPro) {
-      final todayCount = await UsageCapService.instance.getTodayCount(UsageFeature.chefHarrisChat);
+      final todayCount = await UsageCapService.instance
+          .getTodayCount(UsageFeature.chefHarrisChat);
       if (!mounted) return;
       if (todayCount >= kChefHarrisChatFreeDailyLimit) {
         await UpgradePromptSheet.show(
           context,
           title: "You've used today's free Chef suggestions",
-          message: 'Free plan includes $kChefHarrisChatFreeDailyLimit Chef Harris suggestion${kChefHarrisChatFreeDailyLimit == 1 ? '' : 's'} a day. Upgrade to Pro for unlimited.',
+          message:
+              'Free plan includes $kChefHarrisChatFreeDailyLimit Chef Harris suggestion${kChefHarrisChatFreeDailyLimit == 1 ? '' : 's'} a day. Upgrade to Pro for unlimited.',
         );
         if (!mounted) return;
         // If this was the very first load (sheet just opened, nothing to
@@ -1278,7 +1460,8 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
       // (CLAUDE.md roadmap item 11 follow-up, 2026-08-13) — see
       // fridge_clearer_screen.dart for the full rationale. Only the cap
       // CHECK above stays gated on isPro.
-      unawaited(UsageCapService.instance.increment(UsageFeature.chefHarrisChat));
+      unawaited(
+          UsageCapService.instance.increment(UsageFeature.chefHarrisChat));
       // Recipe variety (CLAUDE.md roadmap item 13): `history` above only
       // informs the pattern-matching prompt when there are 3+ entries — it
       // never actually forbids the AI from repeating a past dish. Routes
@@ -1351,15 +1534,18 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
                 decoration: BoxDecoration(
                   color: scheme.secondary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: scheme.secondary.withValues(alpha: 0.18)),
+                  border: Border.all(
+                      color: scheme.secondary.withValues(alpha: 0.18)),
                 ),
-                child: Icon(Icons.restaurant_rounded, color: scheme.secondary, size: 20),
+                child: Icon(Icons.restaurant_rounded,
+                    color: scheme.secondary, size: 20),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'Chef Harris Suggestion',
-                  style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900),
                 ),
               ),
               IconButton(
@@ -1374,7 +1560,8 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
           const SizedBox(height: 10),
           Text(
             'One tap. One idea. Zero stress.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 14),
           if (_loading)
@@ -1385,10 +1572,13 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
                   SizedBox(
                     height: 18,
                     width: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2.4, color: scheme.secondary),
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.4, color: scheme.secondary),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(child: Text('Chef Harris is thinking…', style: theme.textTheme.bodyMedium)),
+                  Expanded(
+                      child: Text('Chef Harris is thinking…',
+                          style: theme.textTheme.bodyMedium)),
                 ],
               ),
             )
@@ -1401,7 +1591,10 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
                 borderRadius: BorderRadius.circular(AppRadius.lg),
                 border: Border.all(color: scheme.error.withValues(alpha: 0.25)),
               ),
-              child: Text(_error!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onErrorContainer, fontWeight: FontWeight.w700)),
+              child: Text(_error!,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.onErrorContainer,
+                      fontWeight: FontWeight.w700)),
             )
           else
             ConstrainedBox(
@@ -1415,10 +1608,12 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
                 decoration: BoxDecoration(
                   color: scheme.primary.withValues(alpha: 0.05),
                   borderRadius: BorderRadius.circular(AppRadius.lg),
-                  border: Border.all(color: scheme.outline.withValues(alpha: 0.12)),
+                  border:
+                      Border.all(color: scheme.outline.withValues(alpha: 0.12)),
                 ),
                 child: SingleChildScrollView(
-                  child: Text(_text ?? '', style: theme.textTheme.bodyMedium?.copyWith(height: 1.5)),
+                  child: Text(_text ?? '',
+                      style: theme.textTheme.bodyMedium?.copyWith(height: 1.5)),
                 ),
               ),
             ),
@@ -1429,10 +1624,15 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
                 child: OutlinedButton.icon(
                   onPressed: _loading ? null : _load,
                   icon: Icon(Icons.refresh_rounded, color: scheme.secondary),
-                  label: Text('Try another', style: TextStyle(color: scheme.secondary, fontWeight: FontWeight.w900)),
+                  label: Text('Try another',
+                      style: TextStyle(
+                          color: scheme.secondary,
+                          fontWeight: FontWeight.w900)),
                   style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: scheme.secondary.withValues(alpha: 0.45)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    side: BorderSide(
+                        color: scheme.secondary.withValues(alpha: 0.45)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18)),
                     foregroundColor: scheme.secondary,
                   ),
                 ),
@@ -1442,11 +1642,14 @@ class _ChefSuggestionSheetState extends State<_ChefSuggestionSheet> {
                 child: FilledButton.icon(
                   onPressed: _close,
                   icon: const Icon(Icons.check_rounded, color: Colors.white),
-                  label: const Text('Got it', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+                  label: const Text('Got it',
+                      style: TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w900)),
                   style: FilledButton.styleFrom(
                     backgroundColor: HomeDashboardScreen._deepForest,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18)),
                   ),
                 ),
               ),

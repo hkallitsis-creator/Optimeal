@@ -84,20 +84,24 @@ void main() {
   });
 
   group('ledgerVerdictCopy', () {
-    test('every non-counted, non-demo verdict has copy, all lines under 15 words', () {
+    test('every non-counted, non-demo verdict has exactly one line of copy, under 15 words', () {
       for (final verdict in [
         LedgerVerdict.notCountedWrongSurface,
         LedgerVerdict.notCountedReCook,
         LedgerVerdict.writeFailedQueued,
       ]) {
-        final lines = ledgerVerdictCopy[verdict];
-        expect(lines, isNotNull, reason: '$verdict must have copy');
-        expect(lines, isNotEmpty);
-        for (final line in lines!) {
-          final wordCount = line.trim().split(RegExp(r'\s+')).length;
-          expect(wordCount, lessThan(15), reason: '"$line" is $wordCount words');
-        }
+        final line = ledgerVerdictCopy[verdict];
+        expect(line, isNotNull, reason: '$verdict must have copy');
+        expect(line!.trim(), isNotEmpty);
+        final wordCount = line.trim().split(RegExp(r'\s+')).length;
+        expect(wordCount, lessThan(15), reason: '"$line" is $wordCount words');
       }
+    });
+
+    test('notCountedWrongSurface copy names only Fridge Clearer, not the removed Fridge Countdown', () {
+      final line = ledgerVerdictCopy[LedgerVerdict.notCountedWrongSurface]!;
+      expect(line, contains('Fridge Clearer'));
+      expect(line, isNot(contains('Fridge Countdown')));
     });
 
     test('counted and demo have no copy entry (handled by other UI, or no UI)', () {

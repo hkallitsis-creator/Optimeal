@@ -77,20 +77,18 @@ LedgerVerdict selectLedgerVerdict({
   return LedgerVerdict.writeFailedQueued;
 }
 
-/// User-facing verdict copy, one or two short lines. Plain, warm,
-/// non-technical — every line under 15 words. [LedgerVerdict.counted] has
-/// no entry here: the existing celebration sheet already serves as that
-/// verdict (CLAUDE.md instruction — keep it, don't duplicate it).
-/// [LedgerVerdict.demo] also has no entry: no verdict is shown for it at all.
-const Map<LedgerVerdict, List<String>> ledgerVerdictCopy = {
-  LedgerVerdict.notCountedWrongSurface: [
-    "This wasn't cooked straight from your fridge, so it's not logged as a rescue.",
-    'Fridge Clearer cooks are.',
-  ],
-  LedgerVerdict.notCountedReCook: [
-    "Already counted the first time you cooked this — re-cooks don't count again.",
-  ],
-  LedgerVerdict.writeFailedQueued: [
-    "Your rescue is saved and will sync automatically — nothing's lost.",
-  ],
+/// User-facing verdict copy, exactly one short line per verdict (device-test
+/// round F3 — the verdict sheet is one icon, one line, one CTA now, not a
+/// multi-line explainer). Plain, warm, non-technical, under 15 words.
+/// [LedgerVerdict.counted] has no entry here: the existing celebration
+/// sheet already serves as that verdict (CLAUDE.md instruction — keep it,
+/// don't duplicate it). [LedgerVerdict.demo] also has no entry: no verdict
+/// is shown for it at all.
+const Map<LedgerVerdict, String> ledgerVerdictCopy = {
+  LedgerVerdict.notCountedWrongSurface:
+      "This wasn't cooked from your fridge — only Fridge Clearer cooks count.",
+  LedgerVerdict.notCountedReCook:
+      "Already counted the first time you cooked this — re-cooks don't count again.",
+  LedgerVerdict.writeFailedQueued:
+      "Your rescue is saved and will sync automatically — nothing's lost.",
 };
