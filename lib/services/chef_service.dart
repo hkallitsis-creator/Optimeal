@@ -658,6 +658,33 @@ class ChefService {
     final confidence = profile?.kitchenConfidence.name;
     final servings = profile?.householdServings;
 
+    // Prompt-caching prefix (perf investigation, prompt-caching roadmap item):
+    // these two blocks are pure static text — identical on every call
+    // regardless of surface or user — so they're written FIRST, immediately
+    // after the (already fully static) system message, before anything
+    // that varies by user/profile/query. OpenAI's automatic caching is
+    // strictly prefix-based: real dev measurements showed genuinely varying
+    // content ANYWHERE before a block breaks caching for that whole call,
+    // even when a large identical block follows. Wording is byte-identical
+    // to before — only the write order moved.
+    userMessage.writeln('Reply with concise, actionable steps.');
+    if (!forceJsonObject) {
+      // Defensive: the system persona includes JSON-structured recipe rules.
+      // For conversational/SOS/suggestion calls, explicitly forbid JSON —
+      // and markdown (device-test round F9: the Chef Harris Suggestion
+      // sheet renders this text in a plain Text widget, so literal
+      // **asterisks**/markdown syntax leaked straight to the screen).
+      // Cheaper than adding a markdown renderer: every conversational
+      // surface (SOS, Suggestion) shares this one instruction.
+      userMessage.writeln(
+        'Respond in plain, friendly conversational prose only — do NOT return JSON, code fences, field-labeled output, or any markdown formatting '
+        '(no **bold**, no _italics_, no bullet/numbered list syntax, no # headers), even if this looks like a recipe request. '
+        'If you need to list steps or points, write them as plain sentences on their own line instead.',
+      );
+      userMessage.writeln('End with: Happy cooking! — Chef Harris');
+    }
+    userMessage.writeln();
+
     if (name.isNotEmpty ||
         allergies.isNotEmpty ||
         diet != null ||
@@ -723,22 +750,6 @@ class ChefService {
     if (name.isNotEmpty) {
       userMessage.writeln(
           'Address the user as "$name" naturally (not in every sentence).');
-    }
-    userMessage.writeln('Reply with concise, actionable steps.');
-    if (!forceJsonObject) {
-      // Defensive: the system persona includes JSON-structured recipe rules.
-      // For conversational/SOS/suggestion calls, explicitly forbid JSON —
-      // and markdown (device-test round F9: the Chef Harris Suggestion
-      // sheet renders this text in a plain Text widget, so literal
-      // **asterisks**/markdown syntax leaked straight to the screen).
-      // Cheaper than adding a markdown renderer: every conversational
-      // surface (SOS, Suggestion) shares this one instruction.
-      userMessage.writeln(
-        'Respond in plain, friendly conversational prose only — do NOT return JSON, code fences, field-labeled output, or any markdown formatting '
-        '(no **bold**, no _italics_, no bullet/numbered list syntax, no # headers), even if this looks like a recipe request. '
-        'If you need to list steps or points, write them as plain sentences on their own line instead.',
-      );
-      userMessage.writeln('End with: Happy cooking! — Chef Harris');
     }
 
     // Bucket B: pull in only the curriculum drawers relevant to this
@@ -878,11 +889,19 @@ class ChefService {
       final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ?? 0;
       final completionTokens =
           (usage['completion_tokens'] as num?)?.toInt() ?? 0;
+      // Prompt-caching investigation (2026-08-18) — surfaces the same
+      // usage.prompt_tokens_details.cached_tokens the edge function now
+      // persists into api_call_cost_log, so this is visible from a device
+      // debug console too, not only the DB.
+      final cachedTokens =
+          (usage['prompt_tokens_details'] is Map ? (usage['prompt_tokens_details'] as Map)['cached_tokens'] as num? : null)
+              ?.toInt();
       final costUsd = (promptTokens / 1000000) * inputPerM +
           (completionTokens / 1000000) * outputPerM;
       debugPrint(
         'ChefService.askChefHarris cost: model=$resolvedModel prompt_tokens=$promptTokens '
-        'completion_tokens=$completionTokens est_cost_usd=\$${costUsd.toStringAsFixed(5)} (real token counts)',
+        'cached_tokens=${cachedTokens ?? 'unknown'} completion_tokens=$completionTokens '
+        'est_cost_usd=\$${costUsd.toStringAsFixed(5)} (real token counts)',
       );
     } else {
       final estInputTokens = (fallbackInputChars / 4).round();

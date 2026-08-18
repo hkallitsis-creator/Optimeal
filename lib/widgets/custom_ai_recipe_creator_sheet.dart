@@ -65,18 +65,20 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
   }
 
 
+  // Prompt-caching prefix (perf investigation, prompt-caching roadmap
+  // item): the JSON schema + guidelines + vocabulary declarations below
+  // are pure static text — byte-identical on every Custom AI Recipe
+  // Creator call — so they're listed FIRST, ahead of the user's craving
+  // text and portion count, which genuinely vary every call. Real dev
+  // measurements on the equivalent Fridge Clearer prompt (3 consecutive
+  // calls, 3 different variable blocks) showed this exact reorder taking
+  // cached_tokens from 0 on every call to ~2,944/~3,575 (~82%). Wording is
+  // byte-identical to before — only list order moved. The one guideline
+  // line that embeds `$portions` mid-sentence stays with the variable
+  // block below, since its own text can't be made static without changing
+  // wording.
   String _buildPrompt(String userPrompt, int portions) {
     return [
-      'Create a cook-mode recipe based on this user request:',
-      '"$userPrompt"',
-      '',
-      'Constraints:',
-      '- Swiss home kitchen assumptions (standard pan/pot, oven optional).',
-      '- Be precise: specify quantities, heat levels, and timings.',
-      '- Keep steps short and scannable for Cook Mode cards.',
-      '- Add ONE witty Chef Harris checkpoint note somewhere in a bullet (not in the step title).',
-      '- Number of people this recipe should serve: $portions',
-      '',
       'Return ONLY valid JSON (no markdown, no extra text) matching this schema:',
       '{',
       '  "title": "...",',
@@ -101,12 +103,22 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
       'Guidelines:',
       '- Use 4–9 steps. Each step duration 1–15 minutes.',
       '- Heat must be one of the allowed values (default "medium").',
-      '- Each ingredient must be a structured object with a numeric "amount" and a "unit", realistically scaled for $portions people. Use "piece", "clove", or "slice" as the unit for whole/countable items instead of inventing a weight.',
       '- Each ingredient\'s "cut" field must be exactly one of: ${ingredientCutVocabulary.join(', ')}. This is a closed set — do not write a free-text cut description in this field, and do not invent a value outside this list. Use "none" if the ingredient needs no cutting. Step bullets may still describe the cut in your own voice; the "cut" field is the structured record of it.',
       '- SEQUENCING RULE (non-negotiable): each step\'s "ingredients_added" field must list every ingredient that step actually adds to the pan/pot, using the exact "name" values from the ingredients list above. If the ingredients in "ingredients_added" do not have comparable cook times, you may not add them at the same moment. Either stagger them within the step — the bullets must state exactly what goes in first, how many minutes it cooks alone, and when each remaining ingredient joins — or split them across separate steps instead. WHAT NOT TO DO: do not write a step like "thinly slice potatoes and onions, then cook together" — thinly sliced onion softens in a few minutes while thinly sliced potato needs several minutes longer to cook through, so the onion will burn or turn bitter well before the potato is done. Instead, add the potato first and give it a real head start before the onion joins, or cook them as two separate steps.',
       '- The "curriculum_lesson_id" field is required and must name the ONE curriculum technique or topic this recipe actually teaches, chosen exactly from this list: ${ChefService.curriculumDrawerKeys.join(', ')}. Base the choice on what the steps physically do, not the dish\'s theme, name, or ingredients — a recipe built from fridge leftovers is not "food_storage" just because using up leftovers is this app\'s whole point; if the steps sauté something, the answer is "sauteing"; if they braise, it\'s "braising"; and so on. Choose the single best match for the technique actually demonstrated.',
       '- Each step\'s "sensory_cue" field is required and must be exactly one key from this closed list, or "no_cue" if genuinely nothing fits — never invent a value outside this list, and never leave the field out:\n${ChefService.sensoryCuePromptDeclaration}\nSelection rule: a "readiness" cue belongs on a step where something first enters a pan, oven, or pot. A "doneness" cue belongs on the step where cooking actually completes. A "during" cue is only for a step whose entire instruction IS heat management (e.g. "keep it at a steady sizzle") — not any step that merely happens to involve heat. WHAT NOT TO DO: do not declare "juices_run_clear" (a doneness cue) on a step that only says "season the chicken and set it aside" — nothing has finished cooking yet, so "no_cue" is correct there; save "juices_run_clear" for the step where the chicken actually finishes cooking through.',
       '- Each step\'s "technique_diagram_id" field is optional — include it only when the step visually demonstrates one of these five techniques, using exactly one key, or "none"/omit otherwise. Most steps should have no value here:\n${ChefService.techniqueDiagramPromptDeclaration}',
+      '',
+      'Create a cook-mode recipe based on this user request:',
+      '"$userPrompt"',
+      '',
+      'Constraints:',
+      '- Swiss home kitchen assumptions (standard pan/pot, oven optional).',
+      '- Be precise: specify quantities, heat levels, and timings.',
+      '- Keep steps short and scannable for Cook Mode cards.',
+      '- Add ONE witty Chef Harris checkpoint note somewhere in a bullet (not in the step title).',
+      '- Number of people this recipe should serve: $portions',
+      '- Each ingredient must be a structured object with a numeric "amount" and a "unit", realistically scaled for $portions people. Use "piece", "clove", or "slice" as the unit for whole/countable items instead of inventing a weight.',
     ].join('\n');
   }
 

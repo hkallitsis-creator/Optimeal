@@ -47,6 +47,11 @@ async function logCallCost(row: {
   inputRatePerMillion: number;
   outputRatePerMillion: number;
   costUsd: number;
+  // Prompt-caching investigation (2026-08-18) — see
+  // usage.prompt_tokens_details.cached_tokens below. Null (not 0) when the
+  // upstream response has no usage detail to read this from, so a null
+  // row never falsely claims "measured and confirmed zero cached tokens".
+  cachedTokens: number | null;
 }) {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -71,7 +76,8 @@ async function logCallCost(row: {
         completion_tokens: row.completionTokens,
         input_rate_per_million: row.inputRatePerMillion,
         output_rate_per_million: row.outputRatePerMillion,
-        cost_usd: row.costUsd
+        cost_usd: row.costUsd,
+        cached_tokens: row.cachedTokens
       })
     });
     if (!res.ok) {
@@ -154,9 +160,15 @@ Deno.serve(async (req) => {
       const rates = OPENAI_PRICING_PER_MILLION_TOKENS[resolvedModel] ?? OPENAI_PRICING_PER_MILLION_TOKENS['gpt-4o'];
       const promptTokens = usage.prompt_tokens ?? 0;
       const completionTokens = usage.completion_tokens ?? 0;
+      // Prompt-caching investigation (2026-08-18): OpenAI reports how much
+      // of prompt_tokens was served from its automatic prefix cache here.
+      // Undefined on an older/non-caching-aware response shape — normalized
+      // to null (not 0) so a row this field is genuinely missing from is
+      // never confused with a row that measured a real zero.
+      const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? null;
       const estCostUsd = (promptTokens / 1_000_000) * rates.input + (completionTokens / 1_000_000) * rates.output;
       console.log(
-        `ask-chef-harris: model=${resolvedModel} prompt_tokens=${promptTokens} completion_tokens=${completionTokens} est_cost_usd=${estCostUsd.toFixed(5)}`
+        `ask-chef-harris: model=${resolvedModel} prompt_tokens=${promptTokens} cached_tokens=${cachedTokens} completion_tokens=${completionTokens} est_cost_usd=${estCostUsd.toFixed(5)}`
       );
 
       const userId = decodeUserIdFromAuthHeader(req.headers.get('Authorization'));
@@ -172,7 +184,8 @@ Deno.serve(async (req) => {
         completionTokens,
         inputRatePerMillion: rates.input,
         outputRatePerMillion: rates.output,
-        costUsd: estCostUsd
+        costUsd: estCostUsd,
+        cachedTokens
       });
     }
 
