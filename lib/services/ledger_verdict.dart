@@ -85,7 +85,7 @@ LedgerVerdict selectLedgerVerdict({
 const Map<LedgerVerdict, List<String>> ledgerVerdictCopy = {
   LedgerVerdict.notCountedWrongSurface: [
     "This wasn't cooked straight from your fridge, so it's not logged as a rescue.",
-    'Fridge Clearer and Fridge Countdown cooks are.',
+    'Fridge Clearer cooks are.',
   ],
   LedgerVerdict.notCountedReCook: [
     "Already counted the first time you cooked this — re-cooks don't count again.",

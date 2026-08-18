@@ -443,7 +443,7 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Fridge Clearer and Fridge Countdown cooks count toward it.',
+                  'Fridge Clearer cooks count toward it.',
                   style: theme.textTheme.labelSmall?.copyWith(color: HomeDashboardScreen._deepForest, fontWeight: FontWeight.w700, height: 1.35),
                 ),
                 const SizedBox(height: 4),
