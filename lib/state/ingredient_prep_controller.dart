@@ -9,7 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// This is intentionally lightweight:
 /// - Local persistence via SharedPreferences
 /// - Normalized by lowercased, trimmed label
-/// - ChangeNotifier so Cook Mode + Weekly Planner can stay in sync live
+/// - ChangeNotifier so any consumer stays live in sync. Currently only
+///   Cook Mode's ingredient checklist reads this — it originally also
+///   backed the Weekly Planner shopping list's two-way sync, but that
+///   feature was cut (17 Aug decision); nothing shopping-list-specific
+///   ever lived in this file, so nothing needed removing here.
 class IngredientPrepController extends ChangeNotifier {
   static const String _prefsKey = 'prepped_ingredients_v1';
 

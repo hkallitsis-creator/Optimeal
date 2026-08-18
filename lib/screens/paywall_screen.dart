@@ -272,8 +272,8 @@ class _FeaturesCard extends StatelessWidget {
             const SizedBox(height: AppDesignTokens.spaceSM),
             const _FeatureRow(
               icon: Icons.checklist_rounded,
-              title: 'Synced Weekly Planner + Shopping List',
-              subtitle: 'Two-way updates so you buy what you still need.',
+              title: 'Weekly Planner',
+              subtitle: 'Plan Mon–Sun and prep ingredients ahead of time.',
             ),
             const SizedBox(height: AppDesignTokens.spaceSM),
             const _FeatureRow(

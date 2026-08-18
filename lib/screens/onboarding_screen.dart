@@ -160,9 +160,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 _OnboardingSlide(
                   icon: Icons.checklist_rounded,
-                  headline: "Weekly Planner + Shopping List stay in sync. Two-way.",
+                  headline: "Weekly Planner keeps every meal mapped out, Monday to Sunday.",
                   subtext:
-                      "Plan once, shop once, nothing forgotten. Mark ingredients as prepped and your list updates live — like it should.",
+                      "Drop recipes into any day, then jump straight into Cook Mode when it's time to cook.",
                 ),
               ],
             ),

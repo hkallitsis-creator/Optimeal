@@ -366,8 +366,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         HomeDashboardScreen._showCustomAiRecipeCreator(context),
                   ),
                   _ActionCard(
-                    title: 'Weekly Plan & Shop',
-                    subtitle: 'Plan Mon–Sun & export shopping lists.',
+                    title: 'Weekly Planner',
+                    subtitle: 'Plan Mon–Sun and stay on track.',
                     emoji: '📅',
                     accent: HomeDashboardScreen._terracotta,
                     icon: Icons.calendar_month_rounded,
