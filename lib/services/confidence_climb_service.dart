@@ -7,7 +7,12 @@ import 'package:optimeal/widgets/curriculum_drawer_content.dart';
 
 /// Result of evaluating Confidence Climb after a cook session completes.
 class ConfidenceClimbEvaluation {
-  const ConfidenceClimbEvaluation({this.celebrationLine, this.tierUpTarget});
+  const ConfidenceClimbEvaluation({
+    this.celebrationLine,
+    this.tierUpTarget,
+    this.repeatTechniqueIds = const <String>{},
+    this.comfortableTechniqueIds = const <String>{},
+  });
 
   /// An occasional, non-blocking line for the existing post-cook
   /// celebration flow (e.g. "3rd time this month using Braising — you're
@@ -19,6 +24,17 @@ class ConfidenceClimbEvaluation {
   /// tier they haven't already been offered — the caller should show the
   /// one-time "Move up to X?" prompt for this tier.
   final KitchenConfidence? tierUpTarget;
+
+  /// Subset of the just-cooked technique ids the user has completed before
+  /// (docs/decisions_2026-08-17.md item 7) — What You Learned appends the
+  /// "Are you comfortable with this technique?" question for these, and
+  /// only these. Empty on a technique's first-ever completion.
+  final Set<String> repeatTechniqueIds;
+
+  /// Subset of the just-cooked technique ids already marked comfortable —
+  /// the caller should exclude these from What You Learned entirely (see
+  /// [ConfidenceClimbService.loadComfortableTechniqueIds]).
+  final Set<String> comfortableTechniqueIds;
 }
 
 /// Confidence Climb: turns technique reps already tracked via
@@ -31,6 +47,14 @@ class ConfidenceClimbEvaluation {
 /// See CLAUDE.md Retention Features Backlog item 2.
 class ConfidenceClimbService {
   static const _promptedPrefsKeyPrefix = 'confidence_climb_prompted_v1_';
+
+  /// Technique ids the user has told Confidence Climb they're comfortable
+  /// with (docs/decisions_2026-08-17.md item 7) — What You Learned's
+  /// confidence question stops appearing for these, and the sheet itself
+  /// stops surfacing on a cook whose only technique(s) are all comfortable.
+  /// Reversible from Confidence Climb (see [markNotComfortable]) — comfort
+  /// is expected to regress, not just grow.
+  static const _comfortableTechniquesPrefsKey = 'confidence_climb_comfortable_techniques_v1';
 
   /// Reps of technique-tagged cooking required before offering a tier-up.
   /// Deliberately counts ANY tagged technique rep (not one specific
@@ -116,6 +140,21 @@ class ConfidenceClimbService {
         }
       }
 
+      // --- Confidence question eligibility (docs/decisions_2026-08-17.md
+      // item 7): a technique is a "repeat" if it appears more than once in
+      // history — the just-finished cook's own entry is already recorded
+      // there (CookSessionStorageService.addRecentlyCooked is called when
+      // Cook Mode opens, not when it completes), so count > 1 means at
+      // least one PRIOR completion exists, not just this one. All-time,
+      // not month-scoped, unlike the celebration line above.
+      final repeatTechniqueIds = <String>{};
+      for (final techniqueId in justCookedTechniqueIds) {
+        final count = history.where((e) => (e.recipe.curriculumLessonIds ?? const []).contains(techniqueId)).length;
+        if (count > 1) repeatTechniqueIds.add(techniqueId);
+      }
+      final comfortableTechniqueIds = await loadComfortableTechniqueIds();
+      final comfortableAmongJustCooked = justCookedTechniqueIds.toSet().intersection(comfortableTechniqueIds);
+
       // --- Tier-up: total reps of ANY tagged technique, all-time (within
       // the 20-entry rolling history), gated so it's offered at most once
       // per tier transition.
@@ -128,11 +167,45 @@ class ConfidenceClimbService {
         }
       }
 
-      return ConfidenceClimbEvaluation(celebrationLine: celebrationLine, tierUpTarget: tierUpTarget);
+      return ConfidenceClimbEvaluation(
+        celebrationLine: celebrationLine,
+        tierUpTarget: tierUpTarget,
+        repeatTechniqueIds: repeatTechniqueIds,
+        comfortableTechniqueIds: comfortableAmongJustCooked,
+      );
     } catch (e) {
       debugPrint('ConfidenceClimbService.evaluate failed (continuing): $e');
       return const ConfidenceClimbEvaluation();
     }
+  }
+
+  /// All technique ids currently marked comfortable. Fails open (empty set)
+  /// — a read failure here should suppress nothing, never crash Cook Mode.
+  Future<Set<String>> loadComfortableTechniqueIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return (prefs.getStringList(_comfortableTechniquesPrefsKey) ?? const []).toSet();
+    } catch (e) {
+      debugPrint('ConfidenceClimbService.loadComfortableTechniqueIds failed: $e');
+      return const {};
+    }
+  }
+
+  Future<void> markComfortable(String techniqueId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = (prefs.getStringList(_comfortableTechniquesPrefsKey) ?? const []).toSet();
+    current.add(techniqueId);
+    await prefs.setStringList(_comfortableTechniquesPrefsKey, current.toList());
+  }
+
+  /// Reverses [markComfortable] — confidence regresses, and Confidence
+  /// Climb is meant to let a user say so (docs/decisions_2026-08-17.md
+  /// item 7 / CLAUDE.md Package E3).
+  Future<void> markNotComfortable(String techniqueId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = (prefs.getStringList(_comfortableTechniquesPrefsKey) ?? const []).toSet();
+    current.remove(techniqueId);
+    await prefs.setStringList(_comfortableTechniquesPrefsKey, current.toList());
   }
 
   Future<bool> _alreadyPrompted(KitchenConfidence fromTier) async {

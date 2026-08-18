@@ -750,7 +750,11 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         currentConfidence: currentConfidence,
       );
 
-      if (ids.isNotEmpty) {
+      // Techniques already marked comfortable (docs/decisions_2026-08-17.md
+      // item 7 / CLAUDE.md Package E) never surface in What You Learned
+      // again, even to ask the confidence question a second time.
+      final visibleIds = ids.where((id) => !confidenceEvaluation.comfortableTechniqueIds.contains(id)).toList(growable: false);
+      if (visibleIds.isNotEmpty) {
         if (!mounted) return;
         await AppBottomSheet.show<void>(
           context: context,
@@ -761,8 +765,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
               borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
           builder: (ctx) => SafeArea(
             child: WhatYouLearnedSheet(
-                curriculumLessonIds: ids,
-                confidenceLine: confidenceEvaluation.celebrationLine),
+                curriculumLessonIds: visibleIds,
+                confidenceLine: confidenceEvaluation.celebrationLine,
+                repeatTechniqueIds: confidenceEvaluation.repeatTechniqueIds),
           ),
         );
       }

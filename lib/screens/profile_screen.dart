@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:optimeal/models/user_profile.dart';
+import 'package:optimeal/services/confidence_climb_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
+import 'package:optimeal/widgets/curriculum_drawer_content.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -31,6 +33,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final Set<String> _allergies = <String>{};
   int _servings = 1;
   bool _saving = false;
+
+  final _confidenceClimbService = ConfidenceClimbService();
+  Set<String> _comfortableTechniqueIds = const <String>{};
 
   static const List<({String label, String code})> _languageOptions = <({String label, String code})>[
     (label: 'English', code: 'en'),
@@ -69,6 +74,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ..clear()
       ..addAll(profile.allergies.map((e) => e.trim()).where((e) => e.isNotEmpty));
     _servings = profile.householdServings.clamp(1, 4);
+    _loadComfortableTechniques();
+  }
+
+  Future<void> _loadComfortableTechniques() async {
+    final ids = await _confidenceClimbService.loadComfortableTechniqueIds();
+    if (!mounted) return;
+    setState(() => _comfortableTechniqueIds = ids);
+  }
+
+  /// Confidence regresses — Confidence Climb lets the user say so
+  /// (docs/decisions_2026-08-17.md item 7 / CLAUDE.md Package E3).
+  Future<void> _unmarkComfortable(String techniqueId) async {
+    setState(() => _comfortableTechniqueIds = _comfortableTechniqueIds.difference({techniqueId}));
+    await _confidenceClimbService.markNotComfortable(techniqueId);
   }
 
   @override
@@ -311,6 +330,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     subtitle: 'Shorter instructions, more freedom.',
                     onChanged: (v) => setState(() => _confidence = v),
                   ),
+                  if (_comfortableTechniqueIds.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'Comfortable with',
+                      style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tap to say you\'re not quite there yet — confidence can dip back down.',
+                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final id in _comfortableTechniqueIds)
+                          InputChip(
+                            label: Text(resolveDrawerEntry(id)?.title ?? id),
+                            onDeleted: () => _unmarkComfortable(id),
+                            deleteIcon: const Icon(Icons.replay_rounded, size: 16),
+                            backgroundColor: AppDesignTokens.deepForest.withValues(alpha: 0.08),
+                            side: BorderSide(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                            labelStyle: const TextStyle(color: AppDesignTokens.deepForest, fontWeight: FontWeight.w700),
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   Container(
                     padding: const EdgeInsets.all(14),
