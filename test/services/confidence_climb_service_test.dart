@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -90,6 +92,50 @@ void main() {
       );
 
       expect(result.comfortableTechniqueIds, {'braising'});
+    });
+
+    test('an unstamped (pre-F11) legacy history entry is excluded from repeat counting', () async {
+      // Simulates a pre-migration cook_session_history_v1 record: same
+      // shape CookSessionStorageService writes, but with no "source" key
+      // at all — exactly what a real record written before device-test
+      // round F11 looks like on disk. Written directly to SharedPreferences
+      // rather than via addRecentlyCooked, since that method always stamps
+      // new writes now.
+      final legacyEntry = {
+        'recipe': {
+          'title': 'Legacy Braised Lamb',
+          'ingredients': ['Salt'],
+          'steps': [
+            {
+              'title': 'Cook',
+              'heat': 'medium',
+              'durationMinutes': 5,
+              'bullets': ['Cook it.'],
+            }
+          ],
+          'curriculumLessonIds': ['braising'],
+        },
+        'cookedAt': DateTime.now().toIso8601String(),
+        // No 'source' key — the pre-F11 shape.
+      };
+      SharedPreferences.setMockInitialValues({
+        'cook_session_history_v1': jsonEncode([legacyEntry]),
+      });
+
+      final sessionStorage = CookSessionStorageService();
+      // A stamped entry for the same technique, via the normal write path.
+      await sessionStorage.addRecentlyCooked(_recipe('Braised Pork (new)', ['braising']));
+
+      final service = ConfidenceClimbService(sessionStorage: sessionStorage);
+      final result = await service.evaluate(
+        justCookedTechniqueIds: ['braising'],
+        currentConfidence: KitchenConfidence.beginner,
+      );
+
+      // Only 1 stamped entry exists (this cook's own) — the unstamped
+      // legacy entry must not count toward "prior completions", so this
+      // is NOT a repeat despite 2 raw entries existing in storage.
+      expect(result.repeatTechniqueIds, isEmpty);
     });
 
     test('empty justCookedTechniqueIds returns an empty evaluation, including empty sets', () async {

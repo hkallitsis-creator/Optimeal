@@ -45,7 +45,14 @@ class _YourMonthCardState extends State<YourMonthCard> {
     final dismissed = prefs.getBool(_dismissPrefsKey(now)) ?? false;
 
     final ingredientsRescued = await _ledgerService.getMonthlyIngredientsRescuedCount();
-    final history = await _sessionStorage.loadCookHistory();
+    // Forward-only filter (device-test round F11) — see the matching
+    // comment in ConfidenceClimbService.evaluate. Only "new techniques" /
+    // "most-cooked" stats are affected; the ingredient-rescue count above
+    // is sourced from LedgerService, unrelated to this history store.
+    final allHistory = await _sessionStorage.loadCookHistory();
+    final history = allHistory
+        .where((e) => e.source == CookSessionStorageService.declaredKeySource)
+        .toList(growable: false);
 
     final thisMonthTechniqueIds = <String>{};
     final beforeThisMonthTechniqueIds = <String>{};

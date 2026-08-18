@@ -118,7 +118,16 @@ class ConfidenceClimbService {
     try {
       if (justCookedTechniqueIds.isEmpty) return const ConfidenceClimbEvaluation();
 
-      final history = await _sessionStorage.loadCookHistory();
+      // Forward-only filter (device-test round F11): only entries stamped
+      // as declared-key source are aggregated, so pre-migration
+      // keyword-matched entries (which used the same curriculumLessonIds
+      // field name under the old matching pipeline) can't mix into the
+      // same count. Nothing is deleted or retroactively guessed — an
+      // unstamped entry is simply excluded from this aggregation.
+      final allHistory = await _sessionStorage.loadCookHistory();
+      final history = allHistory
+          .where((e) => e.source == CookSessionStorageService.declaredKeySource)
+          .toList(growable: false);
       final now = DateTime.now();
 
       // --- Celebration line: same-technique reps within this calendar month.

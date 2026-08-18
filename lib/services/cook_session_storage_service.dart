@@ -30,6 +30,17 @@ class CookSessionStorageService {
   static const _recentlyCookedMaxEntries = 3;
   static const _cookHistoryMaxEntries = 20;
 
+  /// [RecentlyCookedEntry.source] value stamped on every history entry
+  /// written from now on (device-test round F11). Marks that this entry's
+  /// `recipe.curriculumLessonIds` came from the model's own declared
+  /// `curriculum_lesson_id` field, not the older keyword-matching pipeline
+  /// that populated the same field name before that migration. Entries
+  /// written before this stamp existed decode with `source == null` —
+  /// forward-only, nothing retroactively guessed or deleted; consumers
+  /// that need to distinguish (ConfidenceClimbService, YourMonthCard) do
+  /// so by filtering on this field themselves, not by adding logic here.
+  static const String declaredKeySource = 'declared_key';
+
   // ---- Active session -----------------------------------------------
 
   Future<void> saveActiveSession({
@@ -136,7 +147,7 @@ class CookSessionStorageService {
         existing.where((e) => e.recipe.title.trim().toLowerCase() != normalizedTitle).toList();
 
     final updated = [
-      RecentlyCookedEntry(recipe: recipe, cookedAt: DateTime.now()),
+      RecentlyCookedEntry(recipe: recipe, cookedAt: DateTime.now(), source: declaredKeySource),
       ...deduped,
     ].take(_recentlyCookedMaxEntries).toList();
 
@@ -144,6 +155,7 @@ class CookSessionStorageService {
         .map((e) => {
               'recipe': _recipeToJson(e.recipe),
               'cookedAt': e.cookedAt.toIso8601String(),
+              'source': e.source,
             })
         .toList();
 
@@ -161,7 +173,7 @@ class CookSessionStorageService {
           .toList();
 
       final updated = [
-        RecentlyCookedEntry(recipe: recipe, cookedAt: DateTime.now()),
+        RecentlyCookedEntry(recipe: recipe, cookedAt: DateTime.now(), source: declaredKeySource),
         ...deduped,
       ].take(_cookHistoryMaxEntries).toList();
 
@@ -169,6 +181,7 @@ class CookSessionStorageService {
           .map((e) => {
                 'recipe': _recipeToJson(e.recipe),
                 'cookedAt': e.cookedAt.toIso8601String(),
+                'source': e.source,
               })
           .toList();
 
@@ -192,6 +205,7 @@ class CookSessionStorageService {
             return RecentlyCookedEntry(
               recipe: _recipeFromJson(m['recipe'] as Map<String, dynamic>),
               cookedAt: DateTime.parse(m['cookedAt'] as String),
+              source: m['source'] as String?,
             );
           })
           .toList();
@@ -217,6 +231,7 @@ class CookSessionStorageService {
             RecentlyCookedEntry(
               recipe: _recipeFromJson(m['recipe'] as Map<String, dynamic>),
               cookedAt: DateTime.parse(m['cookedAt'] as String),
+              source: m['source'] as String?,
             ),
           );
         } catch (_) {
@@ -231,6 +246,7 @@ class CookSessionStorageService {
             .map((e) => {
                   'recipe': _recipeToJson(e.recipe),
                   'cookedAt': e.cookedAt.toIso8601String(),
+                  'source': e.source,
                 })
             .toList();
         await effectivePrefs.setString(_cookHistoryKey, jsonEncode(json));
@@ -345,10 +361,15 @@ class ActiveCookSession {
   final DateTime lastUpdatedAt;
 }
 
-/// One entry in the Recently Cooked list.
+/// One entry in the Recently Cooked list or the longer-running cook
+/// history list.
 class RecentlyCookedEntry {
-  const RecentlyCookedEntry({required this.recipe, required this.cookedAt});
+  const RecentlyCookedEntry({required this.recipe, required this.cookedAt, this.source});
 
   final CookModeRecipePayload recipe;
   final DateTime cookedAt;
+
+  /// See [CookSessionStorageService.declaredKeySource]. Null for any entry
+  /// written before that stamp existed.
+  final String? source;
 }
