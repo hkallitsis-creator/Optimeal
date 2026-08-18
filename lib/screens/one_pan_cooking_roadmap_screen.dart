@@ -13,6 +13,7 @@ import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/confidence_climb_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/fridge_nudge_service.dart';
+import 'package:optimeal/services/fridge_clearer_entry_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_verdict.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
@@ -220,6 +221,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// before that item decoupled the sequence from the ledger result.
   bool _cookSequenceStarted = false;
   final _ledgerService = LedgerService();
+  final _fridgeClearerEntryService = FridgeClearerEntryService();
   final _sessionStorage = CookSessionStorageService();
   final _confidenceClimbService = ConfidenceClimbService();
 
@@ -682,12 +684,37 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       final surface = _surface;
       final shouldLog =
           surface != null && surface.isRescueEligible && !_isReCook;
+      final isGenuineFridgeClearerCompletion =
+          surface == CookModeSurface.fridgeClearer && !_isReCook;
 
-      // Fridge nudge cancellation (docs/decisions_2026-08-17.md item 5): a
-      // genuine Fridge Clearer completion means these ingredients did get
-      // used — cancel the pending "did you forget?" nudge, if any.
-      if (surface == CookModeSurface.fridgeClearer && !_isReCook) {
-        unawaited(FridgeNudgeService.instance.onRelevantCookCompleted());
+      // What the user actually entered into Fridge Clearer for this
+      // recipe (device-test round F12/F13) — read once here, since both
+      // the leftover-nudge check below and the Waste Ledger provenance
+      // rule need exactly the same list. Empty for any surface other than
+      // Fridge Clearer, or if nothing was ever recorded.
+      final enteredIngredients = isGenuineFridgeClearerCompletion
+          ? await _fridgeClearerEntryService.peekEnteredIngredients()
+          : const <String>[];
+
+      // Fridge nudge cancellation + leftover check (docs/decisions_2026-08-17.md
+      // item 5; two-case spec is Harris's 18 Aug decision): a genuine
+      // Fridge Clearer completion cancels any pending case-1/case-2 nudge,
+      // then checks whether any entered ingredient never made it into this
+      // recipe and schedules a case-2 leftover nudge if so. Awaited (not
+      // unawaited) and in this order so the cancellation can never race
+      // ahead of — and wipe out — the case-2 nudge the second call just
+      // scheduled.
+      if (isGenuineFridgeClearerCompletion) {
+        await FridgeNudgeService.instance.onRelevantCookCompleted();
+        await FridgeNudgeService.instance.onFridgeClearerCookCompleted(
+          enteredIngredients: enteredIngredients,
+          cookedIngredients: _ingredients,
+        );
+        // Consumed — enteredIngredients above already captured what's
+        // needed for both the nudge check and the ledger/share-card
+        // provenance rule below, so a later, unrelated completion can't
+        // accidentally reuse this generation's entered list.
+        unawaited(_fridgeClearerEntryService.clear());
       }
 
       LedgerCompletionSuccess? ledgerSuccess;
@@ -695,7 +722,8 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         final result = await _ledgerService.logCompletion(
           source: surface.ledgerSourceValue!,
           recipeId: null,
-          ingredientsRescued: _ingredients,
+          enteredIngredients: enteredIngredients,
+          cookedIngredients: _ingredients,
         );
         if (result is LedgerCompletionSuccess) {
           ledgerSuccess = result;
@@ -807,10 +835,13 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
 
       // Post-cook shareable recap card (CLAUDE.md roadmap item 7) — a
       // growth/acquisition feature, shown right after the two celebration
-      // sheets close. Uses freshProduceOnly(_ingredients) directly — the
-      // same filtering logCompletion applies internally — rather than the
-      // ledger result, so it renders identically whether or not this cook
-      // actually logged (CLAUDE.md Roadmap item 28).
+      // sheets close. Uses the same provenance rule logCompletion applies
+      // internally (LedgerService.computeRescuedIngredients) — rather than
+      // the ledger result — so it renders identically whether or not this
+      // cook actually logged (CLAUDE.md Roadmap item 28). enteredIngredients
+      // is empty for any non-Fridge-Clearer surface, so this now correctly
+      // shows nothing for a cook with no real "entered ingredient"
+      // provenance at all, rather than crediting the recipe's own choices.
       if (!mounted) return;
       final techniqueTitles =
           resolveDrawerEntries(ids).map((e) => e.title).toList(growable: false);
@@ -823,7 +854,10 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(
           child: PostCookShareCardSheet(
-            ingredientsRescued: LedgerService.freshProduceOnly(_ingredients),
+            ingredientsRescued: LedgerService.computeRescuedIngredients(
+              enteredIngredients: enteredIngredients,
+              cookedIngredients: _ingredients,
+            ),
             techniqueTitles: techniqueTitles,
           ),
         ),

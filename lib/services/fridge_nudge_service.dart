@@ -139,25 +139,33 @@ void handleFridgeNudgeResponse(NotificationResponse response) {
   }
 }
 
-/// Schedules and cancels the single "unused Fridge Clearer ingredients"
-/// nudge notification (docs/decisions_2026-08-17.md item 5).
+/// Schedules and cancels the two-case "unused Fridge Clearer ingredients"
+/// nudge (docs/decisions_2026-08-17.md item 5; two-case spec is Harris's
+/// 18 Aug decision, superseding the original single-case version):
 ///
-/// Trigger: a successful Fridge Clearer recipe generation — the earliest
-/// durable, already-existing event in the code for "the user committed to
-/// some fridge ingredients." FridgeClearerScreen itself never persists the
-/// raw ingredient selection (it's ephemeral UI state), so there is nothing
-/// earlier to hook. See CLAUDE.md Package D0 report for the full reasoning
-/// and the alternatives considered.
+/// - **Case 1 (uncooked generation)**: a recipe was generated but never
+///   cooked — nudge 2 days after generation, copy unchanged from the
+///   original single-case version.
+/// - **Case 2 (leftover ingredients)**: a recipe WAS cooked, but some of
+///   the ingredients the user entered never appeared in the cooked
+///   recipe's own ingredient list — nudge 2 days after that cook, naming
+///   only the leftover ingredients (entered minus the recipe's own list).
 ///
-/// Cancellation: a genuine (non-re-cook) completed cook on
-/// CookModeSurface.fridgeClearer, called from
-/// OnePanCookingRoadmapScreen._logCookSessionCompletion.
+/// Both share the same hard rules: one nudge per trigger, never repeated,
+/// never rescheduled for the same ingredients (a fresh case-1 trigger
+/// simply replaces any still-pending case-1 nudge, same for case 2 — no
+/// stacking), and both are cancelled by a subsequent genuine (non-re-cook)
+/// completed cook on CookModeSurface.fridgeClearer (see
+/// OnePanCookingRoadmapScreen._logCookSessionCompletion).
 ///
-/// Only one nudge is ever pending at a time — scheduling a new one (from a
-/// fresh generation) replaces any still-pending nudge under the same
-/// notification id, rather than stacking multiple. This is a deliberate
-/// simplification: flag for Harris to veto if separate per-generation
-/// nudges are wanted instead.
+/// Case 2 needs to know what the user actually entered at generation
+/// time — the Waste Ledger provenance rule (F13) independently needs the
+/// exact same thing at the exact same moment, so that's persisted once,
+/// centrally, by [FridgeClearerEntryService] rather than duplicated here.
+/// [onFridgeClearerCookCompleted] takes the entered list as a parameter;
+/// the caller (OnePanCookingRoadmapScreen._logCookSessionCompletion) reads
+/// it once from that shared store and passes it to both this service and
+/// LedgerService.
 class FridgeNudgeService {
   FridgeNudgeService({FridgeNudgeScheduler? scheduler})
       : _scheduler = scheduler ?? FlutterLocalNotificationsFridgeNudgeScheduler();
@@ -167,14 +175,32 @@ class FridgeNudgeService {
   final FridgeNudgeScheduler _scheduler;
 
   static const int notificationId = 9001;
+  static const int leftoverNotificationId = 9002;
   static const String _pendingSinceKey = 'fridge_nudge_pending_since_v1';
+  static const String _leftoverPendingSinceKey = 'fridge_nudge_leftover_pending_since_v1';
   static const Duration nudgeDelay = Duration(days: 2);
 
-  /// One short, warm-voiced copy line — kept here so it's reviewable in one
-  /// place. Under 15 words.
+  /// Case 1 copy — unchanged from the original single-case version. One
+  /// short, warm-voiced line, under 15 words.
   static const String notificationTitle = "Still got those fridge ingredients?";
   static const String notificationBody =
       "Let's use them before they turn — Fridge Clearer or a quick AI recipe.";
+
+  /// Case 2 title — fixed, since the ingredients themselves go in the body.
+  static const String leftoverNotificationTitle = "A few fridge ingredients didn't make the cut";
+
+  /// Case 2 body: names the specific leftover ingredients (max 3, "+N more"
+  /// beyond that so this stays a plausible single-line notification body
+  /// regardless of list length). Warm, under 15 words for a typical
+  /// 1-3-ingredient case.
+  static String leftoverNotificationBody(List<String> leftoverIngredients) {
+    final names = leftoverIngredients.map((e) => e.trim()).where((e) => e.isNotEmpty).toList(growable: false);
+    if (names.isEmpty) return "Let's use up what's left before it turns.";
+    final shown = names.take(3).toList();
+    final extra = names.length - shown.length;
+    final list = extra > 0 ? '${shown.join(', ')}, +$extra more' : shown.join(', ');
+    return "$list didn't make it into your last cook — let's use them up.";
+  }
 
   /// Call once at app startup (see main.dart). Wires the tap/action
   /// callback only — never requests permission or schedules anything.
@@ -188,6 +214,8 @@ class FridgeNudgeService {
   }
 
   /// Call once, right after a Fridge Clearer recipe generation succeeds.
+  /// Schedules the case-1 nudge (copy unchanged from the original
+  /// single-case version).
   Future<void> onFridgeClearerIngredientsGenerated() async {
     try {
       await _scheduler.requestPermission();
@@ -205,20 +233,86 @@ class FridgeNudgeService {
     }
   }
 
-  /// Call once a genuine (non-re-cook) Fridge Clearer cook completes.
-  Future<void> onRelevantCookCompleted() async {
-    if (!await hasPendingNudge()) return;
+  /// Call once a genuine (non-re-cook) Fridge Clearer cook completes, with
+  /// the ingredients the user originally entered for this generation
+  /// ([enteredIngredients], from [FridgeClearerEntryService]) and that
+  /// recipe's own ingredient list as actually cooked ([cookedIngredients]
+  /// — post-scaling display strings are fine, matching is substring-based).
+  /// If any entered ingredient never appears in [cookedIngredients],
+  /// schedules the case-2 leftover nudge naming only those. A no-op if
+  /// [enteredIngredients] is empty or nothing is left over.
+  Future<void> onFridgeClearerCookCompleted({
+    required List<String> enteredIngredients,
+    required List<String> cookedIngredients,
+  }) async {
     try {
-      await _scheduler.cancel(notificationId);
+      final leftovers = _leftoverIngredients(enteredIngredients, cookedIngredients);
+      if (leftovers.isEmpty) return;
+
+      await _scheduler.requestPermission();
+      final fireTime = DateTime.now().add(nudgeDelay);
+      await _scheduler.scheduleAt(
+        fireTime,
+        id: leftoverNotificationId,
+        title: leftoverNotificationTitle,
+        body: leftoverNotificationBody(leftovers),
+      );
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_pendingSinceKey);
+      await prefs.setString(_leftoverPendingSinceKey, fireTime.toIso8601String());
     } catch (e) {
-      debugPrint('FridgeNudgeService: failed to cancel nudge: $e');
+      debugPrint('FridgeNudgeService: failed to schedule leftover nudge: $e');
+    }
+  }
+
+  /// Entered ingredients not matched (case-insensitive substring) against
+  /// any of [cookedIngredients] — e.g. entered "zucchini" is considered
+  /// used if any cooked-ingredient string contains "zucchini" (cooked
+  /// strings carry amounts/prep notes, e.g. "300g Zucchini (diced)").
+  static List<String> _leftoverIngredients(List<String> entered, List<String> cookedIngredients) {
+    final cookedLower = cookedIngredients.map((e) => e.toLowerCase()).toList(growable: false);
+    final leftovers = <String>[];
+    for (final raw in entered) {
+      final e = raw.trim();
+      if (e.isEmpty) continue;
+      final lower = e.toLowerCase();
+      final usedInRecipe = cookedLower.any((c) => c.contains(lower));
+      if (!usedInRecipe) leftovers.add(e);
+    }
+    return leftovers;
+  }
+
+  /// Call once a genuine (non-re-cook) Fridge Clearer cook completes —
+  /// cancels any still-pending case-1 AND case-2 nudge. Called before
+  /// [onFridgeClearerCookCompleted] so a brand-new case-2 nudge scheduled
+  /// by that call isn't immediately cancelled by this one.
+  Future<void> onRelevantCookCompleted() async {
+    if (await hasPendingNudge()) {
+      try {
+        await _scheduler.cancel(notificationId);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_pendingSinceKey);
+      } catch (e) {
+        debugPrint('FridgeNudgeService: failed to cancel nudge: $e');
+      }
+    }
+    if (await hasPendingLeftoverNudge()) {
+      try {
+        await _scheduler.cancel(leftoverNotificationId);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_leftoverPendingSinceKey);
+      } catch (e) {
+        debugPrint('FridgeNudgeService: failed to cancel leftover nudge: $e');
+      }
     }
   }
 
   Future<bool> hasPendingNudge() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.containsKey(_pendingSinceKey);
+  }
+
+  Future<bool> hasPendingLeftoverNudge() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.containsKey(_leftoverPendingSinceKey);
   }
 }

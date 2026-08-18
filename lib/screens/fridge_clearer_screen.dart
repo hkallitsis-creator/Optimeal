@@ -12,6 +12,7 @@ import 'package:optimeal/services/chef_recipe_parser.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
+import 'package:optimeal/services/fridge_clearer_entry_service.dart';
 import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
@@ -577,8 +578,12 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       // recipe is the earliest durable signal that these ingredients were
       // "entered" — schedules a single 2-day-out nudge if the user never
       // actually cooks it.
-      unawaited(
-          FridgeNudgeService.instance.onFridgeClearerIngredientsGenerated());
+      unawaited(FridgeNudgeService.instance.onFridgeClearerIngredientsGenerated());
+      // Persists the entered ingredients (device-test round F12/F13) so a
+      // later completed cook can check for leftovers and the Waste Ledger
+      // can apply its provenance rule — see FridgeClearerEntryService.
+      unawaited(FridgeClearerEntryService()
+          .recordEnteredIngredients(_selectedIngredients.toList(growable: false)));
 
       setState(() {
         _precisionCards = cards;

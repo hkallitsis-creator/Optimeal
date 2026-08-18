@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:optimeal/data/pantry_staples.dart';
 import 'package:optimeal/services/pending_ledger_write_service.dart';
 
 /// Result of [LedgerService.logCompletion] or [LedgerService.retryPendingWrite].
@@ -60,60 +61,35 @@ class LedgerService {
 
   static const String _weeklyEventsPrefsKey = 'waste_ledger_weekly_events_v1';
 
-  /// Pantry staples: long-shelf-life items that aren't "at risk of going to
-  /// waste" the way fresh produce is. These are excluded from the Waste
-  /// Ledger's "ingredients rescued" count.
-  static const List<String> _pantryStapleKeywords = [
-    // Oils & fats
-    'olive oil', 'vegetable oil', 'sunflower oil', 'canola oil', 'sesame oil',
-    'oil', 'butter', 'ghee',
-    // Seasoning
-    'salt', 'pepper', 'peppercorn', 'sugar', 'brown sugar', 'honey',
-    'aromat', 'bouillon', 'stock cube', 'seasoning',
-    // Dry pantry / grains / starches
-    'pasta', 'spaghetti', 'penne', 'rice', 'flour', 'breadcrumb',
-    'lentil', 'dried bean', 'chickpea', 'couscous', 'quinoa', 'oat',
-    // Vinegars / condiments with long shelf life
-    'vinegar', 'soy sauce', 'mustard', 'ketchup', 'mayonnaise',
-    // Baking
-    'baking powder', 'baking soda', 'yeast', 'vanilla extract',
-    // Canned / jarred
-    'canned', 'tinned', 'jar of', 'stock (carton)',
-    // Dried spices/herbs (as opposed to fresh herbs)
-    'dried basil', 'dried oregano', 'dried thyme', 'paprika', 'cumin',
-    'cinnamon', 'nutmeg', 'chili flakes', 'chilli flakes', 'bay leaf',
-    // Long-life alliums & roots: weeks of shelf life, not "at risk" the way
-    // fresh produce is.
-    'onion', 'garlic', 'shallot', 'ginger', 'potato', 'sweet potato',
-  ];
-
-
-  /// True if [ingredient] looks like a long-shelf-life pantry staple rather
-  /// than fresh produce at risk of going to waste.
-  static bool _isPantryStaple(String ingredient) {
-    final lower = ingredient.toLowerCase();
-
-    // Spring/green onions are fresh and perishable, unlike storage onions —
-    // don't let the bare "onion" keyword below catch them.
-    final isFreshOnion =
-        lower.contains('spring onion') || lower.contains('green onion') || lower.contains('scallion') || lower.contains('salad onion');
-
-    for (final keyword in _pantryStapleKeywords) {
-      if (keyword == 'onion' && isFreshOnion) continue;
-      if (lower.contains(keyword)) return true;
-    }
-    return false;
-  }
-
-  /// Filters a raw ingredient list down to fresh produce only, dropping
-  /// pantry staples like oil, salt, pepper, pasta, rice, etc.
-  static List<String> freshProduceOnly(List<String> ingredients) {
+  /// The Waste Ledger provenance rule (device-test round F13, Harris's
+  /// decision — replaces the old `freshProduceOnly` blocklist entirely).
+  /// An ingredient counts as rescued iff and only if:
+  /// (a) the user entered it into Fridge Clearer ([enteredIngredients]),
+  /// (b) it appears in the completed cook ([cookedIngredients]), AND
+  /// (c) it is not on the [pantryStaples] exclusion list.
+  ///
+  /// Counting is the default; exclusion is the exception — the inverse
+  /// bias from the old blocklist, which grew to wrongly exclude genuinely
+  /// perishable items (potatoes, onions) just for having a longer shelf
+  /// life than lettuce. An ingredient the recipe added on its own (never
+  /// entered by the user) never counts, regardless of how fresh it is —
+  /// rule (a) alone excludes it.
+  ///
+  /// [cookedIngredients] matching is case-insensitive substring (cooked
+  /// strings carry amounts/prep notes, e.g. "300g Zucchini (diced)").
+  static List<String> computeRescuedIngredients({
+    required List<String> enteredIngredients,
+    required List<String> cookedIngredients,
+  }) {
+    final cookedLower = cookedIngredients.map((e) => e.toLowerCase()).toList(growable: false);
     final out = <String>[];
-    for (final i in ingredients) {
-      final s = i.trim();
-      if (s.isEmpty) continue;
-      if (_isPantryStaple(s)) continue;
-      out.add(s);
+    for (final raw in enteredIngredients) {
+      final e = raw.trim();
+      if (e.isEmpty) continue;
+      if (isPantryStaple(e)) continue;
+      final appearsInCook = cookedLower.any((c) => c.contains(e.toLowerCase()));
+      if (!appearsInCook) continue;
+      out.add(e);
     }
     return out;
   }
@@ -144,8 +120,8 @@ class LedgerService {
   }
 
   /// Logs one completion event to `waste_ledger_events` and returns
-  /// updated totals, counting only fresh produce (pantry staples are
-  /// excluded).
+  /// updated totals, counting only ingredients that pass the provenance
+  /// rule — see [computeRescuedIngredients].
   ///
   /// [source] must be one of: 'fridge_clearer', 'cook_mode', 'custom_ai_recipe',
   /// 'fridge_countdown'. In practice, callers should use
@@ -160,7 +136,8 @@ class LedgerService {
   Future<LedgerCompletionResult> logCompletion({
     required String source,
     String? recipeId,
-    required List<String> ingredientsRescued,
+    required List<String> enteredIngredients,
+    required List<String> cookedIngredients,
   }) async {
     final user = _db.auth.currentUser;
     if (user == null) {
@@ -171,22 +148,25 @@ class LedgerService {
       );
     }
 
-    final freshIngredients = freshProduceOnly(ingredientsRescued);
-    final ingredientsCount = freshIngredients.length;
+    final rescuedIngredients = computeRescuedIngredients(
+      enteredIngredients: enteredIngredients,
+      cookedIngredients: cookedIngredients,
+    );
+    final ingredientsCount = rescuedIngredients.length;
 
     // Persist locally for weekly rollups (no backend dependency). This is
     // best-effort and should never block the main logging flow. Must run
     // exactly once per real rescue attempt — never called from the retry
     // path (_performLedgerInsert / retryPendingWrite), which would
     // otherwise append a second local weekly event for the same rescue.
-    await _appendWeeklyEvent(freshIngredients);
+    await _appendWeeklyEvent(rescuedIngredients);
 
     final idempotencyKey = _generateIdempotencyKey();
     final payload = <String, dynamic>{
       'user_id': user.id,
       'source': source,
       'recipe_id': (recipeId != null && recipeId.trim().isNotEmpty) ? recipeId.trim() : null,
-      'ingredients_rescued': freshIngredients,
+      'ingredients_rescued': rescuedIngredients,
       'ingredients_count': ingredientsCount,
       'idempotency_key': idempotencyKey,
     };
