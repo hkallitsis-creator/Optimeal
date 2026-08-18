@@ -10,10 +10,14 @@ import 'package:optimeal/services/chef_service.dart';
 
 /// Identifies which UI surface triggered a [parseChefRecipeJson] call, for
 /// logging only — has no effect on parsing behavior.
+///
+/// `fridgeCountdown` was removed as a member (housekeeping session,
+/// follow-up to commit 8f23fcc) — this enum is never serialized, only ever
+/// constructed fresh at a call site, and `FridgeCountdownSheet` (the only
+/// caller that ever passed this value) was already deleted.
 enum ChefRecipeSurface {
   fridgeClearer,
   customAiRecipeCreator,
-  fridgeCountdown,
 }
 
 const List<String> _defaultFallbackIngredients = ['Salt', 'Pepper', 'Cooking oil'];

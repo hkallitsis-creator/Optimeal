@@ -42,26 +42,35 @@ enum RoadmapTechnique { bakeTrayRoast, sautePanFry, stirFry }
 /// [isRescueEligible] — and, for eligible surfaces, what
 /// `waste_ledger_events.source` value to record. See CLAUDE.md Roadmap
 /// item 28.
+///
+/// `fridgeCountdown` was removed as a member (housekeeping session,
+/// follow-up to commit 8f23fcc) — `FridgeCountdownSheet`, the only code
+/// that could ever construct it, was deleted; nothing else in the app
+/// ever constructs it, and the one place that deserializes a stored
+/// surface name (`CookSessionStorageService.loadActiveSession`, via
+/// `CookModeSurface.values.byName`) already falls back to null on any
+/// unrecognized name, which is exactly how a historical
+/// `source='fridge_countdown'` waste_ledger_events row (never read back
+/// into the app anyway) or a long-expired active-session record would be
+/// handled. The `fridge_items` table and its DB CHECK constraint covering
+/// that historical value were left untouched — database changes are a
+/// separate, later decision.
 enum CookModeSurface {
   fridgeClearer,
-  fridgeCountdown,
   customAiRecipeCreator,
   weeklyPlanner;
 
   /// Whether a genuine (non-re-cook) completion from this surface counts as
-  /// a real ingredient rescue. Only Fridge Clearer and Fridge Countdown
-  /// generate a recipe directly from what's actually in the user's fridge —
-  /// Custom AI Recipe Creator and Weekly Planner don't, by design decision.
-  bool get isRescueEligible =>
-      this == CookModeSurface.fridgeClearer ||
-      this == CookModeSurface.fridgeCountdown;
+  /// a real ingredient rescue. Only Fridge Clearer generates a recipe
+  /// directly from what's actually in the user's fridge — Custom AI
+  /// Recipe Creator and Weekly Planner don't, by design decision.
+  bool get isRescueEligible => this == CookModeSurface.fridgeClearer;
 
   /// The `waste_ledger_events.source` value for this surface. Null for
   /// non-rescue-eligible surfaces — `logCompletion` is never called for
   /// those, so no value is ever needed or written.
   String? get ledgerSourceValue => switch (this) {
         CookModeSurface.fridgeClearer => 'fridge_clearer',
-        CookModeSurface.fridgeCountdown => 'fridge_countdown',
         CookModeSurface.customAiRecipeCreator ||
         CookModeSurface.weeklyPlanner =>
           null,

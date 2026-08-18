@@ -59,15 +59,6 @@ void main() {
         ),
         LedgerVerdict.counted,
       );
-      expect(
-        selectLedgerVerdict(
-          hasPayload: true,
-          isReCook: false,
-          surface: CookModeSurface.fridgeCountdown,
-          result: const LedgerCompletionSuccess(ingredientsRescued: 1, ingredientsRescuedList: ['Spinach'], lifetimeIngredientsRescued: null),
-        ),
-        LedgerVerdict.counted,
-      );
     });
 
     test('a fresh, rescue-eligible cook with a failed write is writeFailedQueued', () {

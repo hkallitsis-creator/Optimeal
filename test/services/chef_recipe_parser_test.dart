@@ -136,7 +136,7 @@ void main() {
         raw: noGearRaw,
         portions: 2,
         fallbackTitle: 'Fallback',
-        surface: ChefRecipeSurface.fridgeCountdown,
+        surface: ChefRecipeSurface.customAiRecipeCreator,
         useGenericFallbacks: true,
       );
       expect(result, isNotNull);
@@ -167,7 +167,7 @@ void main() {
         raw: raw,
         portions: 2,
         fallbackTitle: 'Use it tonight',
-        surface: ChefRecipeSurface.fridgeCountdown,
+        surface: ChefRecipeSurface.customAiRecipeCreator,
       );
       expect(result, isNotNull);
       expect(result!.title, 'Use it tonight');
@@ -200,7 +200,7 @@ void main() {
         raw: withDescriptionRaw,
         portions: 2,
         fallbackTitle: 'Fallback',
-        surface: ChefRecipeSurface.fridgeCountdown,
+        surface: ChefRecipeSurface.customAiRecipeCreator,
         readDescription: false,
       );
       expect(result, isNotNull);
