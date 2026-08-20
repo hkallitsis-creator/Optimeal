@@ -118,7 +118,47 @@ request or when a task needs the "why."
   injectable `SavedRecipesBackend` so the logic is unit-testable with no
   live DB and no anonymous sign-in (currently disabled on dev). Cooking a
   saved recipe touches it; cooking an unsaved one never silently saves it.
-  **No UI yet** — `/my-recipes` is still the placeholder screen.
+  Cook Mode calls `onRecipeCooked` on completion.
+- **Saved-recipes UI (2026-08-20).** `MyRecipesScreen` (`/my-recipes`) is the
+  real screen now — two sections separated by **card weight, not labels**:
+  saved recipes are full cream cards (shadow + border), recently-cooked is a
+  log of quiet rows with no fill. Saved cards show the leaf badge only for
+  Fridge Clearer origin, and either the derived times-cooked count or "not
+  cooked yet" — never "0 times". Ordering is the service's
+  (`last_touched_at` desc) and is **never re-sorted in the UI**. Two empty
+  states: full-screen only when nothing is saved AND nothing cooked,
+  otherwise an inline empty-saved panel above the log. This screen MAY
+  scroll — the no-scroll rule is Home's alone.
+  **One bookmark, one mechanism, everywhere**:
+  `lib/widgets/save_recipe_bookmark_button.dart` — filled = saved, outline =
+  not saved, tap toggles. It subscribes to
+  `SavedRecipesService.watchSavedRecipes` on the shared singleton, so a
+  toggle on one surface updates every other open surface with no plumbing.
+  Placed on recipe details (app bar), recently-cooked rows, and both
+  post-cook verdict cards. The recently-cooked row's bookmark **is** the
+  promote-from-history action — it saves that row's stored payload, which is
+  what `saveFromHistory` does, so provenance rides along. Do not add a
+  second, bespoke save affordance anywhere.
+  **The post-cook sequence is load-bearing**: the exit-to-Home CTA must stay
+  the LAST element of both `LedgerVerdictSheet` (extracted from
+  `one_pan_cooking_roadmap_screen.dart` so it could be tested) and
+  `WasteLedgerCelebrationSheet`. There is a regression test on each. The
+  bookmark there is quiet — header row, no label, no prompt, never a step.
+  `RecipeDetailsScreen` now takes an optional `CookModeRecipePayload` via
+  go_router `extra` and renders it; with no extra it keeps its long-standing
+  static demo body (nothing else reaches that path).
+  **Weekly Planner has a third source**: the add sheet offers Fridge Clearer
+  · Custom recipe · My recipes, and My recipes is a **pane swap inside the
+  same sheet** (back arrow returns to the sources) — never a second sheet,
+  because sheets don't stack anywhere. Placement passes the whole payload, so
+  provenance survives into `user_meal_plans.recipe_payload` and a
+  planner-cooked Fridge Clearer recipe still counts. Planned rows carry the
+  leaf badge (from the recipe's own origin) and a separate "from saved" chip
+  (how it got into the day, keyed on `kFromSavedMealSource`) — a saved fridge
+  recipe shows both.
+  **Gotcha, cost real debugging time**: `watchSavedRecipes()` returns a NEW
+  stream per call. Subscribing to it from `build()` resubscribes on every
+  emission and spins forever — every consumer must hold the stream in State.
 - **Auth**: Anonymous-by-default (`signInAnonymously()` on startup, wrapped in
   try/catch so it never blocks app startup on failure). Users can optionally
   link an email + password to their anonymous session via "Secure My Account"
@@ -293,7 +333,7 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 18. Deep link fix for the email-confirmation redirect (currently goes to `localhost:3000`) — not started, same native-platform-config caveat as above.
 19. Lower priority, not urgent: rate limiting on Edge Functions; privacy policy covering Swiss FADP + EU GDPR (needs legal review before the first external tester); Supabase Storage bucket policies (once photos/recipe images are added); duplicate RLS policy cleanup (cosmetic, see RLS table above); `UsageCapService.increment(...)` firing even when `askChefHarris`'s internal call to Supabase never actually reaches OpenAI (harmless while Harris is the only user, becomes a real problem once caps gate paying subscribers).
 20. Fridge Clearer fabricates a hardcoded fallback recipe on `_parseCookModeRecipe` returning null, instead of showing "no recipe" like the other 3 recipe-generating surfaces do. Blocks the safety validator's hard-fail mode (item 1) on this surface. Small fix: the screen already has `_generationError` state + a wired `_InlineErrorCard` used for real exceptions — the parse-failure branch just needs to set `_generationError` instead of building a fallback recipe. Not started.
-21. **"Save if you liked it" / My recipes — data layer done 2026-08-20 (dev), UI not started.** `saved_recipes` (dev only) + `SavedRecipesService` ship the whole data layer; see "Saved recipes" in Current architecture facts. **It does not use the `recipes` table at all** — that table's unreachable write grants are therefore no longer a blocker for this item (they remain a separate, unrelated loose end). Still open: the My recipes screen itself (`/my-recipes` is a deliberate placeholder), the save/unsave affordance on generated recipes, the "feedback" half of the original one-liner (never scoped), and pushing these two migrations to prod.
+21. **"Save if you liked it" / My recipes — data layer AND UI done 2026-08-20 (dev).** `saved_recipes` (dev only) + `SavedRecipesService` + the My recipes screen, the universal bookmark, and the Weekly Planner's third source all ship; see the two "Saved recipes" entries in Current architecture facts. **It does not use the `recipes` table at all** — that table's unreachable write grants are therefore not a blocker for this item (they remain a separate, unrelated loose end). Still open: **the two migrations exist on dev only and have not been pushed to prod**; the "feedback" half of the original one-liner (never scoped); every user-facing string on these surfaces is a `// SIGNED-CONTENT PLACEHOLDER` awaiting the Chef Harris authoring pass; and the list-row unsave affordance (no swipe-to-unsave and no overflow menus in this build — unsave is the bookmark toggle only, deferred to device review by spec).
 22. Post-cook finish flow, two open UX gaps: (1) after the celebration → What You Learned → share card sequence, the app should return to Home once the share card is dismissed but currently sits idle; (2) if the share card is skipped/missed it's lost — should persist somewhere so it can be shared later.
 23. Custom AI Craving via Weekly Planner writes the generated recipe directly into the day slot with no confirmation step — open product question, linked to item 1 (nowhere to show a corrected recipe if the safety validator ever flags one on this surface).
 24. Custom AI Craving sheet's prompt-guidance copy (title, placeholder, 4 quick-pick chips) needs a rewrite — flagged as awkward, not rewritten. The feature's name itself ("Custom AI Craving") also reads awkwardly — naming question for Harris, not resolved.
@@ -303,7 +343,7 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 - **`docs/DECISIONS.md` and `docs/CHANGELOG.md` exist alongside this file.** DECISIONS.md holds binding product/architecture decisions and their reasoning (not descriptions of current code). CHANGELOG.md holds completed work and full session history, newest first. Neither is auto-loaded — read on request or when a task needs history/reasoning this file deliberately omits to stay small.
 - **CLAUDE.md is authoritative for Roadmap item numbering.** If Harris refers to an item by a number that doesn't match what's actually here, stop and ask — don't guess which item was meant.
 - **Locate code by content/class name, not filename** — the Dreamflow-export filename-shuffling issue was checked and is NOT present in this repo, but this remains the safer default if it's ever in doubt again.
-- **Supabase CLI is linked and authenticated** to the live project (ref `xwugnhzlnfgmczkbbcbh`). `supabase db push` applies migrations directly — no manual Dashboard SQL Editor paste-and-run needed (still confirm with Harris before pushing schema changes to production, same as any other prod DB write). `supabase functions deploy <name> --project-ref xwugnhzlnfgmczkbbcbh --use-api` deploys Edge Functions directly — the `--use-api` flag is required on this machine (no Docker/Podman installed, so the default Docker-based bundler fails). The CLI hardcodes `supabase/functions/<name>/index.ts` relative to the project root, no flag to point elsewhere — any edge function brought into CLI-managed deploys goes there, no second copy anywhere else. `supabase functions --help` lists no `logs` subcommand — read Edge Function logs via Dashboard → Edge Functions → Logs. `supabase db query --linked "<SQL>"` works for read-only checks against the live project without Docker/local Postgres.
+- **Supabase CLI is authenticated**, and **linked to DEV** (ref `suuafglvrxrllnhipkiv`) — see the standing note further down; it is deliberately NOT linked to production. `supabase db push` applies migrations directly — no manual Dashboard SQL Editor paste-and-run needed (still confirm with Harris before pushing schema changes to production, same as any other prod DB write). `supabase functions deploy <name> --project-ref xwugnhzlnfgmczkbbcbh --use-api` deploys Edge Functions directly — the `--use-api` flag is required on this machine (no Docker/Podman installed, so the default Docker-based bundler fails). The CLI hardcodes `supabase/functions/<name>/index.ts` relative to the project root, no flag to point elsewhere — any edge function brought into CLI-managed deploys goes there, no second copy anywhere else. `supabase functions --help` lists no `logs` subcommand — read Edge Function logs via Dashboard → Edge Functions → Logs. **There is no `db query` subcommand** in the installed CLI (2.110.0) — this file claimed there was, and that was wrong; `db dump` needs Docker, which isn't installed either. For read-only checks without Docker use `supabase inspect db table-stats --linked` (real query: tables + row counts), `supabase migration list --linked`, or probe PostgREST directly with the committed dev publishable key (404 `PGRST205` = table gone; `?select=<col>&limit=0` returning 200 vs 400 = column exists or not). Reading `pg_policies`/`pg_constraint` still needs the Dashboard SQL editor.
 - When a fix touches a Supabase Edge Function, give exact code plus explicit deployment steps and confirm the deploy actually happened — never assume it's live until confirmed via `supabase functions list` (check `version`/`updated_at`) or Harris's own confirmation.
 - When something seems like it "should already be fixed" per this document but live behavior contradicts it, verify the actual current source first — don't assume regression, and don't assume the documented fix is stale either. Check before concluding either way. (This exact convention is what caught the Pluralization Audit and the Design Polish backgroundColor batch both already being silently completed — see `docs/CHANGELOG.md`, 2026-08-17.)
 - Prefer running `flutter analyze` and any available tests after changes.

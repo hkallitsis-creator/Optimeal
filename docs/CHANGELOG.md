@@ -13,6 +13,125 @@ fidelity.
 
 ---
 
+## 2026-08-20 — Saved-recipes UI: My recipes, the universal bookmark, the planner's third source
+
+Branch `feat/saved-recipes-ui` off main (after the data-layer branch was
+fast-forwarded in). **No database work of any kind — dev included.** This is
+UI over the data layer from the previous entry.
+
+### My recipes
+
+`lib/screens/my_recipes_screen.dart` replaces the placeholder. The two
+sections are separated by **card weight, not labels**: saved recipes are full
+cream cards (shadow + border), recently-cooked is a log of quiet rows with no
+fill at all. A saved recipe is something the user chose; a cooked one is just
+something that happened, and the screen should read that way at a glance. A
+widget test asserts the difference structurally (saved has a decorated
+`Container` ancestor with a `boxShadow`; the log rows have none), so the
+hierarchy can't be flattened by a later tidy-up.
+
+Saved card: name, leaf badge **only** for Fridge Clearer origin, and either
+the derived times-cooked count or a "not cooked yet" marker — never "0
+times". No prose. The calendar action opens the **existing**
+`WeekdayPickerSheet` and hands off through `WeeklyPlannerIntentService`, the
+same path Fridge Clearer already used; nothing new was written for
+scheduling. Tapping a card opens recipe details with that saved payload.
+
+Order is the service's `last_touched_at desc` and is **not re-sorted in the
+UI** — a test asserts render order is recency, not alphabetical.
+
+Two empty states, per spec: the full-screen one (bookmark glyph on sage, two
+short lines, deliberately no dead-end CTA) only when nothing is saved AND
+nothing cooked; otherwise an inline empty-saved panel sits above the log.
+
+### The universal bookmark
+
+`lib/widgets/save_recipe_bookmark_button.dart`. Filled = saved, outline = not
+saved, tap toggles. It subscribes to `SavedRecipesService.watchSavedRecipes`
+on the shared singleton, so a toggle on one surface updates every other open
+surface with no plumbing — that is the whole reason it subscribes rather than
+taking a bool. Placements: recipe details app bar, recently-cooked rows, and
+both post-cook verdict cards.
+
+The recently-cooked row's bookmark **is** the promote-from-history action. It
+saves that row's stored payload, which is exactly what `saveFromHistory` does
+with a history entry, so `origin` and `originEnteredIngredients` ride along
+and the promoted card keeps its leaf badge. A bespoke "promote" button would
+have meant two mechanisms for one idea; the spec asked for one.
+
+Per spec, no swipe-to-unsave and no overflow menus on list rows in this
+build — unsave is the bookmark toggle wherever it appears. The list-row
+affordance question is deferred to device review.
+
+### The post-cook sequence stays intact
+
+`_LedgerVerdictSheet` was moved out of `one_pan_cooking_roadmap_screen.dart`
+into `lib/widgets/ledger_verdict_sheet.dart` — public, so the CTA-last rule
+can actually be asserted. Verdict copy is unchanged. The bookmark is quiet:
+header row, no label, no prompt, nothing to dismiss (a test pins the sheet at
+exactly two `Text` widgets — the verdict line and the CTA). The
+exit-to-Home CTA is still the **last element** of both that sheet and
+`WasteLedgerCelebrationSheet`, with a regression test on each so nothing can
+silently push it off the end.
+
+`RecipeDetailsScreen` now takes an optional `CookModeRecipePayload` through
+go_router `extra` and renders it (title, provenance, ingredients, gear,
+steps). With no extra it keeps its long-standing static demo body; nothing
+else in the app reaches that path.
+
+### Weekly Planner third source
+
+The add sheet offers Fridge Clearer · Custom recipe · My recipes. My recipes
+is a **pane swap inside the same sheet** with a back arrow — never a second
+sheet, because sheets don't stack anywhere in this app. A test asserts the
+`BottomSheet` count is unchanged across the swap. Fridge Clearer and Custom
+recipe behave exactly as before, including the depth-2 picker's
+pop-a-payload semantics. Every pane has an X on top of drag-down and barrier
+tap.
+
+Placement passes the whole payload, so provenance survives into
+`user_meal_plans.recipe_payload` and a planner-cooked Fridge Clearer recipe
+still counts as a rescue — covered by an explicit `jsonEncode`/`jsonDecode`
+round-trip test, not just by inspection. Planned rows show the leaf badge
+(from the recipe's own `origin`) and a separate "from saved" chip (how it got
+into the day, keyed on the new `kFromSavedMealSource`). A saved fridge recipe
+shows both, because they mean different things.
+
+### Two real bugs the tests caught
+
+- **`watchSavedRecipes()` returns a NEW stream per call.** Calling it inside
+  `build()` resubscribed on every emission and spun forever — the test run
+  hung with no output rather than failing. Every consumer now holds the
+  stream in State, and the method's doc says why. This is the kind of thing
+  that would have been near-impossible to diagnose on device.
+- **Unguarded `Supabase.instance` getters.**
+  `WeeklyPlannerScreen._currentUser` and
+  `SupabaseSavedRecipesBackend.currentUserId` both asserted when Supabase was
+  never initialized. Both now return null there, which every caller already
+  handles as "degrade quietly, stay local". Pre-existing in the planner's
+  case; only surfaced because the planner finally got a widget test.
+
+Also worth recording for future test-writing: `Future.delayed` inside
+`testWidgets` never completes (fake async), which hung a different test.
+Seed timestamps directly instead of sleeping between writes.
+
+### Verification
+
+- `flutter test`: **165 passing**, up from 135. 30 new across three files —
+  My recipes (11), the bookmark and both verdict cards (8), the planner add
+  sheet (11).
+- `flutter analyze`: **54 issues**, 0 errors, 9 warnings, 45 info. Exactly
+  the baseline, zero new.
+- No Supabase contact at all, production or dev.
+
+### Placeholder strings introduced
+
+Every user-facing string written in this build is marked
+`// SIGNED-CONTENT PLACEHOLDER` and is listed by surface in the build report
+for the Chef Harris authoring batch.
+
+---
+
 ## 2026-08-20 — Saved-recipes data layer, dev DB cleanup, recipe-carried rescue provenance
 
 Branch `feat/saved-recipes-data-layer` off main (after the Home-hub branch was
