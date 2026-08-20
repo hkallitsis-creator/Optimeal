@@ -168,8 +168,9 @@ class AppRoutes {
   /// bar was removed; now a plain depth-1 route off the Home hub.
   static const String techniques = '/techniques';
 
-  /// Placeholder destination behind the Home hub's "My recipes" tile — the
-  /// route is live now, the real screen ships later. See MyRecipesScreen.
+  /// The Home hub's "My recipes" tile. Backed by the real [MyRecipesScreen]
+  /// (saved shelf + recently-cooked log) as of 2026-08-20 — this was a
+  /// placeholder for exactly one build.
   static const String myRecipes = '/my-recipes';
   static const String onePanCookingRoadmap = '/one-pan-cooking-roadmap';
   static const String aiFridgeScrapGenerator = '/ai-fridge-scrap-generator';

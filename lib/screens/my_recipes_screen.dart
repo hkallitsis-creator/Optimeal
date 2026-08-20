@@ -24,12 +24,16 @@ import 'package:optimeal/widgets/weekday_picker_sheet.dart';
 /// Depth-1 (opened straight off the Home hub): back button only, and back
 /// lands on Home. No home glyph.
 class MyRecipesScreen extends StatefulWidget {
-  const MyRecipesScreen({super.key, this.service, this.sessionStorage});
+  const MyRecipesScreen({super.key, this.service});
 
   /// Injectable for tests. Defaults to the shared singleton so bookmark state
   /// stays consistent with every other surface.
+  ///
+  /// Cook history is NOT injected separately: it is reached through
+  /// [SavedRecipesService.recentlyCooked] / [SavedRecipesService.timesCooked],
+  /// which already own that dependency. A second seam here would let the two
+  /// disagree about which history they are reading.
   final SavedRecipesService? service;
-  final CookSessionStorageService? sessionStorage;
 
   @override
   State<MyRecipesScreen> createState() => _MyRecipesScreenState();

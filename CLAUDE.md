@@ -18,147 +18,120 @@ request or when a task needs the "why."
 ## Current architecture facts (confirmed from real source, not assumed)
 
 - **Navigation — no bottom nav bar (2026-08-20).** The three-tab shell
-  (`MainLayout`, `lib/screens/main_layout.dart`) is **deleted**, along with
-  `AppRoutes.homeTabPath` / `AppRoutes.homeTab(int)` (`/tab/:index`). There
-  was never a `ShellRoute` — the shell was a plain widget GoRouter pointed
-  at — so the route tree is now entirely flat `GoRoute`s in `lib/nav.dart`.
-  Its former tabs are ordinary routes: Home at `/`
-  (`HomeDashboardScreen`), Weekly Planner at `/weekly-plan`, Techniques &
-  Media at `AppRoutes.techniques` (`/techniques`, was `/tab/2`). New:
-  `AppRoutes.myRecipes` (`/my-recipes`) → `MyRecipesScreen`, a deliberate
-  **placeholder** (app bar + centered text, nothing else) so the Home tile
-  and route are live now; the real screen is Roadmap item 21's territory.
-  **Depth rule**: depth-1 screens (opened straight off Home — Fridge
-  Clearer, Custom recipe creator, Weekly Planner, My recipes, Techniques,
-  Profile) have a back button only, and back lands on Home. Depth-2+
-  screens keep their back control unchanged and add a quiet home glyph
-  beside it, via the shared `lib/widgets/home_glyph_button.dart`
-  (`HomeGlyphButton`, `BackWithHomeLeading`, `kBackWithHomeLeadingWidth` —
-  the default 56dp leading slot only fits one button). Applied to Cook
-  Mode (glyph only — its back-press semantics are untouched), recipe
-  details, and the Weekly Planner's Fridge Clearer picker.
-  `FridgeClearerScreen` serves both depths off its `returnCookModePayload`
-  flag: from Home it's depth-1 and back goes Home; as the planner's picker
-  it's depth-2, so back now pops to the planner it owes a payload to.
-  Orphan routes left orphaned (unreachable before this change too, not a
-  regression): `AppRoutes.recipe` (`RecipeDetailsScreen`) and
-  `AppRoutes.culinaryMasterclass`. `AppRoutes.paywall` is exempt from the
-  depth rule — it's reached from onboarding and `UpgradePromptSheet`, not
-  only through a depth-1 screen.
+  `MainLayout` is **deleted**, along with `AppRoutes.homeTab(int)` /
+  `/tab/:index`. There was never a `ShellRoute`; the route tree in
+  `lib/nav.dart` is now flat `GoRoute`s. Former tabs are plain routes: Home
+  `/`, Weekly Planner `/weekly-plan`, Techniques `AppRoutes.techniques`
+  (`/techniques`), plus `AppRoutes.myRecipes` (`/my-recipes`).
+  **Depth rule**: depth-1 screens (straight off Home — Fridge Clearer, custom
+  recipe creator, Weekly Planner, My recipes, Techniques, Profile) have a back
+  button only, and back lands on Home. Depth-2+ keeps its own back control and
+  adds the quiet home glyph beside it via
+  `lib/widgets/home_glyph_button.dart` (`HomeGlyphButton`,
+  `BackWithHomeLeading`, `kBackWithHomeLeadingWidth` — the default 56dp
+  leading slot fits only one button). Applied to Cook Mode (glyph only; its
+  back-press semantics are untouched), recipe details, and the Weekly
+  Planner's Fridge Clearer picker. `FridgeClearerScreen` serves both depths
+  off `returnCookModePayload`: from Home it's depth-1 and back goes Home; as
+  the planner's picker it's depth-2 and back pops to the planner it owes a
+  payload to. `AppRoutes.recipe` reachable only from My recipes;
+  `AppRoutes.culinaryMasterclass` is an orphan (was one before this change
+  too). `AppRoutes.paywall` is exempt — reached from onboarding and
+  `UpgradePromptSheet`, not only through a depth-1 screen.
 - **Home is a one-screen, no-scroll hub (2026-08-20).**
   `HomeDashboardScreen` is six top-anchored zones with exactly one `Spacer`
-  absorbing surplus height: greeting + profile avatar → Fridge Clearer hero
-  card → custom recipe slim row → three equal tiles (Weekly · My recipes ·
-  Techniques) → the flexible gap → a sage rescue strip pinned bottom whose
-  "how?" opens the existing Waste Ledger explainer sheet. All color comes
-  from `AppDesignTokens` (sage background, cream cards, terracotta CTAs,
-  deep forest text) — the screen's old private `_deepForest`/`_terracotta`
-  constants are gone. Hero and slim row share one `_CreamSurface`:
-  hierarchy is size/type/glyph scale only, never a color break. Strings
-  written in that build are marked `// SIGNED-CONTENT PLACEHOLDER`. The
-  conditional resume-in-progress-cook banner was kept (only route back into
-  an interrupted Cook Mode session). Cut, with dead code removed: Recipe
-  Library card, Weekly Planner card, Recently Cooked (card + sheet), This
-  Week card, greeting paragraph, diet/allergy pills, "Get an idea" chip,
-  and Technique of the Week (card + sheet — no zone for it; the public
-  `techniqueOfTheWeek()` helper survives). **Two consequences that need a
-  product decision, not yet made**: (a) deleting "Get an idea" deleted
-  `_ChefSuggestionSheet` and `kChefHarrisChatFreeDailyLimit` with it, so the
-  Chef Harris chat cap is no longer a live gating surface and nothing reads
-  `UsageFeature.chefHarrisChat` — see Roadmap item 16; (b) `YourMonthCard`
-  is no longer mounted anywhere, though the widget file is deliberately
-  retained. Note for tests: `currentConfiguration.uri` doesn't move for an
-  imperative `push` (which is what every Home tap does) — assert on
-  `currentConfiguration.last.matchedLocation`.
-- **Rescue provenance travels with the recipe (2026-08-20).** Whether a
-  completed cook counts toward the Waste Ledger is a property of the
-  RECIPE, not of the screen that launched the cook. `RecipeOrigin`
-  (`lib/models/recipe_origin.dart`) owns `isRescueEligible` and
-  `ledgerSourceValue`; `CookModeSurface` is launch context only and decides
-  nothing (its two eligibility members were removed — do not re-add them).
+  absorbing surplus: greeting + avatar → Fridge Clearer hero → custom recipe
+  slim row → three tiles (Weekly · My recipes · Techniques) → the gap → a
+  sage rescue strip pinned bottom whose "how?" opens the Waste Ledger
+  explainer. All color from `AppDesignTokens`; hero and slim row share one
+  `_CreamSurface`, so hierarchy is size/type/glyph only, never a color break.
+  Home refreshes its rescue count via `RouteAware.didPopNext` — **verified
+  2026-08-20 that `context.go('/')` from two-deep does fire it** (Home's
+  State is not disposed), which is how the post-cook count updates.
+  **Measured limit**: at 360×640 Home renders cleanly up to textScale 2.4 and
+  overflows by 10px at 2.8, 69px at 3.2 (iOS AX4/AX5). Locked by
+  `test/integration/saved_recipes_flow_test.dart`; deliberately unfixed —
+  both fixes (make Home scroll / clamp text scale) contradict a signed
+  decision, so it is Harris's call.
+  Cut, with dead code removed: Recipe Library card, Weekly Planner card,
+  Recently Cooked card+sheet, This Week card, greeting paragraph,
+  diet/allergy pills, "Get an idea" chip, Technique of the Week. **Two
+  consequences still open**: deleting "Get an idea" deleted
+  `_ChefSuggestionSheet` and `kChefHarrisChatFreeDailyLimit`, so the Chef
+  Harris chat cap is no longer a live gating surface and nothing reads
+  `UsageFeature.chefHarrisChat` (item 16); and `YourMonthCard` +
+  `techniqueOfTheWeek()` are retained but mounted nowhere.
+- **Rescue provenance travels with the recipe (2026-08-20).** Whether a cook
+  counts toward the Waste Ledger is a property of the RECIPE, not the screen
+  that launched it. `RecipeOrigin` (`lib/models/recipe_origin.dart`) owns
+  `isRescueEligible` and `ledgerSourceValue`; `CookModeSurface` is launch
+  context and decides nothing — **do not re-add those members to it**.
   `CookModeRecipePayload.origin` is stamped once by `parseChefRecipeJson`
-  from the generating `ChefRecipeSurface`, and
-  `CookModeRecipePayload.originEnteredIngredients` is attached by
-  `FridgeClearerScreen`. Both survive the local cook stores and
-  `user_meal_plans.recipe_payload` jsonb, so a Fridge Clearer recipe cooked
-  out of the Weekly Planner counts, crediting the same ingredients as a
-  direct cook — it silently did not before. **A null origin means "not
-  rescue-eligible" and must never be guessed** from title, surface, or
-  ingredients. `FridgeClearerEntryService` is now only a fallback for
-  pre-provenance recipes and is cleared only when actually read.
-  `selectLedgerVerdict` takes `origin`; `LedgerVerdict.notCountedWrongSurface`
-  is now `notCountedNotFridgeRecipe` (copy unchanged). Reasoning:
-  `docs/DECISIONS.md`.
+  from the generating `ChefRecipeSurface`; `originEnteredIngredients` is
+  attached by `FridgeClearerScreen` (needed because
+  `FridgeClearerEntryService` holds only the newest generation and is cleared
+  on completion — without it a planner-cooked rescue would credit zero
+  ingredients). Both survive three hops, each covered by a test: the local
+  cook-session store, `saved_recipes.recipe_payload`, and
+  `user_meal_plans.recipe_payload`. **A null origin means "not
+  rescue-eligible" and must never be guessed.** `selectLedgerVerdict` takes
+  `origin`; `notCountedWrongSurface` is now `notCountedNotFridgeRecipe`.
+  Reasoning: `docs/DECISIONS.md`. **Known copy drift, not fixed** (copy is
+  Harris's): the ledger explainer and the not-counted verdict still say
+  "only Fridge Clearer cooks count", which now under-describes the rule — a
+  Fridge Clearer *recipe* counts wherever it is cooked.
 - **Recipe payload jsonb codec** — `lib/models/cook_mode_recipe_codec.dart`
   (`cookModeRecipeToJson` / `cookModeRecipeFromJson`) is the single
-  snake_case (de)serializer for anything stored as jsonb in Postgres:
-  `user_meal_plans.recipe_payload` and `saved_recipes.recipe_payload`. It
-  was lifted verbatim out of `weekly_planner_screen.dart`, tolerance and
-  all. `CookSessionStorageService` keeps its own **separate camelCase**
-  codec on purpose — it holds real on-device data, and unifying the key
-  shapes would silently drop every user's saved session and cook history.
-  Do not "consolidate" these two.
-- **Saved recipes (data layer only, dev only, 2026-08-20).**
-  `public.saved_recipes` exists on **dev** (`suuafglvrxrllnhipkiv`), not on
-  prod — migration `20260820130000`. It follows the `user_meal_plans`
-  pattern, storing the full payload inline as jsonb; it deliberately does
-  NOT reference `public.recipes`, which is a content-less placeholder
-  nothing has ever written to. Columns: `id`, `user_id`, `recipe_key`
-  (normalized title — generated recipes have no server id), `title`,
-  `recipe_payload`, `origin` (the leaf badge's source of truth, duplicated
-  from the payload on purpose so it can be indexed/filtered), `saved_at`,
-  `last_touched_at`; unique on `(user_id, recipe_key)`. No times-cooked
-  column (derived at read time), no row limit, no pricing/tier columns, no
-  `set_updated_at` trigger — see `docs/DECISIONS.md` for why each.
-  `SavedRecipesService` (`lib/services/saved_recipes_service.dart`) exposes
-  save / saveFromHistory / unsave / isSaved / watchSavedRecipes (recency
-  first) / onRecipeCooked / listSavedRecipes, plus read models over existing
-  data: `recentlyCooked()` (capped at `kRecentlyCookedReadModelLimit` = 10)
-  and `timesCooked`/`hasBeenCooked`. Supabase access sits behind the
-  injectable `SavedRecipesBackend` so the logic is unit-testable with no
-  live DB and no anonymous sign-in (currently disabled on dev). Cooking a
-  saved recipe touches it; cooking an unsaved one never silently saves it.
-  Cook Mode calls `onRecipeCooked` on completion.
-- **Saved-recipes UI (2026-08-20).** `MyRecipesScreen` (`/my-recipes`) is the
-  real screen now — two sections separated by **card weight, not labels**:
-  saved recipes are full cream cards (shadow + border), recently-cooked is a
-  log of quiet rows with no fill. Saved cards show the leaf badge only for
-  Fridge Clearer origin, and either the derived times-cooked count or "not
-  cooked yet" — never "0 times". Ordering is the service's
-  (`last_touched_at` desc) and is **never re-sorted in the UI**. Two empty
-  states: full-screen only when nothing is saved AND nothing cooked,
-  otherwise an inline empty-saved panel above the log. This screen MAY
-  scroll — the no-scroll rule is Home's alone.
-  **One bookmark, one mechanism, everywhere**:
-  `lib/widgets/save_recipe_bookmark_button.dart` — filled = saved, outline =
-  not saved, tap toggles. It subscribes to
-  `SavedRecipesService.watchSavedRecipes` on the shared singleton, so a
-  toggle on one surface updates every other open surface with no plumbing.
-  Placed on recipe details (app bar), recently-cooked rows, and both
-  post-cook verdict cards. The recently-cooked row's bookmark **is** the
-  promote-from-history action — it saves that row's stored payload, which is
-  what `saveFromHistory` does, so provenance rides along. Do not add a
-  second, bespoke save affordance anywhere.
+  snake_case (de)serializer for anything stored as jsonb:
+  `user_meal_plans.recipe_payload` and `saved_recipes.recipe_payload`. Lifted
+  verbatim out of `weekly_planner_screen.dart`, tolerance and all.
+  `CookSessionStorageService` keeps a **separate camelCase** codec on
+  purpose — it holds real on-device data, and unifying the key shapes would
+  silently drop every user's saved session and cook history. Do not
+  consolidate these two.
+- **Saved recipes — data layer + UI (2026-08-20).** `public.saved_recipes`
+  exists on **dev only** (migration `20260820130000`), not prod. It follows
+  the `user_meal_plans` pattern (full payload inline as jsonb) and
+  deliberately does NOT reference `public.recipes`, a content-less
+  placeholder nothing has ever written to. Columns: `id`, `user_id`,
+  `recipe_key` (normalized title — generated recipes have no server id),
+  `title`, `recipe_payload`, `origin` (leaf-badge source of truth, duplicated
+  from the payload so it can be indexed), `saved_at`, `last_touched_at`;
+  unique `(user_id, recipe_key)`. No times-cooked column (derived at read
+  time), no row limit, no tier columns, no `set_updated_at` trigger — see
+  `docs/DECISIONS.md` for each.
+  `SavedRecipesService` (`lib/services/saved_recipes_service.dart`): save /
+  saveFromHistory / unsave / isSaved / watchSavedRecipes (recency first) /
+  onRecipeCooked / listSavedRecipes, plus read models over existing data —
+  `recentlyCooked()` (cap `kRecentlyCookedReadModelLimit` = 10) and
+  `timesCooked`/`hasBeenCooked`. Supabase sits behind the injectable
+  `SavedRecipesBackend`, so everything is unit-testable with no live DB and
+  no anonymous sign-in (disabled on dev). Cooking a saved recipe touches it;
+  cooking an unsaved one never silently saves it.
+  **UI**: `MyRecipesScreen` is two sections separated by **card weight, not
+  labels** — saved = cream cards, recently-cooked = quiet rows. Cards show
+  the leaf badge only for Fridge Clearer origin and either the derived count
+  or "not cooked yet", never "0 times". Order is the service's; **never
+  re-sort in the UI**. This screen may scroll; the no-scroll rule is Home's
+  alone. **One bookmark, one mechanism, everywhere**
+  (`lib/widgets/save_recipe_bookmark_button.dart`): filled = saved, outline =
+  not saved, subscribed to the shared singleton so a toggle updates every
+  open surface. Placed on recipe details, recently-cooked rows, saved cards,
+  and both post-cook verdict cards. The recently-cooked bookmark **is** the
+  promote-from-history action — do not add a second save affordance.
   **The post-cook sequence is load-bearing**: the exit-to-Home CTA must stay
-  the LAST element of both `LedgerVerdictSheet` (extracted from
-  `one_pan_cooking_roadmap_screen.dart` so it could be tested) and
-  `WasteLedgerCelebrationSheet`. There is a regression test on each. The
-  bookmark there is quiet — header row, no label, no prompt, never a step.
-  `RecipeDetailsScreen` now takes an optional `CookModeRecipePayload` via
-  go_router `extra` and renders it; with no extra it keeps its long-standing
-  static demo body (nothing else reaches that path).
-  **Weekly Planner has a third source**: the add sheet offers Fridge Clearer
-  · Custom recipe · My recipes, and My recipes is a **pane swap inside the
-  same sheet** (back arrow returns to the sources) — never a second sheet,
-  because sheets don't stack anywhere. Placement passes the whole payload, so
-  provenance survives into `user_meal_plans.recipe_payload` and a
-  planner-cooked Fridge Clearer recipe still counts. Planned rows carry the
-  leaf badge (from the recipe's own origin) and a separate "from saved" chip
-  (how it got into the day, keyed on `kFromSavedMealSource`) — a saved fridge
-  recipe shows both.
-  **Gotcha, cost real debugging time**: `watchSavedRecipes()` returns a NEW
-  stream per call. Subscribing to it from `build()` resubscribes on every
-  emission and spins forever — every consumer must hold the stream in State.
+  the LAST element of both `LedgerVerdictSheet` and
+  `WasteLedgerCelebrationSheet`; there is a regression test on each.
+  Weekly Planner has a third source — the add sheet is a **pane swap in one
+  sheet** (sheets never stack). Planned rows carry the leaf badge (recipe's
+  own origin) and a separate "from saved" chip (`kFromSavedMealSource`).
+  **Gotcha that cost real debugging time**: `watchSavedRecipes()` returns a
+  NEW stream per call — subscribing from `build()` resubscribes on every
+  emission and hangs. Every consumer must hold the stream in State.
+  **Known gap, not fixed (would be a new feature)**: a freshly generated
+  recipe cannot be bookmarked. Neither `_GeneratedRecipeCard` (Fridge
+  Clearer) nor `GeneratedRecipeActionsSheet` has a bookmark or a route into
+  recipe details, so the earliest save point is the post-cook verdict card.
 - **Auth**: Anonymous-by-default (`signInAnonymously()` on startup, wrapped in
   try/catch so it never blocks app startup on failure). Users can optionally
   link an email + password to their anonymous session via "Secure My Account"
@@ -316,22 +289,22 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 1. **Safety validator for Chef Harris output — HIGH PRIORITY, PRE-LAUNCH BLOCKER.** No check of any kind exists between OpenAI's raw output and what the user sees. `askChefHarris` only checks non-emptiness. Four surfaces each independently parse raw output via now-shared `parseChefRecipeJson` (`chef_recipe_parser.dart`, refactor already done and device-verified — see `docs/CHANGELOG.md`), but nothing validates the *content* against food-safety rules after parsing. Likely shape: a deterministic rules layer for enumerable hazards + a model-review backstop, preferring regeneration/correction over a hard block (matches this app's fail-forward pattern elsewhere). **The hazard list is Harris's to supply, do not invent one.** Per the pasteurisation-table cut (`docs/decisions_2026-08-17.md` item 8), the permanent rule for that specific hazard is already decided: flag any stated temperature below the instantaneous minimum with no hold time stated — fold this in directly rather than waiting on a full equivalence table (which was dropped). The broader per-hazard sign-off table is still blank; two entries (shellfish; raw flour and sprouts) are unsourced placeholders. `_ChefSosSheet` and `ai-recipe-precision`'s precision cards are NOT covered by whatever chokepoint gets built for `CookModeRecipePayload` — both return content outside that shape and need a separate scoping decision. `SensoryCue.mandatoryOnPoultryAndPork` (`lib/data/sensory_cue_vocabulary.dart`) already exists — true only for `juices_run_clear` — flagging that a step's absence of this cue on a poultry/pork recipe should be a validator check once this item is built; not implemented as part of the sensory cue integration itself, since it belongs here.
 2. **`ai-recipe-precision` cost/abuse exposure — HIGH PRIORITY, not fixed.** See architecture facts above for the specifics (no auth check, service-role key regardless of caller, no per-user cache key, safety-relevant client fields discarded). Do not "fix" the discarded safety fields by simply reading them without first changing the cache-key derivation (fold a hash of the safety-relevant profile fields into the key, same pattern as `ChefService._hashSafetyRelevantProfileFields`) — otherwise one user's allergy-driven substitution gets cached and served to a different user with a different or no allergy.
 3. **Drawn SVG diagram library — new, per `docs/decisions_2026-08-17.md` item 4.** Deterministic SVG diagrams (not AI-generated images, not photography): 16 cut diagrams (one per cut vocabulary value) + a closed set of 5 technique diagrams (pan crowding, cold vs hot pan, oil depth, tray spacing, staggered adds). Technique diagrams need a closed `technique_diagram_id` key list the model declares from — same pattern already proven for cut vocabulary and curriculum drawer keys. **In-context placement inside recipes is the higher-value surface and should be built first**; the browse-library shell (repurposed from the old Techniques & Media hub) is secondary. Not started.
-4. **Fridge notification replacing the Fridge tab — done, per `docs/decisions_2026-08-17.md` item 5.** A two-case local scheduled notification (device-test round F12): case 1 fires 2 days after a Fridge Clearer generation that's never cooked; case 2 (new) fires 2 days after a completed cook that left some entered ingredients unused, naming only those leftovers. One nudge per trigger, never repeated, cancelled by a relevant completed cook. `FridgeNudgeService` + `FridgeClearerEntryService`. `FridgeCountdownSheet`/`lib/widgets/fridge_countdown_sheet.dart` was deleted as dead code (2026-08-18, commit 8f23fcc) — confirmed unreachable from any live navigation path once the Fridge tab (its only entry point) was cut. **Follow-up housekeeping session removed the rest of the orphaned trail**: `FridgeCountdownService` (deleted, zero callers) and the `CookModeSurface.fridgeCountdown`/`ChefRecipeSurface.fridgeCountdown` enum members (removed — confirmed no stored data anywhere deserializes into them; the one deserialization path, `CookSessionStorageService.loadActiveSession`, already falls back to null on any unrecognized surface name). The `fridge_items` table and the DB CHECK constraint permitting historical `source='fridge_countdown'` rows in `waste_ledger_events` were left untouched at the time — that later database decision was made on 2026-08-20: both are now cleaned up **on dev** (migration `20260820120000`), still present on prod.
-5. **Waste Ledger verdicts + permanent ledger explainer — done, per `docs/decisions_2026-08-17.md` item 6.** `lib/services/ledger_verdict.dart` computes why a completed cook did or did not count toward the ledger; the ledger screen (`one_pan_cooking_roadmap_screen.dart`) carries a permanent explainer. Built 2026-08-17 (commit `7aa9aa8`); verdict-sheet presentation redesigned and device-verified in the 2026-08-18 device round (F3, commit `69f7e9c`) — one icon, one line, one CTA that actually exits to Home; not-counted copy now names only Fridge Clearer (Fridge Countdown no longer exists).
+4. **Fridge notification replacing the Fridge tab — done.** Two-case local nudge (`FridgeNudgeService` + `FridgeClearerEntryService`): case 1 fires 2 days after an uncooked Fridge Clearer generation, case 2 names leftovers 2 days after a cook that didn't use everything. One nudge per trigger, cancelled by a relevant completed cook. All Fridge Countdown code is gone; its `fridge_items` table and the `fridge_countdown` CHECK value were dropped **on dev** 2026-08-20 (still present on prod). Full record: `docs/CHANGELOG.md`.
+5. **Waste Ledger verdicts + permanent ledger explainer — done.** `lib/services/ledger_verdict.dart` computes why a cook did or didn't count; the explainer sheet lives in `home_dashboard_screen.dart` (`_ThisWeekLedgerSheet`), reached from the Home rescue strip's "how?". Verdict sheet is one icon, one line, one CTA — see the post-cook rule under item 21.
 6. **Confidence Climb / What You Learned wording — new, per `docs/decisions_2026-08-17.md` item 7, FINAL wording, not a proposal.** Replace the current celebration/tier-up copy with: **"Are you comfortable with this technique?"** — "Yes, it's automatic now" / "Not yet, still takes concentration." Resolves the "What You Learned repeats the same technique forever" problem. Live-testing this feature (celebration line at 3+ reps/month, tier-up offer at 5+ reps) is still separately needed regardless of wording. Related, not yet folded into a fix: Confidence Climb and Your Month currently read `cook_session_history_v1` unfiltered, so pre-migration keyword-matched entries mix with newer declared-`curriculum_lesson_id` entries in the same aggregation.
-7. **Waste Ledger write-failure recovery — done, wired 2026-08-18 (device round 1, I2, commit `69f7e9c`).** `PendingLedgerWriteService` + `LedgerService`'s sealed `LedgerCompletionSuccess`/`LedgerCompletionWriteFailed` result + `retryPendingWrite` are now called by a new `LedgerSyncCoordinator`, which flushes on app launch (if already online), genuine offline→online transitions, and app resume, via a testable connectivity abstraction (`connectivity_plus`). Still not separately run: an explicit airplane-mode test of the full post-cook sequence surviving a failed ledger write — worth doing, not blocking. See `docs/CHANGELOG.md` for the full design/implementation record.
-8. **Waste Ledger provenance rule — done (device-test round F13, commit 12b9f6c).** `LedgerService.freshProduceOnly` and its blocklist are deleted entirely, replaced with `LedgerService.computeRescuedIngredients`: an ingredient counts as rescued iff (a) the user entered it into Fridge Clearer, (b) it appears in the completed cook, and (c) it isn't on the new `lib/data/pantry_staples.dart` exclusion list (~20 items, content-only, Harris edits directly). Counting is the default now; exclusion is the exception — fixes the old blocklist wrongly excluding genuinely perishable items (potatoes, onions, garlic, ginger) and closes the gap where an ingredient the recipe added on its own could be credited as "rescued." What the user entered is persisted by `FridgeClearerEntryService` (shared with the F12 nudge) since it doesn't otherwise survive to cook-completion time.
+7. **Waste Ledger write-failure recovery — done.** `PendingLedgerWriteService` + `LedgerService.retryPendingWrite`, flushed by `LedgerSyncCoordinator` on launch, offline→online, and resume. **Still not run: an explicit airplane-mode test of the full post-cook sequence surviving a failed ledger write.** Worth doing, not blocking.
+8. **Waste Ledger provenance rule — done, then extended.** `LedgerService.computeRescuedIngredients`: an ingredient counts iff the user entered it into Fridge Clearer, it appears in the completed cook, and it isn't in `lib/data/pantry_staples.dart` (content-only list, Harris edits directly). **Superseded in part on 2026-08-20** — *which cooks* are eligible is now decided by the recipe's own `RecipeOrigin`, not the launch surface (see architecture facts). This item's ingredient-level rule is unchanged.
 9. **Four hardcoded food examples in the always-on system prompt** (`_systemPersona`'s onion-caramelization aside, the rice/risotto SOS few-shot, the sautéed-onions step few-shot, the omelette/buttered-pasta difficulty-rule reference), sent on every call regardless of what's being cooked. One (rice/risotto) confirmed surfacing inappropriately live during an unrelated SOS session. Not fixed. Bucket B curriculum drawers not yet scanned for the same pattern.
-10. **Home hierarchy / bottom nav — done 2026-08-20.** Superseded by the signed one-screen-hub spec: the bottom nav bar is removed app-wide and Home now leads with the Fridge Clearer hero and the custom recipe slim row. See the navigation and Home entries in "Current architecture facts", and `docs/CHANGELOG.md` (2026-08-20) for the full record. Closes item 12 too.
+10. **Home hierarchy / bottom nav — done 2026-08-20.** Superseded by the signed one-screen-hub spec; see the navigation and Home entries in architecture facts. Closes item 12 too.
 11. **Cook Mode's first step should be "prepare ingredients" with no timer** — per `docs/decisions_2026-08-17.md`: testers found the timer stressful on the first step, and rushing knife work is a real cut risk. Not designed or implemented.
-12. **Home dashboard 6-card grid — closed 2026-08-20, moot.** The grid no longer exists; the hub replaced it wholesale. See item 10.
-13. **Home's hardcoded colors — closed 2026-08-20.** This item's specifics were already stale when it was actioned: `home_dashboard_screen.dart` had no `_sageBackground` constant (it read `AppDesignTokens.backgroundSage` directly); the real local constants were `_deepForest` and `_terracotta`. All three are gone — the rebuilt hub takes every color from `AppDesignTokens`.
+12. **Home 6-card grid — closed 2026-08-20, moot.** The grid no longer exists. See item 10.
+13. **Home's hardcoded colors — closed 2026-08-20.** The item's specifics were already stale when actioned (there was no `_sageBackground`; the real constants were `_deepForest`/`_terracotta`). All gone — Home reads `AppDesignTokens` only.
 14. **Recipe generation streaming — genuine future project, not started.** Current floor is ~7-10s/generation (`gpt-4o`, confirmed the right model choice over `gpt-4o-mini` on voice/quality grounds); `max_tokens` tuning and the mini-model trial didn't move this further. Streaming is transport-feasible (`functions_client` has real SSE support) but needs: the edge function to request `stream: true` from OpenAI and forward SSE through Deno; on web specifically, adding the `fetch_client` package and reconfiguring `Supabase.initialize` to use it as the **global** HTTP client (touches every Supabase call, not a local tweak); and either a tolerant partial-JSON parser or a redesigned line-delimited output schema, since `forceJsonObject: true` streams raw JSON token-by-token. Gates Retention Backlog items "Sunday Reset" and "Ask Chef Harris Mid-Cook," both on hold pending Harris's explicit go-ahead on whether the current latency is acceptable.
-15. **OpenAI prompt caching — closed 2026-08-18, dev-verified with real calls.** Real dev measurements on `ask-chef-harris` disproved the earlier "no restructuring needed" assumption: caching is strictly prefix-based, and with the old variable-content-first assembly, genuinely varying per-call content (different ingredients/queries) reliably produced 0 cached tokens — only the always-identical ~6,972-char static system prompt cached on its own (~1,792 tokens) when a call repeated with unchanged user content. Fixed, wording untouched, by reordering each of the 4 live surfaces so all static content forms one stable prefix before any variable content: `ChefService.askChefHarris`'s `userMessage` static blocks, `fridge_clearer_screen.dart`'s `_buildCookModePrompt`, `custom_ai_recipe_creator_sheet.dart`'s `_buildPrompt`. Verified with real back-to-back calls, genuinely varying content per call: SOS ~78%, Suggestion ~90%, Fridge Clearer ~82%, Custom AI Recipe Creator ~85% of prompt tokens now served from cache on repeat calls — an estimated 39-45% cut in input cost per call. `cached_tokens` is now captured end-to-end: `api_call_cost_log.cached_tokens` column (migration `20260818120000`, dev only), `ask-chef-harris` reads and persists `usage.prompt_tokens_details.cached_tokens` (deployed dev, version 4), `ChefService` logs it client-side too. Dev only — not deployed to prod. For item 1's pending validator: a future ~3,400-char cooking-times vocabulary block would cost an estimated $0.0022/call uncached vs $0.0011/call placed inside this cached prefix.
+15. **OpenAI prompt caching — closed 2026-08-18, dev-verified.** Caching is strictly prefix-based, so all 4 live surfaces were reordered to put static content before variable content; wording untouched. Result: 78–90% of prompt tokens served from cache on repeat calls, ~39–45% input-cost cut. `cached_tokens` captured end-to-end (`api_call_cost_log.cached_tokens`, migration `20260818120000`, **dev only**). **Rule for anyone adding to a prompt: append after the variable content or you break the prefix.** For item 1's validator, a ~3,400-char cooking-times block costs ~$0.0022/call uncached vs ~$0.0011 inside the cached prefix.
 16. Real payment provider integration (RevenueCat) — tier structure and the full gating stack are built end-to-end against mock/sandbox entitlement state (see `docs/DECISIONS.md`). Real Apple Developer/Play Console/RevenueCat account setup is deliberately deferred until Harris is actually approaching real-tester distribution; none of the gating surfaces (Fridge Clearer cap, Custom AI Recipe Creator gate, post-cook nudge) has been live-tested end to end yet. **The fourth, the Chef Harris chat cap, no longer exists as of 2026-08-20**: the Home hub's cut list removed the "Get an idea" chip, which was `_ChefSuggestionSheet`'s only entry point, so the sheet and `kChefHarrisChatFreeDailyLimit` were deleted with it and nothing now reads `UsageFeature.chefHarrisChat`. Open product question — where, or whether, that surface returns.
 17. Apple/Google OAuth account linking — not started, needs native iOS/Android config; likely blocked on this being a Windows dev machine (check `flutter devices` before assuming either platform is testable here).
 18. Deep link fix for the email-confirmation redirect (currently goes to `localhost:3000`) — not started, same native-platform-config caveat as above.
-19. Lower priority, not urgent: rate limiting on Edge Functions; privacy policy covering Swiss FADP + EU GDPR (needs legal review before the first external tester); Supabase Storage bucket policies (once photos/recipe images are added); duplicate RLS policy cleanup (cosmetic, see RLS table above); `UsageCapService.increment(...)` firing even when `askChefHarris`'s internal call to Supabase never actually reaches OpenAI (harmless while Harris is the only user, becomes a real problem once caps gate paying subscribers).
+19. Lower priority, not urgent: rate limiting on Edge Functions; privacy policy covering Swiss FADP + EU GDPR (needs legal review before the first external tester); Supabase Storage bucket policies (once images are added); duplicate RLS policy cleanup (cosmetic, see RLS table); `UsageCapService.increment(...)` firing even when `askChefHarris` never reaches OpenAI (harmless while Harris is the only user; a real problem once caps gate paying subscribers).
 20. Fridge Clearer fabricates a hardcoded fallback recipe on `_parseCookModeRecipe` returning null, instead of showing "no recipe" like the other 3 recipe-generating surfaces do. Blocks the safety validator's hard-fail mode (item 1) on this surface. Small fix: the screen already has `_generationError` state + a wired `_InlineErrorCard` used for real exceptions — the parse-failure branch just needs to set `_generationError` instead of building a fallback recipe. Not started.
 21. **"Save if you liked it" / My recipes — data layer AND UI done 2026-08-20 (dev).** `saved_recipes` (dev only) + `SavedRecipesService` + the My recipes screen, the universal bookmark, and the Weekly Planner's third source all ship; see the two "Saved recipes" entries in Current architecture facts. **It does not use the `recipes` table at all** — that table's unreachable write grants are therefore not a blocker for this item (they remain a separate, unrelated loose end). Still open: **the two migrations exist on dev only and have not been pushed to prod**; the "feedback" half of the original one-liner (never scoped); every user-facing string on these surfaces is a `// SIGNED-CONTENT PLACEHOLDER` awaiting the Chef Harris authoring pass; and the list-row unsave affordance (no swipe-to-unsave and no overflow menus in this build — unsave is the bookmark toggle only, deferred to device review by spec).
 22. Post-cook finish flow, two open UX gaps: (1) after the celebration → What You Learned → share card sequence, the app should return to Home once the share card is dismissed but currently sits idle; (2) if the share card is skipped/missed it's lost — should persist somewhere so it can be shared later.
