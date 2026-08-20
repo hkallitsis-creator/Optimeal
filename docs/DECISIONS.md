@@ -7,6 +7,82 @@ Read on request, not auto-loaded.
 
 ---
 
+## Rescue provenance travels with the recipe (20 August 2026)
+
+**Binding rule:** whether a completed cook counts toward the Waste Ledger is
+a property of the **recipe**, not of the screen the cook was launched from.
+
+The rule this replaces keyed eligibility on `CookModeSurface` — which screen
+pushed Cook Mode. That made a real behavioural bug inevitable: a Fridge
+Clearer recipe scheduled into the Weekly Planner and cooked from there
+launched with `CookModeSurface.weeklyPlanner`, which was not rescue-eligible,
+so a genuine fridge rescue silently did not count. The food was rescued; the
+app was looking at the wrong thing.
+
+Provenance is now `RecipeOrigin`, stamped onto the recipe payload once at
+generation time and carried through every hop the recipe takes — the local
+active-session and cook-history stores, `user_meal_plans.recipe_payload`
+jsonb, and `saved_recipes`. `CookModeSurface` survives as launch context and
+decides nothing.
+
+Two consequences worth stating explicitly, because they are easy to get
+wrong later:
+
+1. **The entered fridge list has to travel too.** `FridgeClearerEntryService`
+   only ever holds the *most recent* generation's entered ingredients and is
+   cleared on completion. By the time a planner-scheduled fridge recipe is
+   cooked, that store has moved on. Counting the cook as a rescue while
+   crediting zero ingredients would be worse than not counting it, so
+   `originEnteredIngredients` rides along on the payload.
+2. **Unknown provenance is not rescue-eligible.** Recipes persisted before
+   this rule existed decode with a null origin. That must degrade to "does
+   not count", never be guessed from title, surface, or ingredients.
+
+Re-cooks are unchanged: a re-cook never counts, whatever the origin, because
+the rescue was already credited the first time.
+
+---
+
+## saved_recipes follows user_meal_plans, not recipes (20 August 2026)
+
+**Binding rule:** a saved recipe stores the **full recipe payload inline as
+jsonb**, not a foreign key into `public.recipes`.
+
+Checked against the live dev schema rather than the docs before deciding:
+`public.recipes` really is a content-less placeholder (`id`, `user_id`,
+`created_at` — `title`, `ingredients`, `steps`, `description` do not exist),
+and nothing in the app has ever written to it on either project.
+`user_meal_plans` is the pattern that actually carries recipes today, via a
+`recipe_payload` jsonb column.
+
+Generated recipes have no server-side row and no server id at all — they
+exist only as a `CookModeRecipePayload`. Saving therefore cannot depend on a
+`recipes` row existing, and identity cannot be a uuid. Identity is
+`recipe_key`: the title, trimmed, lowercased, whitespace-collapsed — the same
+notion of "the same recipe" the local cook-history store has always
+deduplicated on. Uniqueness is `(user_id, recipe_key)`; re-saving updates in
+place.
+
+Three things are deliberately **not** in that table:
+
+- **No times-cooked column.** How often something was cooked is
+  ledger/cook-session data and is derived at read time. A counter here would
+  be a second source of truth that silently drifts from the first.
+- **No row limit and no pricing/tier columns.** Pricing is a deferred
+  decision; encoding tiers into the schema now would prejudge it.
+- **No `set_updated_at` trigger.** `last_touched_at` means "when the user
+  last did something with this recipe", which only the client knows. A
+  trigger would bump it on any write at all — including a future backfill —
+  and scramble the recency sort it exists to drive.
+
+`origin` is duplicated as its own column alongside the copy inside
+`recipe_payload`, on purpose: the leaf badge and any future "show me my
+fridge rescues" filter should be an indexed column read, not a jsonb
+traversal. The service writes both from the same payload so they cannot
+diverge.
+
+---
+
 ## Pricing — NOT DECIDED (17 August 2026)
 
 Source: `docs/decisions_2026-08-17.md`, item 9.

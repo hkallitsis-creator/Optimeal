@@ -70,6 +70,55 @@ request or when a task needs the "why."
   retained. Note for tests: `currentConfiguration.uri` doesn't move for an
   imperative `push` (which is what every Home tap does) — assert on
   `currentConfiguration.last.matchedLocation`.
+- **Rescue provenance travels with the recipe (2026-08-20).** Whether a
+  completed cook counts toward the Waste Ledger is a property of the
+  RECIPE, not of the screen that launched the cook. `RecipeOrigin`
+  (`lib/models/recipe_origin.dart`) owns `isRescueEligible` and
+  `ledgerSourceValue`; `CookModeSurface` is launch context only and decides
+  nothing (its two eligibility members were removed — do not re-add them).
+  `CookModeRecipePayload.origin` is stamped once by `parseChefRecipeJson`
+  from the generating `ChefRecipeSurface`, and
+  `CookModeRecipePayload.originEnteredIngredients` is attached by
+  `FridgeClearerScreen`. Both survive the local cook stores and
+  `user_meal_plans.recipe_payload` jsonb, so a Fridge Clearer recipe cooked
+  out of the Weekly Planner counts, crediting the same ingredients as a
+  direct cook — it silently did not before. **A null origin means "not
+  rescue-eligible" and must never be guessed** from title, surface, or
+  ingredients. `FridgeClearerEntryService` is now only a fallback for
+  pre-provenance recipes and is cleared only when actually read.
+  `selectLedgerVerdict` takes `origin`; `LedgerVerdict.notCountedWrongSurface`
+  is now `notCountedNotFridgeRecipe` (copy unchanged). Reasoning:
+  `docs/DECISIONS.md`.
+- **Recipe payload jsonb codec** — `lib/models/cook_mode_recipe_codec.dart`
+  (`cookModeRecipeToJson` / `cookModeRecipeFromJson`) is the single
+  snake_case (de)serializer for anything stored as jsonb in Postgres:
+  `user_meal_plans.recipe_payload` and `saved_recipes.recipe_payload`. It
+  was lifted verbatim out of `weekly_planner_screen.dart`, tolerance and
+  all. `CookSessionStorageService` keeps its own **separate camelCase**
+  codec on purpose — it holds real on-device data, and unifying the key
+  shapes would silently drop every user's saved session and cook history.
+  Do not "consolidate" these two.
+- **Saved recipes (data layer only, dev only, 2026-08-20).**
+  `public.saved_recipes` exists on **dev** (`suuafglvrxrllnhipkiv`), not on
+  prod — migration `20260820130000`. It follows the `user_meal_plans`
+  pattern, storing the full payload inline as jsonb; it deliberately does
+  NOT reference `public.recipes`, which is a content-less placeholder
+  nothing has ever written to. Columns: `id`, `user_id`, `recipe_key`
+  (normalized title — generated recipes have no server id), `title`,
+  `recipe_payload`, `origin` (the leaf badge's source of truth, duplicated
+  from the payload on purpose so it can be indexed/filtered), `saved_at`,
+  `last_touched_at`; unique on `(user_id, recipe_key)`. No times-cooked
+  column (derived at read time), no row limit, no pricing/tier columns, no
+  `set_updated_at` trigger — see `docs/DECISIONS.md` for why each.
+  `SavedRecipesService` (`lib/services/saved_recipes_service.dart`) exposes
+  save / saveFromHistory / unsave / isSaved / watchSavedRecipes (recency
+  first) / onRecipeCooked / listSavedRecipes, plus read models over existing
+  data: `recentlyCooked()` (capped at `kRecentlyCookedReadModelLimit` = 10)
+  and `timesCooked`/`hasBeenCooked`. Supabase access sits behind the
+  injectable `SavedRecipesBackend` so the logic is unit-testable with no
+  live DB and no anonymous sign-in (currently disabled on dev). Cooking a
+  saved recipe touches it; cooking an unsaved one never silently saves it.
+  **No UI yet** — `/my-recipes` is still the placeholder screen.
 - **Auth**: Anonymous-by-default (`signInAnonymously()` on startup, wrapped in
   try/catch so it never blocks app startup on failure). Users can optionally
   link an email + password to their anonymous session via "Secure My Account"
@@ -108,8 +157,9 @@ request or when a task needs the "why."
   Planner). `structuredIngredients`/`basePortions` round-trip correctly
   through Supabase persistence. Weekly Planner no longer has a shopping
   list feature (cut 2026-08-17, removed from the UI same day — see
-  `docs/CHANGELOG.md`); the `shopping_list_items` table and its RLS policy
-  are retained with no live UI surface, see the RLS table below.
+  `docs/CHANGELOG.md`); the `shopping_list_items` table was dropped from
+  **dev** on 2026-08-20 (0 rows, zero live code references) and still exists
+  on prod — see the RLS table below.
 - **Curriculum content — two separate, unrelated systems, do not conflate:**
   1. `chefTechniqueDrawers` / `chefReferenceDrawers` (`Map<String, String>` in
      `ChefService`) — keyword-matched and injected into the AI's system
@@ -187,7 +237,9 @@ request or when a task needs the "why."
   decision not made as part of this environment split — do not conflate
   the two mechanisms or assume fixing one changes the other.
 
-## Current Supabase RLS state (all 11 public-schema tables have RLS enabled — none exposed with RLS disabled)
+## Current Supabase RLS state (all public-schema tables have RLS enabled — none exposed with RLS disabled)
+
+**DEV is now ahead of PROD.** The 2026-08-20 migrations (`20260820120000`, `20260820130000`) were applied to **dev only**: dev has 10 tables (`shopping_list_items` and `fridge_items` dropped, `saved_recipes` added), prod still has the original 11. The rows below describe **dev** unless marked. Re-verify before trusting this if time has passed.
 
 Re-audited 2026-08-15. This is the state as of that audit — re-verify before
 trusting it if significant time has passed or migrations have landed since.
@@ -196,7 +248,7 @@ trusting it if significant time has passed or migrations have landed since.
 |---|---|---|---|
 | `user_profiles` | on | owner-only (`id = auth.uid()`) | policy correct; `anon` has broader CRUD grants than needed (not exploitable — `auth.uid()` is null for `anon` callers — but a least-privilege gap) |
 | `user_meal_plans` | on | owner-only | yes, clean |
-| `shopping_list_items` | on | owner-only | clean grants, retained. Feature cut (2026-08-17) and removed from the UI — table, RLS policies, and migration are untouched and kept in place with any existing data intact; nothing in the app writes to or reads from it anymore |
+| ~~`shopping_list_items`~~ | — | — | **dropped from dev 2026-08-20** (0 rows, zero live code references). Still present on prod |
 | `waste_ledger_events` | on | owner-only | policy correct; same `anon`-too-broad gap as `user_profiles` |
 | `user_ledger_totals` | on | owner-scoped SELECT-only | **fixed 2026-08-15** — revoked stray INSERT/UPDATE/DELETE grants on `anon`/`authenticated` (writes happen only via a `SECURITY DEFINER` trigger, no direct grant needed) |
 | `recipes` | on | owner-only + public read where `user_id IS NULL` | **write policies unreachable** — see architecture facts above, not yet fixed |
@@ -204,13 +256,18 @@ trusting it if significant time has passed or migrations have landed since.
 | `ai_precision_cache` | on | 0 policies (correct default-deny) | **fixed 2026-08-15** — revoked stray full-CRUD grants on `anon`/`authenticated`; `service_role` (which bypasses RLS) retains full CRUD |
 | `api_call_cost_log` | on | 0 policies, service-role-only | clean — the reference example for "done right" |
 | `api_usage_daily` | on | owner-scoped, 3 policies | clean — `authenticated` has exactly SELECT/INSERT/UPDATE + EXECUTE on `increment_api_usage`; `anon` has none |
-| `fridge_items` | on | owner-only | clean |
+| ~~`fridge_items`~~ | — | — | **dropped from dev 2026-08-20** (0 rows, Fridge Countdown long gone). Still present on prod |
+| `saved_recipes` | on | owner-only, single ALL policy ("Users manage their own saved recipes", `auth.uid() = user_id`) | **new on dev 2026-08-20**, not on prod. `authenticated` has SELECT/INSERT/UPDATE/DELETE, `anon` none. RLS verified behaviourally against live dev: anon SELECT returns `[]`, anon INSERT rejected `42501` |
 
 **Standing lesson, confirmed 4 separate times on this project** (`api_usage_daily` 2026-08-11, `api_call_cost_log` 2026-08-13, `ai_precision_cache` and `ingredients` 2026-08-15): RLS policies and table-level grants are two independent Postgres mechanisms. A table can have perfect policies and still be wide open (or wrongly locked) at the grant layer. Always check `information_schema.role_table_grants` in addition to `pg_policies` — never treat "has a policy" as sufficient on its own. Also always explicitly grant `service_role` when locking a table to service-role-only — `bypassrls` skips RLS policies but grants no table privileges by itself.
 
 There is no `deals` table in the live database — not a bug, `paywall_screen.dart`-era code has a gracefully-failing speculative lookup for one.
 
-Known cosmetic issue, not fixed: duplicate/redundant RLS policies (an old broad `ALL` policy alongside newer per-command ones) on `user_profiles`, `ingredients`, `shopping_list_items`, `user_meal_plans` — harmless, permissive policies OR together, low-priority cleanup.
+Known cosmetic issue, not fixed: duplicate/redundant RLS policies (an old broad `ALL` policy alongside newer per-command ones) on `user_profiles`, `ingredients`, `user_meal_plans` — harmless, permissive policies OR together, low-priority cleanup. (`shopping_list_items` was on this list until it was dropped from dev.)
+
+`waste_ledger_events_source_check` on **dev** now allows `['fridge_clearer', 'cook_mode', 'custom_ai_recipe']` — the orphaned `'fridge_countdown'` value was removed 2026-08-20. Prod still allows it. In practice the app only ever writes `'fridge_clearer'` now (see the provenance rule below).
+
+**Tooling note for future DB verification:** the installed CLI (2.110.0) has **no `db query` subcommand** — CLAUDE.md claimed otherwise and was wrong. `db dump` needs Docker (not installed). What does work without Docker: `supabase inspect db table-stats --linked` (real query, lists tables + row counts), `supabase migration list --linked`, `supabase db push --linked`, and probing PostgREST directly with the committed dev publishable key (a 404 `PGRST205` means the table is gone; `?select=<col>&limit=0` returning 200 vs 400 tells you whether a column exists). Reading `pg_policies`/`pg_constraint` still needs the Dashboard SQL editor.
 
 ## Open Roadmap
 
@@ -219,7 +276,7 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 1. **Safety validator for Chef Harris output — HIGH PRIORITY, PRE-LAUNCH BLOCKER.** No check of any kind exists between OpenAI's raw output and what the user sees. `askChefHarris` only checks non-emptiness. Four surfaces each independently parse raw output via now-shared `parseChefRecipeJson` (`chef_recipe_parser.dart`, refactor already done and device-verified — see `docs/CHANGELOG.md`), but nothing validates the *content* against food-safety rules after parsing. Likely shape: a deterministic rules layer for enumerable hazards + a model-review backstop, preferring regeneration/correction over a hard block (matches this app's fail-forward pattern elsewhere). **The hazard list is Harris's to supply, do not invent one.** Per the pasteurisation-table cut (`docs/decisions_2026-08-17.md` item 8), the permanent rule for that specific hazard is already decided: flag any stated temperature below the instantaneous minimum with no hold time stated — fold this in directly rather than waiting on a full equivalence table (which was dropped). The broader per-hazard sign-off table is still blank; two entries (shellfish; raw flour and sprouts) are unsourced placeholders. `_ChefSosSheet` and `ai-recipe-precision`'s precision cards are NOT covered by whatever chokepoint gets built for `CookModeRecipePayload` — both return content outside that shape and need a separate scoping decision. `SensoryCue.mandatoryOnPoultryAndPork` (`lib/data/sensory_cue_vocabulary.dart`) already exists — true only for `juices_run_clear` — flagging that a step's absence of this cue on a poultry/pork recipe should be a validator check once this item is built; not implemented as part of the sensory cue integration itself, since it belongs here.
 2. **`ai-recipe-precision` cost/abuse exposure — HIGH PRIORITY, not fixed.** See architecture facts above for the specifics (no auth check, service-role key regardless of caller, no per-user cache key, safety-relevant client fields discarded). Do not "fix" the discarded safety fields by simply reading them without first changing the cache-key derivation (fold a hash of the safety-relevant profile fields into the key, same pattern as `ChefService._hashSafetyRelevantProfileFields`) — otherwise one user's allergy-driven substitution gets cached and served to a different user with a different or no allergy.
 3. **Drawn SVG diagram library — new, per `docs/decisions_2026-08-17.md` item 4.** Deterministic SVG diagrams (not AI-generated images, not photography): 16 cut diagrams (one per cut vocabulary value) + a closed set of 5 technique diagrams (pan crowding, cold vs hot pan, oil depth, tray spacing, staggered adds). Technique diagrams need a closed `technique_diagram_id` key list the model declares from — same pattern already proven for cut vocabulary and curriculum drawer keys. **In-context placement inside recipes is the higher-value surface and should be built first**; the browse-library shell (repurposed from the old Techniques & Media hub) is secondary. Not started.
-4. **Fridge notification replacing the Fridge tab — done, per `docs/decisions_2026-08-17.md` item 5.** A two-case local scheduled notification (device-test round F12): case 1 fires 2 days after a Fridge Clearer generation that's never cooked; case 2 (new) fires 2 days after a completed cook that left some entered ingredients unused, naming only those leftovers. One nudge per trigger, never repeated, cancelled by a relevant completed cook. `FridgeNudgeService` + `FridgeClearerEntryService`. `FridgeCountdownSheet`/`lib/widgets/fridge_countdown_sheet.dart` was deleted as dead code (2026-08-18, commit 8f23fcc) — confirmed unreachable from any live navigation path once the Fridge tab (its only entry point) was cut. **Follow-up housekeeping session removed the rest of the orphaned trail**: `FridgeCountdownService` (deleted, zero callers) and the `CookModeSurface.fridgeCountdown`/`ChefRecipeSurface.fridgeCountdown` enum members (removed — confirmed no stored data anywhere deserializes into them; the one deserialization path, `CookSessionStorageService.loadActiveSession`, already falls back to null on any unrecognized surface name). The `fridge_items` table and the DB CHECK constraint permitting historical `source='fridge_countdown'` rows in `waste_ledger_events` were deliberately left untouched — database changes are a separate, later decision, not made here.
+4. **Fridge notification replacing the Fridge tab — done, per `docs/decisions_2026-08-17.md` item 5.** A two-case local scheduled notification (device-test round F12): case 1 fires 2 days after a Fridge Clearer generation that's never cooked; case 2 (new) fires 2 days after a completed cook that left some entered ingredients unused, naming only those leftovers. One nudge per trigger, never repeated, cancelled by a relevant completed cook. `FridgeNudgeService` + `FridgeClearerEntryService`. `FridgeCountdownSheet`/`lib/widgets/fridge_countdown_sheet.dart` was deleted as dead code (2026-08-18, commit 8f23fcc) — confirmed unreachable from any live navigation path once the Fridge tab (its only entry point) was cut. **Follow-up housekeeping session removed the rest of the orphaned trail**: `FridgeCountdownService` (deleted, zero callers) and the `CookModeSurface.fridgeCountdown`/`ChefRecipeSurface.fridgeCountdown` enum members (removed — confirmed no stored data anywhere deserializes into them; the one deserialization path, `CookSessionStorageService.loadActiveSession`, already falls back to null on any unrecognized surface name). The `fridge_items` table and the DB CHECK constraint permitting historical `source='fridge_countdown'` rows in `waste_ledger_events` were left untouched at the time — that later database decision was made on 2026-08-20: both are now cleaned up **on dev** (migration `20260820120000`), still present on prod.
 5. **Waste Ledger verdicts + permanent ledger explainer — done, per `docs/decisions_2026-08-17.md` item 6.** `lib/services/ledger_verdict.dart` computes why a completed cook did or did not count toward the ledger; the ledger screen (`one_pan_cooking_roadmap_screen.dart`) carries a permanent explainer. Built 2026-08-17 (commit `7aa9aa8`); verdict-sheet presentation redesigned and device-verified in the 2026-08-18 device round (F3, commit `69f7e9c`) — one icon, one line, one CTA that actually exits to Home; not-counted copy now names only Fridge Clearer (Fridge Countdown no longer exists).
 6. **Confidence Climb / What You Learned wording — new, per `docs/decisions_2026-08-17.md` item 7, FINAL wording, not a proposal.** Replace the current celebration/tier-up copy with: **"Are you comfortable with this technique?"** — "Yes, it's automatic now" / "Not yet, still takes concentration." Resolves the "What You Learned repeats the same technique forever" problem. Live-testing this feature (celebration line at 3+ reps/month, tier-up offer at 5+ reps) is still separately needed regardless of wording. Related, not yet folded into a fix: Confidence Climb and Your Month currently read `cook_session_history_v1` unfiltered, so pre-migration keyword-matched entries mix with newer declared-`curriculum_lesson_id` entries in the same aggregation.
 7. **Waste Ledger write-failure recovery — done, wired 2026-08-18 (device round 1, I2, commit `69f7e9c`).** `PendingLedgerWriteService` + `LedgerService`'s sealed `LedgerCompletionSuccess`/`LedgerCompletionWriteFailed` result + `retryPendingWrite` are now called by a new `LedgerSyncCoordinator`, which flushes on app launch (if already online), genuine offline→online transitions, and app resume, via a testable connectivity abstraction (`connectivity_plus`). Still not separately run: an explicit airplane-mode test of the full post-cook sequence surviving a failed ledger write — worth doing, not blocking. See `docs/CHANGELOG.md` for the full design/implementation record.
@@ -236,7 +293,7 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 18. Deep link fix for the email-confirmation redirect (currently goes to `localhost:3000`) — not started, same native-platform-config caveat as above.
 19. Lower priority, not urgent: rate limiting on Edge Functions; privacy policy covering Swiss FADP + EU GDPR (needs legal review before the first external tester); Supabase Storage bucket policies (once photos/recipe images are added); duplicate RLS policy cleanup (cosmetic, see RLS table above); `UsageCapService.increment(...)` firing even when `askChefHarris`'s internal call to Supabase never actually reaches OpenAI (harmless while Harris is the only user, becomes a real problem once caps gate paying subscribers).
 20. Fridge Clearer fabricates a hardcoded fallback recipe on `_parseCookModeRecipe` returning null, instead of showing "no recipe" like the other 3 recipe-generating surfaces do. Blocks the safety validator's hard-fail mode (item 1) on this surface. Small fix: the screen already has `_generationError` state + a wired `_InlineErrorCard` used for real exceptions — the parse-failure branch just needs to set `_generationError` instead of building a fallback recipe. Not started.
-21. "Save if you liked it" — save a generated recipe plus feedback. Not scoped beyond the one-line description. Needs the `recipes` table INSERT/UPDATE/DELETE grant fixed first (see architecture facts above) or every save will silently fail via the Data API despite the RLS policies looking correct. **Dev's `recipes` table is a placeholder** (`id`/`user_id`/`created_at` only, no content columns — see `docs/CHANGELOG.md` 2026-08-17) reconstructed with zero code evidence for its real shape, since nothing in the app has ever written to this table on prod either. Must be revisited/designed for real before building this feature against dev.
+21. **"Save if you liked it" / My recipes — data layer done 2026-08-20 (dev), UI not started.** `saved_recipes` (dev only) + `SavedRecipesService` ship the whole data layer; see "Saved recipes" in Current architecture facts. **It does not use the `recipes` table at all** — that table's unreachable write grants are therefore no longer a blocker for this item (they remain a separate, unrelated loose end). Still open: the My recipes screen itself (`/my-recipes` is a deliberate placeholder), the save/unsave affordance on generated recipes, the "feedback" half of the original one-liner (never scoped), and pushing these two migrations to prod.
 22. Post-cook finish flow, two open UX gaps: (1) after the celebration → What You Learned → share card sequence, the app should return to Home once the share card is dismissed but currently sits idle; (2) if the share card is skipped/missed it's lost — should persist somewhere so it can be shared later.
 23. Custom AI Craving via Weekly Planner writes the generated recipe directly into the day slot with no confirmation step — open product question, linked to item 1 (nowhere to show a corrected recipe if the safety validator ever flags one on this surface).
 24. Custom AI Craving sheet's prompt-guidance copy (title, placeholder, 4 quick-pick chips) needs a rewrite — flagged as awkward, not rewritten. The feature's name itself ("Custom AI Craving") also reads awkwardly — naming question for Harris, not resolved.

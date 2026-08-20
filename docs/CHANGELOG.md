@@ -13,6 +13,154 @@ fidelity.
 
 ---
 
+## 2026-08-20 — Saved-recipes data layer, dev DB cleanup, recipe-carried rescue provenance
+
+Branch `feat/saved-recipes-data-layer` off main (after the Home-hub branch was
+fast-forwarded in), two commits. **Dev project only** (ref
+`suuafglvrxrllnhipkiv`) — production was never contacted; the CLI link was
+re-verified before pushing and prod reported `linked: false`.
+
+### Part 1 — provenance travels with the recipe (commit `1bd00c8`)
+
+Behavioural bug: rescue eligibility was gated on `CookModeSurface` — which
+screen launched the cook. A Fridge Clearer recipe scheduled into the Weekly
+Planner and cooked from there launched with `CookModeSurface.weeklyPlanner`,
+not rescue-eligible, so a genuine fridge rescue silently did not count. The
+binding rule and its reasoning are now in `docs/DECISIONS.md`.
+
+New `lib/models/recipe_origin.dart`. `RecipeOrigin` (`fridgeClearer` /
+`customAiRecipeCreator`) owns `isRescueEligible` and `ledgerSourceValue`, both
+removed from `CookModeSurface` — which survives as launch context and decides
+nothing. `CookModeRecipePayload` gains `origin` (stamped once by
+`parseChefRecipeJson` from the generating `ChefRecipeSurface`, so no call site
+has to remember) and `originEnteredIngredients` (attached by
+`FridgeClearerScreen`, the only place that knows it).
+
+**The second field is not optional to the fix.** `FridgeClearerEntryService`
+holds only the most recent generation's entered list and is cleared on
+completion, so by the time a planner-scheduled fridge recipe is cooked that
+store has moved on — a planner-cooked rescue would have counted as a rescue
+of zero ingredients. That store is now a fallback for pre-provenance recipes
+only, and is cleared **only when it was actually read**, so cooking a
+planner-scheduled fridge recipe can no longer wipe a different, still-pending
+generation's entry.
+
+Provenance survives the parser, the local active-session/cook-history stores,
+and `user_meal_plans.recipe_payload` jsonb. For that last hop the Weekly
+Planner's private `_cookModePayloadToJson`/`_cookModePayloadFromJson` pair was
+lifted **verbatim** into `lib/models/cook_mode_recipe_codec.dart` as
+`cookModeRecipeToJson`/`cookModeRecipeFromJson` — one shared snake_case codec
+rather than a second copy, and the shape `saved_recipes` reuses. All of the
+original's decode tolerance is preserved (camelCase fallbacks, per-field
+defaults, null on no usable steps). `CookSessionStorageService` keeps its own
+camelCase codec **deliberately**: it holds real on-device data, and unifying
+the key shapes would silently drop every user's saved session and history.
+
+Nudges follow the same rule now — a planner-cooked fridge recipe cancels
+pending nudges and runs the case-2 leftover check, as it always should have.
+
+`selectLedgerVerdict` takes `origin` instead of `surface`, and
+`LedgerVerdict.notCountedWrongSurface` is renamed `notCountedNotFridgeRecipe`
+(the old name referred to a mechanism that no longer exists). User-facing copy
+is unchanged and still correct.
+
+Tests: `ledger_verdict_test.dart` rewritten — it encoded the surface-gated
+bug. New `recipe_provenance_test.dart` covers the three signed cases end to
+end, including a real `jsonEncode`/`jsonDecode` round trip through the
+`recipe_payload` shape: (a) Fridge Clearer cooked directly counts, (b) the
+same recipe cooked from the planner counts and credits the *same* ingredients,
+(c) a custom craving counts from no surface at all. Plus re-cook and
+legacy-payload degradation. 110 passing, up from 97.
+
+### Part 2 — dev database migrations (commit `edd429e`)
+
+**Verified before writing anything.** `supabase inspect db table-stats
+--linked` (a real query — this CLI version has no `db query` subcommand, and
+`db dump` needs Docker which is not installed) showed 11 public tables, with
+`shopping_list_items` and `fridge_items` both present and **both at 0 rows**.
+Grepping `lib/` and `test/` found zero live references to `shopping_list_items`
+anywhere, and exactly one mention of `fridge_items` — in prose, inside a code
+comment. Nothing to lose.
+
+`20260820120000_drop_orphaned_shopping_list_and_fridge_items.sql`
+
+- `drop table public.shopping_list_items` — the Weekly Planner shopping list
+  was cut 2026-08-17 and the table kept "in case". It has not come back.
+- `drop table public.fridge_items` — backed Fridge Countdown, whose last code
+  was deleted across 2026-08-17/18 with database objects deliberately deferred
+  to "a separate, later decision". This is that decision.
+- Both drops take their RLS policies, indexes, unique constraints and
+  `updated_at` triggers with them. The **shared** `public.set_updated_at()`
+  function is deliberately kept.
+- Narrows `waste_ledger_events_source_check` to drop the orphaned
+  `'fridge_countdown'` value. `'cook_mode'` and `'custom_ai_recipe'` are kept
+  even though the app writes neither any more — production holds historical
+  `'cook_mode'` rows and narrowing further would make this migration unsafe
+  there. A `DO` block raises rather than silently rewriting if any
+  `fridge_countdown` row still exists.
+
+`20260820130000_create_saved_recipes.sql` — schema rationale is in
+`docs/DECISIONS.md`; the shape was chosen by probing the live dev schema, which
+confirmed `public.recipes` is a content-less placeholder while
+`user_meal_plans` carries whole recipes in jsonb.
+
+**Verified after pushing, by querying rather than reading the migration file:**
+
+- `supabase inspect db table-stats --linked` → 10 public tables;
+  `shopping_list_items` and `fridge_items` gone, `saved_recipes` present.
+- PostgREST with the dev publishable key → both dropped tables now 404
+  (`PGRST205`); `saved_recipes` answers 200 for exactly `id`, `user_id`,
+  `recipe_key`, `title`, `recipe_payload`, `origin`, `saved_at`,
+  `last_touched_at`, and 400 for `times_cooked` / `updated_at` / `tier`.
+- RLS proven behaviourally: anon-key `SELECT` returns `[]`, anon-key `INSERT`
+  is rejected `42501` ("new row violates row-level security policy").
+
+**One verification gap, stated plainly:** the policy *definitions* and the
+rewritten CHECK constraint were not read back out of `pg_policies` /
+`pg_constraint`. This CLI version (2.110.0) has no arbitrary-SQL subcommand,
+`db dump` requires Docker, and the OpenAPI root needs a secret key — so there
+was no way to run a catalog query without improvising credentials. The
+behavioural RLS probe above is real evidence the policy works; to read the
+definitions directly, run in the dev SQL editor:
+`select * from pg_policies where tablename = 'saved_recipes';` and
+`select conname, pg_get_constraintdef(oid) from pg_constraint where conrelid = 'public.waste_ledger_events'::regclass;`
+
+### Part 3 — SavedRecipesService (commit `edd429e`)
+
+`lib/services/saved_recipes_service.dart`: `save` / `saveFromHistory` /
+`unsave` / `isSaved` / `watchSavedRecipes` (recency first) / `onRecipeCooked`
+(touch-on-activity) / `listSavedRecipes`, plus two read models over existing
+data with no new table — `recentlyCooked()` capped at
+`kRecentlyCookedReadModelLimit = 10`, and `timesCooked` / `hasBeenCooked`
+derived from the local cook history.
+
+Behaviour worth remembering: cooking a saved recipe floats it back to the top;
+cooking an *unsaved* one never silently saves it. Re-saving updates in place
+and counts as activity but does not reset `saved_at`. Promoting a past cook
+keeps the leaf badge, because the stored session already carries `origin` —
+nothing is re-derived.
+
+Supabase access sits behind `SavedRecipesBackend`, the same
+injectable-abstraction pattern as `ConnectivityMonitor` and
+`FridgeNudgeScheduler`, so all 25 new tests run against an in-memory fake that
+enforces the real unique constraint and upsert semantics. **No live database
+and no anonymous sign-in required** — the latter is currently disabled on dev.
+
+`watchSavedRecipes` is an explicit `StreamController`, not `async*`: the first
+draft used `await for` over the change signal and hung on `cancel()`, since the
+generator sat parked on an event that never arrived.
+
+Cook Mode calls `onRecipeCooked` on completion, fire-and-forget.
+
+### Verification
+
+- `flutter test`: **135 passing**, up from the 97 this build started at.
+- `flutter analyze`: **54 issues** — 0 errors, 9 warnings, 45 info. Exactly the
+  baseline, zero new.
+- No production Supabase contact of any kind.
+
+---
+
 ## 2026-08-20 — Home hub, bottom nav removed app-wide, Home first-frame crash fixed
 
 Three-part build against a signed design spec. Branch
