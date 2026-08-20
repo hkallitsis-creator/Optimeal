@@ -17,6 +17,7 @@ import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/services/fridge_clearer_entry_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_verdict.dart';
+import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
@@ -712,6 +713,16 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     if (_cookSequenceStarted) return;
     _cookSequenceStarted = true;
     unawaited(_sessionStorage.clearActiveSession());
+
+    // Touch-on-activity: if this recipe is on the user's My recipes shelf,
+    // cooking it counts as activity and floats it back to the top. A no-op
+    // for a recipe that isn't saved — cooking never silently saves. Fire and
+    // forget; nothing in the post-cook sequence depends on it.
+    final cooked = _payload;
+    if (cooked != null) {
+      unawaited(SavedRecipesService.instance.onRecipeCooked(cooked));
+    }
+
     try {
       // Waste Ledger logging — gated on the RECIPE's provenance, not on
       // which screen launched this cook. A Fridge Clearer recipe scheduled
