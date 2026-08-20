@@ -11,10 +11,16 @@ import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/custom_ai_recipe_creator_sheet.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
+import 'package:optimeal/widgets/recipe_provenance_badges.dart';
 
 class WeeklyPlannerScreen extends StatefulWidget {
-  const WeeklyPlannerScreen({super.key});
+  const WeeklyPlannerScreen({super.key, this.savedRecipesService});
+
+  /// Injectable for tests. Defaults to the shared singleton, which is what
+  /// keeps My recipes consistent across surfaces.
+  final SavedRecipesService? savedRecipesService;
 
   @override
   State<WeeklyPlannerScreen> createState() => _WeeklyPlannerScreenState();
@@ -95,15 +101,19 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
   bool get _dayHasRoom => _mealsForSelectedDay().length < 2;
 
+  /// The single add sheet. Three sources, and My recipes is a **pane swap
+  /// inside this same sheet** (back arrow returns to the source list) — never
+  /// a second sheet on top. Sheets do not stack anywhere in this app.
   Future<void> _showAddMealSheet() async {
-    await AppBottomSheet.show<void>(
+    final picked = await AppBottomSheet.show<CookModeRecipePayload>(
       context: context,
       showDragHandle: true,
-      isScrollControlled: false,
+      isScrollControlled: true,
       backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => SafeArea(
-        child: _AddMealOptionsSheet(
+        child: _AddMealSheet(
           dayLabel: _days[_selectedDayIndex],
+          savedRecipesService: widget.savedRecipesService,
           onClearFridge: () => _postFrame(() async {
             context.pop();
             await _pickMealFromFridgeClearer();
@@ -114,6 +124,33 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           }),
         ),
       ),
+    );
+
+    if (picked == null || !mounted) return;
+    _addSavedRecipeToDay(picked);
+  }
+
+  /// Places a recipe chosen from the My recipes pane into the selected day.
+  ///
+  /// The full [CookModeRecipePayload] goes in — including `origin` and
+  /// `originEnteredIngredients` — so a Fridge Clearer recipe planned this way
+  /// still counts as a rescue when it is cooked. The payload codec persists
+  /// both fields into `user_meal_plans.recipe_payload`; nothing here derives
+  /// provenance from the source label.
+  void _addSavedRecipeToDay(CookModeRecipePayload recipe) {
+    if (!_dayHasRoom) return;
+    final meal = _PlannedMeal(
+      title: recipe.title,
+      source: kFromSavedMealSource,
+      aisleItems: _aisleItemsFromIngredients(recipe.ingredients,
+          structured: recipe.structuredIngredients),
+      recipe: recipe,
+    );
+    _addMeal(meal);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text('Added “${meal.title}”.'),
+          behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -249,7 +286,19 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
   String _slotKey(int dayIndex, int slotIndex) => '$dayIndex-$slotIndex';
 
-  User? _currentUser() => Supabase.instance.client.auth.currentUser;
+  /// Null when there is no signed-in user — and also when Supabase was never
+  /// initialized at all, which `Supabase.instance` asserts on rather than
+  /// returning null for. Every caller here already treats null as "keep the
+  /// local, in-memory plan and stop showing the loader", which is exactly the
+  /// right behaviour in that case too.
+  User? _currentUser() {
+    try {
+      return Supabase.instance.client.auth.currentUser;
+    } catch (e) {
+      debugPrint('WeeklyPlanner: Supabase unavailable, staying local: $e');
+      return null;
+    }
+  }
 
   Map<String, dynamic> _plannedMealToPlanRow({required String userId, required int dayIndex, required int slotIndex, required _PlannedMeal meal}) => {
     // Expected schema (adjust server-side as needed):
@@ -853,6 +902,15 @@ class _MealSlotCard extends StatelessWidget {
   final bool isSaving;
   final VoidCallback onRetry;
 
+  /// Provenance carried by the placed recipe itself. Survives the
+  /// `recipe_payload` jsonb round trip, so a planner-cooked Fridge Clearer
+  /// recipe still counts as a rescue — and this badge still shows — after a
+  /// reload.
+  bool get _isFridgeRescue => meal?.recipe?.origin?.isRescueEligible ?? false;
+
+  /// How the meal got into this day, not where the recipe came from.
+  bool get _isFromSaved => meal?.source == kFromSavedMealSource;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -998,6 +1056,24 @@ class _MealSlotCard extends StatelessWidget {
                               meal!.source,
                               style: AppDesignTokens.caption.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.70), fontWeight: FontWeight.w700),
                             ),
+                            // The leaf badge reads the placed recipe's OWN
+                            // provenance, which survives the recipe_payload
+                            // jsonb round trip — never the source label. The
+                            // "from saved" chip is the opposite: it describes
+                            // how the meal got into this day, not where the
+                            // recipe came from. A saved Fridge Clearer recipe
+                            // shows both.
+                            if (_isFridgeRescue || _isFromSaved) ...[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
+                                children: [
+                                  if (_isFridgeRescue) const ProvenanceLeafBadge(),
+                                  if (_isFromSaved) const FromSavedChip(),
+                                ],
+                              ),
+                            ],
                             if (isSaving) ...[
                               const SizedBox(height: 8),
                               Row(
@@ -1074,12 +1150,82 @@ class _MealSlotCard extends StatelessWidget {
   }
 }
 
-class _AddMealOptionsSheet extends StatelessWidget {
-  const _AddMealOptionsSheet({required this.dayLabel, required this.onClearFridge, required this.onCustomCraving});
+/// The add-meal sheet. Two panes, one sheet.
+///
+/// Pane 1 lists the three sources. Pane 2 is the My recipes picker, reached
+/// by swapping the body in place — the sheet itself never closes and a second
+/// sheet is never pushed on top, because sheets do not stack anywhere in this
+/// app. The back arrow in pane 2 returns to pane 1.
+///
+/// Fridge Clearer and Custom recipe keep their existing behaviour exactly:
+/// both close this sheet first and then run the flow the planner already had
+/// (the depth-2 fridge picker that pops a payload back, and the custom
+/// creator sheet). Only the My recipes source resolves inside this sheet, by
+/// popping the chosen payload.
+class _AddMealSheet extends StatefulWidget {
+  const _AddMealSheet({
+    required this.dayLabel,
+    required this.onClearFridge,
+    required this.onCustomCraving,
+    this.savedRecipesService,
+  });
 
   final String dayLabel;
   final VoidCallback onClearFridge;
   final VoidCallback onCustomCraving;
+  final SavedRecipesService? savedRecipesService;
+
+  @override
+  State<_AddMealSheet> createState() => _AddMealSheetState();
+}
+
+class _AddMealSheetState extends State<_AddMealSheet> {
+  bool _showingSavedPane = false;
+
+  SavedRecipesService get _service =>
+      widget.savedRecipesService ?? SavedRecipesService.instance;
+
+  /// Held here, not created in `build`: watchSavedRecipes() returns a NEW
+  /// stream per call, so subscribing from `build` would resubscribe on every
+  /// emission and spin forever.
+  late final Stream<List<SavedRecipe>> _savedStream =
+      _service.watchSavedRecipes();
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: _showingSavedPane
+          ? _SavedRecipesPickerPane(
+              savedStream: _savedStream,
+              onBack: () => setState(() => _showingSavedPane = false),
+              onPick: (recipe) => context.pop(recipe),
+            )
+          : _AddMealSourcesPane(
+              dayLabel: widget.dayLabel,
+              onClearFridge: widget.onClearFridge,
+              onCustomCraving: widget.onCustomCraving,
+              onMyRecipes: () => setState(() => _showingSavedPane = true),
+            ),
+    );
+  }
+}
+
+/// Pane 1 — the three sources.
+class _AddMealSourcesPane extends StatelessWidget {
+  const _AddMealSourcesPane({
+    required this.dayLabel,
+    required this.onClearFridge,
+    required this.onCustomCraving,
+    required this.onMyRecipes,
+  });
+
+  final String dayLabel;
+  final VoidCallback onClearFridge;
+  final VoidCallback onCustomCraving;
+  final VoidCallback onMyRecipes;
 
   @override
   Widget build(BuildContext context) {
@@ -1089,7 +1235,18 @@ class _AddMealOptionsSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Add meal for $dayLabel', style: AppDesignTokens.headline),
+          Row(
+            children: [
+              Expanded(child: Text('Add meal for $dayLabel', style: AppDesignTokens.headline)),
+              // Sheet rule: drag-down, barrier tap, AND an explicit X.
+              IconButton(
+                onPressed: () => context.pop(),
+                tooltip: 'Close',
+                icon: Icon(Icons.close_rounded, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
+                style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+              ),
+            ],
+          ),
           const SizedBox(height: 6),
           Text('Choose a fast path:', style: AppDesignTokens.body.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75))),
           const SizedBox(height: 14),
@@ -1107,6 +1264,119 @@ class _AddMealOptionsSheet extends StatelessWidget {
             subtitle: 'Type a craving or dish — Chef Harris generates a recipe for this day.',
             accent: AppDesignTokens.ctaTerracotta,
             onTap: onCustomCraving,
+          ),
+          const SizedBox(height: 10),
+          _SheetOptionTile(
+            icon: Icons.bookmark_rounded,
+            // SIGNED-CONTENT PLACEHOLDER (title + subtitle)
+            title: 'My recipes',
+            subtitle: 'Pick something you already saved.',
+            accent: AppDesignTokens.ctaTerracotta,
+            onTap: onMyRecipes,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pane 2 — the My recipes picker, in the same sheet.
+///
+/// Rows come straight from the service in recency order (`last_touched_at`
+/// desc); never re-sorted here. Tap to place — no drag.
+class _SavedRecipesPickerPane extends StatelessWidget {
+  const _SavedRecipesPickerPane({required this.savedStream, required this.onBack, required this.onPick});
+
+  /// Owned by [_AddMealSheetState] — see the note there on why this is not
+  /// created here.
+  final Stream<List<SavedRecipe>> savedStream;
+  final VoidCallback onBack;
+  final ValueChanged<CookModeRecipePayload> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, AppDesignTokens.spaceXS, AppDesignTokens.spaceSM, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: onBack,
+                tooltip: 'Back',
+                icon: const Icon(Icons.arrow_back, color: AppDesignTokens.textCharcoal),
+                style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+              ),
+              // SIGNED-CONTENT PLACEHOLDER
+              const Expanded(child: Text('My recipes', style: AppDesignTokens.headline)),
+              IconButton(
+                onPressed: () => context.pop(),
+                tooltip: 'Close',
+                icon: Icon(Icons.close_rounded, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
+                style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          StreamBuilder<List<SavedRecipe>>(
+            stream: savedStream,
+            builder: (context, snapshot) {
+              final saved = snapshot.data ?? const <SavedRecipe>[];
+              if (saved.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 12, 4, 16),
+                  child: Text(
+                    // SIGNED-CONTENT PLACEHOLDER
+                    'Nothing saved yet — bookmark a recipe and it will show up here.',
+                    style: AppDesignTokens.body.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.72), height: 1.4),
+                  ),
+                );
+              }
+              return ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 360),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: saved.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, i) {
+                    final item = saved[i];
+                    return Material(
+                      color: AppDesignTokens.surfaceCream,
+                      borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+                      child: InkWell(
+                        onTap: () => onPick(item.recipe),
+                        borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  item.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppDesignTokens.deepForest),
+                                ),
+                              ),
+                              if (item.isFridgeRescue) ...[
+                                const SizedBox(width: 8),
+                                const ProvenanceLeafBadge(compact: true),
+                              ],
+                              const SizedBox(width: 8),
+                              Icon(Icons.chevron_right_rounded, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.55)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
           ),
         ],
       ),

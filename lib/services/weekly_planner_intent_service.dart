@@ -2,6 +2,16 @@ import 'package:flutter/foundation.dart';
 
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 
+/// The [WeeklyPlannerAddMealIntent.source] / `_PlannedMeal.source` value that
+/// marks a meal placed from the user's My recipes shelf, rather than
+/// generated for that slot. The Weekly Planner reads it to decide whether to
+/// show the "from saved" chip on a planned row.
+///
+/// This is a routing marker, NOT provenance. Whether a planned meal counts as
+/// a fridge rescue is decided by `CookModeRecipePayload.origin`, which travels
+/// inside the payload — never by this string.
+const String kFromSavedMealSource = 'From saved'; // SIGNED-CONTENT PLACEHOLDER
+
 /// Lightweight cross-screen bridge for adding a generated recipe into the
 /// Weekly Planner.
 ///

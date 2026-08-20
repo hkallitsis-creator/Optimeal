@@ -8,32 +8,33 @@ import 'package:optimeal/theme.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/save_recipe_bookmark_button.dart';
 
-/// A compact celebration bottom sheet shown as the definitive last screen
-/// after a completed cook logs a counted Waste Ledger rescue.
+/// Renders the "not counted" / "write failed and queued" Waste Ledger
+/// verdicts (docs/DECISIONS.md "Waste Ledger legibility — option B"). The
+/// "counted" verdict has no equivalent widget — [WasteLedgerCelebrationSheet]
+/// already serves that role; this sheet is only ever shown for the other
+/// cases (never both in the same sequence).
 ///
-/// Redesigned (device-test round F3): one icon, one line of copy, one CTA
-/// that leaves the finished cook and lands on Home — where the full ledger
-/// totals (and the itemized ingredient list, via the This Week card) are
-/// actually visible. Replaces the old multi-line layout and the "Well
-/// done" button, which only popped the sheet and left Cook Mode's
-/// already-finished screen sitting there with nowhere else to go.
+/// Extracted from `one_pan_cooking_roadmap_screen.dart` (where it was the
+/// private `_LedgerVerdictSheet`) so the CTA-last rule below can be asserted
+/// by a widget test.
 ///
-/// **The exit-to-Home CTA MUST remain the last element** in this column. The
-/// optional bookmark added alongside it is quiet, sits in the header row, and
-/// is never a step in the sequence: no copy, no prompt, nothing to dismiss.
-class WasteLedgerCelebrationSheet extends StatelessWidget {
-  const WasteLedgerCelebrationSheet({
+/// **The signed post-cook sequence is load-bearing.** Verdict copy is
+/// unchanged, and the exit-to-Home CTA MUST remain the last element in this
+/// column — it is the only working way out of a finished cook (device-test
+/// round F3). The optional bookmark is quiet, sits in the header row beside
+/// the icon, and is never a step: no copy, no prompt, nothing to dismiss.
+class LedgerVerdictSheet extends StatelessWidget {
+  const LedgerVerdictSheet({
     super.key,
-    required this.ingredientsRescued,
-    required this.lifetimeIngredientsRescued,
+    required this.line,
     this.recipe,
     this.service,
   });
 
-  final List<String> ingredientsRescued;
-  final int lifetimeIngredientsRescued;
+  final String line;
 
-  /// When present, a quiet bookmark appears in the header row.
+  /// When present, a quiet bookmark appears in the header row. Absent for the
+  /// demo recipe, which has nothing meaningful to save.
   final CookModeRecipePayload? recipe;
 
   /// Injectable for tests. Defaults to the shared singleton.
@@ -43,15 +44,7 @@ class WasteLedgerCelebrationSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-
-    final rescuedCount = ingredientsRescued
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .length;
-
-    final line =
-        'Nice rescue — $rescuedCount ingredient${rescuedCount == 1 ? '' : 's'} saved, '
-        '$lifetimeIngredientsRescued lifetime.';
+    final payload = recipe;
 
     return Material(
       color: AppDesignTokens.surfaceCream,
@@ -67,20 +60,18 @@ class WasteLedgerCelebrationSheet extends StatelessWidget {
                   height: 44,
                   width: 44,
                   decoration: BoxDecoration(
-                    color:
-                        AppDesignTokens.ctaTerracotta.withValues(alpha: 0.14),
+                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                        color: AppDesignTokens.ctaTerracotta
-                            .withValues(alpha: 0.18)),
+                        color:
+                            AppDesignTokens.deepForest.withValues(alpha: 0.18)),
                   ),
-                  child: const Icon(Icons.eco_rounded,
-                      color: AppDesignTokens.ctaTerracotta, size: 22),
+                  child: const Icon(Icons.eco_outlined,
+                      color: AppDesignTokens.deepForest, size: 22),
                 ),
                 const Spacer(),
-                if (recipe != null)
-                  SaveRecipeBookmarkButton(
-                      recipe: recipe!, service: service),
+                if (payload != null)
+                  SaveRecipeBookmarkButton(recipe: payload, service: service),
               ],
             ),
             const SizedBox(height: 14),

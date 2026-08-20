@@ -91,7 +91,15 @@ class AppRouter {
         GoRoute(
           path: AppRoutes.recipe,
           name: 'recipe',
-          builder: (context, state) => const RecipeDetailsScreen(),
+          // `extra` carries the recipe to show (My recipes taps a saved card
+          // through here). Without one this falls back to the screen's
+          // long-standing static demo body.
+          builder: (context, state) {
+            final extra = state.extra;
+            return RecipeDetailsScreen(
+              recipe: extra is CookModeRecipePayload ? extra : null,
+            );
+          },
         ),
         GoRoute(
           path: AppRoutes.onePanCookingRoadmap,

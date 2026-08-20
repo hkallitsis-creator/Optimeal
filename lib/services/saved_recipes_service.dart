@@ -81,8 +81,21 @@ class SupabaseSavedRecipesBackend implements SavedRecipesBackend {
 
   SupabaseClient get _db => Supabase.instance.client;
 
+  /// Null when there is no signed-in user — and also when Supabase was never
+  /// initialized, which `Supabase.instance` asserts on rather than returning
+  /// null for. Every caller in [SavedRecipesService] reads this before doing
+  /// anything and already treats null as "degrade quietly, save nothing", so
+  /// an uninitialized client lands on exactly the right behaviour instead of
+  /// throwing out of an unguarded getter.
   @override
-  String? get currentUserId => _db.auth.currentUser?.id;
+  String? get currentUserId {
+    try {
+      return _db.auth.currentUser?.id;
+    } catch (e) {
+      debugPrint('SavedRecipesService: Supabase unavailable: $e');
+      return null;
+    }
+  }
 
   @override
   Future<void> upsert(Map<String, dynamic> row) async {
