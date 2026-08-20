@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:optimeal/widgets/home_glyph_button.dart';
 import '../theme.dart';
 
 class RecipeDetailsScreen extends StatelessWidget {
@@ -19,16 +20,21 @@ class RecipeDetailsScreen extends StatelessWidget {
             pinned: true,
             backgroundColor: theme.colorScheme.primaryContainer,
             foregroundColor: theme.colorScheme.onSurface,
-            leading: IconButton(
-              icon: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: (isDark ? DarkModeColors.darkSurface : LightModeColors.lightSurface).withValues(alpha: 0.80),
-                  shape: BoxShape.circle,
+            // Depth-2 (reached only through another screen): back plus the
+            // quiet home glyph, now that the bottom nav bar is gone.
+            leadingWidth: kBackWithHomeLeadingWidth,
+            leading: BackWithHomeLeading(
+              back: IconButton(
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: (isDark ? DarkModeColors.darkSurface : LightModeColors.lightSurface).withValues(alpha: 0.80),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.arrow_back),
                 ),
-                child: const Icon(Icons.arrow_back),
+                onPressed: () => context.pop(),
               ),
-              onPressed: () => context.pop(),
             ),
             flexibleSpace: FlexibleSpaceBar(
               background: Hero(

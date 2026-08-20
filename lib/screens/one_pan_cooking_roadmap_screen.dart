@@ -24,6 +24,7 @@ import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/confidence_tier_up_sheet.dart';
 import 'package:optimeal/widgets/curriculum_drawer_content.dart';
 import 'package:optimeal/widgets/diagram_sheet.dart';
+import 'package:optimeal/widgets/home_glyph_button.dart';
 import 'package:optimeal/widgets/post_cook_share_card.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 import 'package:optimeal/widgets/waste_ledger_celebration_sheet.dart';
@@ -1341,19 +1342,25 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          onPressed: () => context.pop(_cookSequenceStarted),
-          icon: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface.withValues(alpha: 0.9),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.18)),
+        // Depth-2: back is unchanged (Cook Mode's back-press semantics are
+        // deliberately untouched), with the quiet home glyph beside it now
+        // that there's no bottom nav bar to escape through.
+        leadingWidth: kBackWithHomeLeadingWidth,
+        leading: BackWithHomeLeading(
+          back: IconButton(
+            onPressed: () => context.pop(_cookSequenceStarted),
+            icon: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.18)),
+              ),
+              child: Icon(Icons.arrow_back, color: theme.colorScheme.onSurface),
             ),
-            child: Icon(Icons.arrow_back, color: theme.colorScheme.onSurface),
+            tooltip: 'Back to Plan',
           ),
-          tooltip: 'Back to Plan',
         ),
         title: Text('Cook Mode',
             style: theme.textTheme.titleLarge

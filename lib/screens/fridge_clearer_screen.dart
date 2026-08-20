@@ -22,6 +22,7 @@ import 'package:optimeal/theme.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/culinary_matrix_card.dart' as matrix_widgets;
+import 'package:optimeal/widgets/home_glyph_button.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 import 'package:optimeal/widgets/weekday_picker_sheet.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
@@ -658,6 +659,24 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     }
   }
 
+  Widget _buildBackButton({required bool pop}) {
+    return IconButton(
+      onPressed: pop ? () => context.pop() : () => context.go(AppRoutes.home),
+      tooltip: pop ? 'Back' : 'Home',
+      icon: Container(
+        padding: const EdgeInsets.all(AppDesignTokens.spaceXS),
+        decoration: BoxDecoration(
+          color: AppDesignTokens.surfaceCream.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+          border: Border.all(
+              color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+        ),
+        child:
+            const Icon(Icons.arrow_back, color: AppDesignTokens.textCharcoal),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = context.watch<UserProfileController>().profile;
@@ -668,21 +687,17 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          onPressed: () => context.go(AppRoutes.home),
-          tooltip: 'Home',
-          icon: Container(
-            padding: const EdgeInsets.all(AppDesignTokens.spaceXS),
-            decoration: BoxDecoration(
-              color: AppDesignTokens.surfaceCream.withValues(alpha: 0.92),
-              borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
-              border: Border.all(
-                  color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
-            ),
-            child: const Icon(Icons.arrow_back,
-                color: AppDesignTokens.textCharcoal),
-          ),
-        ),
+        // Two depths, one screen. Opened straight off the Home hub this is
+        // depth-1 — back only, and back means Home. Opened as the Weekly
+        // Planner's picker (returnCookModePayload) it's depth-2 — back pops
+        // to the planner it must return a payload to, and the quiet home
+        // glyph is the escape hatch the bottom nav bar used to be.
+        leadingWidth: widget.returnCookModePayload
+            ? kBackWithHomeLeadingWidth
+            : null,
+        leading: widget.returnCookModePayload
+            ? BackWithHomeLeading(back: _buildBackButton(pop: true))
+            : _buildBackButton(pop: false),
         title: const Text('Fridge Clearer', style: AppDesignTokens.headline),
         centerTitle: false,
       ),

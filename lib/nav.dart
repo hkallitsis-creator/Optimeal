@@ -1,7 +1,10 @@
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
-import 'package:optimeal/screens/main_layout.dart';
+import 'package:optimeal/screens/home_dashboard_screen.dart';
+import 'package:optimeal/screens/my_recipes_screen.dart';
 import 'package:optimeal/screens/onboarding_screen.dart';
+import 'package:optimeal/screens/techniques_media_screen.dart';
+import 'package:optimeal/screens/weekly_planner_screen.dart';
 import 'package:optimeal/screens/paywall_screen.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
@@ -62,27 +65,28 @@ class AppRouter {
         GoRoute(
           path: AppRoutes.home,
           name: 'home',
+          // The bottom-nav shell (MainLayout) is gone — Home is now a plain
+          // route rendering the one-screen hub directly. Weekly Planner and
+          // Techniques, which used to be tab indexes inside that shell, are
+          // ordinary pushed routes below.
           pageBuilder: (context, state) => const NoTransitionPage(
-            child: MainLayout(),
+            child: HomeDashboardScreen(),
           ),
-        ),
-        GoRoute(
-          path: AppRoutes.homeTabPath,
-          name: 'home_tab',
-          pageBuilder: (context, state) {
-            final index =
-                int.tryParse(state.pathParameters['index'] ?? '') ?? 0;
-            return NoTransitionPage(child: MainLayout(currentIndex: index));
-          },
         ),
         GoRoute(
           path: AppRoutes.weeklyPlan,
           name: 'weekly_plan',
-          // Keep bottom navigation persistent when navigating by route.
-          // Index 1 — Weekly moved up a slot when the Fridge tab was cut
-          // (docs/decisions_2026-08-17.md item 5).
-          pageBuilder: (context, state) =>
-              const NoTransitionPage(child: MainLayout(currentIndex: 1)),
+          builder: (context, state) => const WeeklyPlannerScreen(),
+        ),
+        GoRoute(
+          path: AppRoutes.techniques,
+          name: 'techniques',
+          builder: (context, state) => const TechniquesMediaScreen(),
+        ),
+        GoRoute(
+          path: AppRoutes.myRecipes,
+          name: 'my_recipes',
+          builder: (context, state) => const MyRecipesScreen(),
         ),
         GoRoute(
           path: AppRoutes.recipe,
@@ -147,12 +151,18 @@ class AppRouter {
 /// Route path constants
 class AppRoutes {
   static const String home = '/';
-  static const String homeTabPath = '/tab/:index';
-  static String homeTab(int index) => '/tab/$index';
 
   static const String onboarding = '/onboarding';
   static const String recipe = '/recipe';
   static const String weeklyPlan = '/weekly-plan';
+
+  /// Techniques & Media. Was bottom-nav tab index 2 ('/tab/2') until the nav
+  /// bar was removed; now a plain depth-1 route off the Home hub.
+  static const String techniques = '/techniques';
+
+  /// Placeholder destination behind the Home hub's "My recipes" tile — the
+  /// route is live now, the real screen ships later. See MyRecipesScreen.
+  static const String myRecipes = '/my-recipes';
   static const String onePanCookingRoadmap = '/one-pan-cooking-roadmap';
   static const String aiFridgeScrapGenerator = '/ai-fridge-scrap-generator';
   static const String fridgeClearerPicker = '/fridge-clearer-picker';
