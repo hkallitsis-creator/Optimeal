@@ -186,11 +186,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   /// there's no bottom sheet to deep-link to directly, so it's opened here
   /// on first frame instead. Runs once; the query param isn't re-checked on
   /// rebuild.
+  ///
+  /// The [GoRouterState.of] lookup itself must stay inside the post-frame
+  /// callback: it's an InheritedWidget dependency, and reading it during
+  /// [initState] crashes with
+  /// `dependOnInheritedWidgetOfExactType<_ModalScopeStatus>() was called
+  /// before _HomeDashboardScreenState.initState() completed`.
   void _checkDeepLinkIntent() {
-    final open = GoRouterState.of(context).uri.queryParameters['open'];
-    if (open != 'ai_generator') return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      final open = GoRouterState.of(context).uri.queryParameters['open'];
+      if (open != 'ai_generator') return;
       HomeDashboardScreen._showCustomAiRecipeCreator(context);
     });
   }
