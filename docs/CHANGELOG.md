@@ -13,6 +13,187 @@ fidelity.
 
 ---
 
+## 2026-08-20 — Home hub, bottom nav removed app-wide, Home first-frame crash fixed
+
+Three-part build against a signed design spec. Branch
+`feat/home-hub-nav-removal`, two commits. No database work of any kind; the
+production Supabase project was not touched.
+
+### Part 1 — the crash (commit `a53fe79`)
+
+Live device crash on Home:
+
+```
+dependOnInheritedWidgetOfExactType<_ModalScopeStatus>() was called before
+_HomeDashboardScreenState.initState() completed
+```
+
+Cause: `_checkDeepLinkIntent()` read `GoRouterState.of(context)`
+**synchronously inside `initState`**, before moving on to a post-frame
+callback. The router-state read is itself an InheritedWidget dependency, so
+it had to be the thing that moved, not just the work that followed it. The
+lookup now happens inside the existing `addPostFrameCallback`, behind the
+`mounted` guard. Behaviour is otherwise identical: still a one-shot check,
+still only fires the Custom AI Recipe Creator when `?open=ai_generator` is
+present.
+
+**Landmine sweep.** Every `State` in `lib/` was checked for InheritedWidget
+lookups in `initState` or a `State` constructor. `home_dashboard_screen.dart`
+was the only offender. Two things were reviewed and deliberately left alone:
+
+- `profile_screen.dart:66` and `_ChefSuggestionSheetState._load()` call
+  `context.read<UserProfileController>()` in `initState`. Provider's `read`
+  resolves via `getElementForInheritedWidgetOfExactType` and registers **no**
+  dependency — this is explicitly supported in `initState` and cannot produce
+  this crash. (The `_ChefSuggestionSheet` one is moot now; Part 3 deleted it.)
+- Home's own `ModalRoute.of(context)` was already correctly placed in
+  `didChangeDependencies`.
+
+`test/screens/home_dashboard_screen_test.dart` pumps Home inside a real
+GoRouter and asserts no exception on first frame, including on the
+`/?open=ai_generator` deep-link entry. Verified to have teeth: reverting the
+fix reproduces the exact `_ModalScopeStatus` error in the test.
+
+### Part 2 — bottom nav removed app-wide (commit `0e695c7`)
+
+`lib/screens/main_layout.dart` (`MainLayout`) is **deleted**. It was a
+three-tab shell (Home / Weekly / Techniques & Media) that swapped `_pages`
+by index while `GoRouter` addressed it through `/` and `/tab/:index`.
+
+Every route stays registered and reachable — this is a UI-architecture
+change, not a route deletion. The tab indexes became real routes:
+
+| was | now |
+|---|---|
+| `MainLayout(currentIndex: 0)` at `/` | `HomeDashboardScreen` at `/` |
+| `MainLayout(currentIndex: 1)` at `/weekly-plan` | `WeeklyPlannerScreen` at `/weekly-plan` |
+| `MainLayout(currentIndex: 2)` at `/tab/2` | `TechniquesMediaScreen` at `/techniques` (new constant) |
+| — | `MyRecipesScreen` at `/my-recipes` (new placeholder) |
+
+`AppRoutes.homeTabPath` and `AppRoutes.homeTab(int)` are gone. There was
+never a `ShellRoute`/`StatefulShellRoute` to unwind — the shell was a plain
+widget the router pointed at — so nothing else in the route tree moved.
+
+**Depth rule.** Depth-1 screens (opened straight off Home: Fridge Clearer,
+Custom recipe creator, Weekly Planner, My recipes, Techniques, Profile) keep
+a back button only, and back lands on Home. Depth-2+ screens keep their back
+control unchanged and gain a quiet home glyph beside it in the app bar.
+
+New shared widget `lib/widgets/home_glyph_button.dart`:
+`HomeGlyphButton` (small outlined `Icons.home_outlined`, deep forest, no
+label, no background container), `BackWithHomeLeading` (the screen's own back
+control with the glyph next to it), and `kBackWithHomeLeadingWidth` for the
+app bar's `leadingWidth` — the default 56dp leading slot only fits one
+button. Applied to:
+
+- **Cook Mode** (`one_pan_cooking_roadmap_screen.dart`) — glyph only. Cook
+  Mode's back-press semantics were explicitly out of scope and are unchanged.
+- **Recipe details** (`recipe_details_screen.dart`, `SliverAppBar`).
+- **The Weekly Planner's Fridge Clearer picker.** `FridgeClearerScreen`
+  serves both depths off one flag: opened from Home
+  (`returnCookModePayload: false`) it is depth-1 and back goes Home, as
+  before; opened as the planner's picker it is depth-2, so back now **pops to
+  the planner** it owes a `CookModeRecipePayload` to instead of jumping Home,
+  and the glyph is the escape hatch the nav bar used to be.
+
+Two registered routes are orphans and were left that way — they were
+unreachable before this build too, so this is not a regression:
+`AppRoutes.recipe` (`RecipeDetailsScreen`, no caller anywhere; it still got
+the glyph, per spec) and `AppRoutes.culinaryMasterclass`
+(`CulinaryMasterclassScreen`, a "coming soon" stub with no caller).
+`AppRoutes.paywall` was left alone: it is reached from onboarding and from
+`UpgradePromptSheet`, not "only through a depth-1 screen", so the depth rule
+does not cleanly apply to it.
+
+### Part 3 — the Home hub (commit `0e695c7`)
+
+`HomeDashboardScreen` rebuilt as a single screen with **no scroll**. Six
+zones, top-anchored, with exactly one `Spacer` absorbing all surplus height:
+
+1. Greeting — two short lines, profile avatar circle at top-right; avatar
+   opens Profile.
+2. Fridge Clearer hero — full-width cream card, 23sp title, one-line
+   tagline, oversized (56) terracotta glyph.
+3. Custom recipe slim row — full-width cream row, 22 terracotta glyph,
+   one-line label, chevron; opens the Custom AI Recipe Creator sheet.
+4. Tile shelf — three equal-flex tiles, icon (24) + one-word label, no state
+   text and no previews: Weekly · My recipes · Techniques.
+5. The one flexible gap.
+6. Rescue strip pinned bottom — a **sage** panel (sage inside the layout
+   carries teaching-moment semantics), leaf glyph, rescue count, and a "how?"
+   affordance opening the existing, unchanged Waste Ledger explainer sheet.
+
+Palette is fixed and comes entirely from `AppDesignTokens`: sage background,
+cream cards, terracotta CTAs, deep forest text. The screen's private
+`_deepForest`/`_terracotta` constants are deleted. Hero and slim row use the
+**same** cream via one shared `_CreamSurface` — dominance is size, type and
+glyph scale only, no color-break containers anywhere.
+
+**Cut from Home**, with the dead code they left behind: the
+Techniques/Recipe Library card (and its false "saved favorites" copy), the
+Weekly Planner card, Recently Cooked (card, `_RecentlyCookedSheet`,
+`_RecentlyCookedRow`, `_showRecentlyCooked`), the This Week card, the
+greeting paragraph, the diet/allergy pills (`_PreferenceBadge`,
+`_dietLabel`), and the "Get an idea" chip (`_GetIdeaChip`).
+
+Three knock-on deletions worth flagging, since none was named in the spec's
+cut list but each followed from it:
+
+- **`_ChefSuggestionSheet` and `kChefHarrisChatFreeDailyLimit` are gone.**
+  "Get an idea" was their only entry point, and a private unreachable class
+  is an analyzer warning, not neutral. This removes the **Chef Harris chat
+  cap** as a live gating surface — one of the four listed under CLAUDE.md
+  Roadmap item 16. Nothing in the app now reads
+  `UsageFeature.chefHarrisChat`. Needs a product decision on where (or
+  whether) that surface comes back.
+- **Technique of the Week (card + sheet) is gone from Home.** No zone exists
+  for it in the six-zone layout, and both classes were private to this file.
+  The `techniqueOfTheWeek()` helper in `curriculum_drawer_content.dart` is
+  public and untouched, so the feature can be re-surfaced cheaply.
+- **`YourMonthCard` is no longer mounted anywhere.** It is a public widget in
+  its own file, so it produces no warning and was **kept** rather than
+  deleted — cutting a documented retention feature was not part of the signed
+  spec.
+
+**The resume-in-progress-cook banner was kept.** It is not in the cut list,
+it is conditional and fixed-height (so the single `Spacer` still owns all
+surplus), and it is the only way back into an interrupted Cook Mode session.
+
+Every user-facing string written in this build is marked
+`// SIGNED-CONTENT PLACEHOLDER`.
+
+Sheet rule (never stack; drag-down + barrier tap + an X): already satisfied
+by `AppBottomSheet` for the sheets this build touches — it hardcodes
+`isDismissible: true` / `enableDrag: true` and the ledger explainer carries
+its own X. The Custom AI Recipe Creator → Generated Recipe Actions pair is
+sequential (the second `show` is awaited after the first returns), not
+stacked. No sheet was refactored.
+
+### Layout bug caught by the tests
+
+The tile shelf `Row` was first written with
+`crossAxisAlignment: CrossAxisAlignment.stretch`. A `Column` hands its
+non-flexible children **unbounded** height, and a stretching `Row` forwards
+that infinity straight to its children — `BoxConstraints forces an infinite
+height` on every pump. Fixed by dropping the stretch; the three tiles carry
+identical content shapes and match height anyway.
+
+### Verification
+
+- `flutter test`: **97 passing**, up from the 82 baseline. 15 new tests in
+  `test/screens/home_dashboard_screen_test.dart` — first-frame crash
+  regression (×2), all six zones present, exactly one `Spacer` and no
+  `Scrollable`, no overflow at a 360×640 viewport, no
+  `BottomNavigationBar`/`NavigationBar` anywhere in the tree, none of the cut
+  cards present, and navigation for hero / all three tiles / avatar / slim
+  row / "how?" / the depth-2 home glyph.
+- `flutter analyze`: **54 issues, down from the 58 baseline.** Zero new.
+- Note for future navigation tests: `currentConfiguration.uri` does **not**
+  move for an imperative `push`, which is what every Home tap does. Assert on
+  `currentConfiguration.last.matchedLocation` instead.
+
+---
+
 ## 2026-08-17 — Dev/prod separation closed: dev Supabase project provisioned
 
 Closes the roadmap item tracking dev/prod separation (previously open,

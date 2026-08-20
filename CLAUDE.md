@@ -17,6 +17,59 @@ request or when a task needs the "why."
 
 ## Current architecture facts (confirmed from real source, not assumed)
 
+- **Navigation — no bottom nav bar (2026-08-20).** The three-tab shell
+  (`MainLayout`, `lib/screens/main_layout.dart`) is **deleted**, along with
+  `AppRoutes.homeTabPath` / `AppRoutes.homeTab(int)` (`/tab/:index`). There
+  was never a `ShellRoute` — the shell was a plain widget GoRouter pointed
+  at — so the route tree is now entirely flat `GoRoute`s in `lib/nav.dart`.
+  Its former tabs are ordinary routes: Home at `/`
+  (`HomeDashboardScreen`), Weekly Planner at `/weekly-plan`, Techniques &
+  Media at `AppRoutes.techniques` (`/techniques`, was `/tab/2`). New:
+  `AppRoutes.myRecipes` (`/my-recipes`) → `MyRecipesScreen`, a deliberate
+  **placeholder** (app bar + centered text, nothing else) so the Home tile
+  and route are live now; the real screen is Roadmap item 21's territory.
+  **Depth rule**: depth-1 screens (opened straight off Home — Fridge
+  Clearer, Custom recipe creator, Weekly Planner, My recipes, Techniques,
+  Profile) have a back button only, and back lands on Home. Depth-2+
+  screens keep their back control unchanged and add a quiet home glyph
+  beside it, via the shared `lib/widgets/home_glyph_button.dart`
+  (`HomeGlyphButton`, `BackWithHomeLeading`, `kBackWithHomeLeadingWidth` —
+  the default 56dp leading slot only fits one button). Applied to Cook
+  Mode (glyph only — its back-press semantics are untouched), recipe
+  details, and the Weekly Planner's Fridge Clearer picker.
+  `FridgeClearerScreen` serves both depths off its `returnCookModePayload`
+  flag: from Home it's depth-1 and back goes Home; as the planner's picker
+  it's depth-2, so back now pops to the planner it owes a payload to.
+  Orphan routes left orphaned (unreachable before this change too, not a
+  regression): `AppRoutes.recipe` (`RecipeDetailsScreen`) and
+  `AppRoutes.culinaryMasterclass`. `AppRoutes.paywall` is exempt from the
+  depth rule — it's reached from onboarding and `UpgradePromptSheet`, not
+  only through a depth-1 screen.
+- **Home is a one-screen, no-scroll hub (2026-08-20).**
+  `HomeDashboardScreen` is six top-anchored zones with exactly one `Spacer`
+  absorbing surplus height: greeting + profile avatar → Fridge Clearer hero
+  card → custom recipe slim row → three equal tiles (Weekly · My recipes ·
+  Techniques) → the flexible gap → a sage rescue strip pinned bottom whose
+  "how?" opens the existing Waste Ledger explainer sheet. All color comes
+  from `AppDesignTokens` (sage background, cream cards, terracotta CTAs,
+  deep forest text) — the screen's old private `_deepForest`/`_terracotta`
+  constants are gone. Hero and slim row share one `_CreamSurface`:
+  hierarchy is size/type/glyph scale only, never a color break. Strings
+  written in that build are marked `// SIGNED-CONTENT PLACEHOLDER`. The
+  conditional resume-in-progress-cook banner was kept (only route back into
+  an interrupted Cook Mode session). Cut, with dead code removed: Recipe
+  Library card, Weekly Planner card, Recently Cooked (card + sheet), This
+  Week card, greeting paragraph, diet/allergy pills, "Get an idea" chip,
+  and Technique of the Week (card + sheet — no zone for it; the public
+  `techniqueOfTheWeek()` helper survives). **Two consequences that need a
+  product decision, not yet made**: (a) deleting "Get an idea" deleted
+  `_ChefSuggestionSheet` and `kChefHarrisChatFreeDailyLimit` with it, so the
+  Chef Harris chat cap is no longer a live gating surface and nothing reads
+  `UsageFeature.chefHarrisChat` — see Roadmap item 16; (b) `YourMonthCard`
+  is no longer mounted anywhere, though the widget file is deliberately
+  retained. Note for tests: `currentConfiguration.uri` doesn't move for an
+  imperative `push` (which is what every Home tap does) — assert on
+  `currentConfiguration.last.matchedLocation`.
 - **Auth**: Anonymous-by-default (`signInAnonymously()` on startup, wrapped in
   try/catch so it never blocks app startup on failure). Users can optionally
   link an email + password to their anonymous session via "Secure My Account"
@@ -172,13 +225,13 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 7. **Waste Ledger write-failure recovery — done, wired 2026-08-18 (device round 1, I2, commit `69f7e9c`).** `PendingLedgerWriteService` + `LedgerService`'s sealed `LedgerCompletionSuccess`/`LedgerCompletionWriteFailed` result + `retryPendingWrite` are now called by a new `LedgerSyncCoordinator`, which flushes on app launch (if already online), genuine offline→online transitions, and app resume, via a testable connectivity abstraction (`connectivity_plus`). Still not separately run: an explicit airplane-mode test of the full post-cook sequence surviving a failed ledger write — worth doing, not blocking. See `docs/CHANGELOG.md` for the full design/implementation record.
 8. **Waste Ledger provenance rule — done (device-test round F13, commit 12b9f6c).** `LedgerService.freshProduceOnly` and its blocklist are deleted entirely, replaced with `LedgerService.computeRescuedIngredients`: an ingredient counts as rescued iff (a) the user entered it into Fridge Clearer, (b) it appears in the completed cook, and (c) it isn't on the new `lib/data/pantry_staples.dart` exclusion list (~20 items, content-only, Harris edits directly). Counting is the default now; exclusion is the exception — fixes the old blocklist wrongly excluding genuinely perishable items (potatoes, onions, garlic, ginger) and closes the gap where an ingredient the recipe added on its own could be credited as "rescued." What the user entered is persisted by `FridgeClearerEntryService` (shared with the F12 nudge) since it doesn't otherwise survive to cook-completion time.
 9. **Four hardcoded food examples in the always-on system prompt** (`_systemPersona`'s onion-caramelization aside, the rice/risotto SOS few-shot, the sautéed-onions step few-shot, the omelette/buttered-pasta difficulty-rule reference), sent on every call regardless of what's being cooked. One (rice/risotto) confirmed surfacing inappropriately live during an unrelated SOS session. Not fixed. Bucket B curriculum drawers not yet scanned for the same pattern.
-10. **Home hierarchy / bottom nav should lead with Fridge Clearer and the AI generator** — product direction from `docs/decisions_2026-08-17.md`, not yet designed or implemented. Consider alongside Design Polish item 12 below (the 6-card grid rework) rather than as a separate pass.
+10. **Home hierarchy / bottom nav — done 2026-08-20.** Superseded by the signed one-screen-hub spec: the bottom nav bar is removed app-wide and Home now leads with the Fridge Clearer hero and the custom recipe slim row. See the navigation and Home entries in "Current architecture facts", and `docs/CHANGELOG.md` (2026-08-20) for the full record. Closes item 12 too.
 11. **Cook Mode's first step should be "prepare ingredients" with no timer** — per `docs/decisions_2026-08-17.md`: testers found the timer stressful on the first step, and rushing knife work is a real cut risk. Not designed or implemented.
-12. Home dashboard 6-card grid feels flat/corporate — needs a real visual-direction proposal shown to Harris before implementing, not mechanical. Two angles flagged: bolder icons/colored background wash on 1-2 high-use cards, and a personality rewrite of the flat description copy.
-13. `home_dashboard_screen.dart`'s private `_sageBackground` (`Color(0xFFC5D3C1)`, line 39/249) is a separate, darker, hardcoded color that doesn't match `AppDesignTokens.backgroundSage` used everywhere else (including onboarding). Mechanical, pre-approved fix: delete the private constant, reference the shared token directly. Not yet applied.
+12. **Home dashboard 6-card grid — closed 2026-08-20, moot.** The grid no longer exists; the hub replaced it wholesale. See item 10.
+13. **Home's hardcoded colors — closed 2026-08-20.** This item's specifics were already stale when it was actioned: `home_dashboard_screen.dart` had no `_sageBackground` constant (it read `AppDesignTokens.backgroundSage` directly); the real local constants were `_deepForest` and `_terracotta`. All three are gone — the rebuilt hub takes every color from `AppDesignTokens`.
 14. **Recipe generation streaming — genuine future project, not started.** Current floor is ~7-10s/generation (`gpt-4o`, confirmed the right model choice over `gpt-4o-mini` on voice/quality grounds); `max_tokens` tuning and the mini-model trial didn't move this further. Streaming is transport-feasible (`functions_client` has real SSE support) but needs: the edge function to request `stream: true` from OpenAI and forward SSE through Deno; on web specifically, adding the `fetch_client` package and reconfiguring `Supabase.initialize` to use it as the **global** HTTP client (touches every Supabase call, not a local tweak); and either a tolerant partial-JSON parser or a redesigned line-delimited output schema, since `forceJsonObject: true` streams raw JSON token-by-token. Gates Retention Backlog items "Sunday Reset" and "Ask Chef Harris Mid-Cook," both on hold pending Harris's explicit go-ahead on whether the current latency is acceptable.
 15. **OpenAI prompt caching — closed 2026-08-18, dev-verified with real calls.** Real dev measurements on `ask-chef-harris` disproved the earlier "no restructuring needed" assumption: caching is strictly prefix-based, and with the old variable-content-first assembly, genuinely varying per-call content (different ingredients/queries) reliably produced 0 cached tokens — only the always-identical ~6,972-char static system prompt cached on its own (~1,792 tokens) when a call repeated with unchanged user content. Fixed, wording untouched, by reordering each of the 4 live surfaces so all static content forms one stable prefix before any variable content: `ChefService.askChefHarris`'s `userMessage` static blocks, `fridge_clearer_screen.dart`'s `_buildCookModePrompt`, `custom_ai_recipe_creator_sheet.dart`'s `_buildPrompt`. Verified with real back-to-back calls, genuinely varying content per call: SOS ~78%, Suggestion ~90%, Fridge Clearer ~82%, Custom AI Recipe Creator ~85% of prompt tokens now served from cache on repeat calls — an estimated 39-45% cut in input cost per call. `cached_tokens` is now captured end-to-end: `api_call_cost_log.cached_tokens` column (migration `20260818120000`, dev only), `ask-chef-harris` reads and persists `usage.prompt_tokens_details.cached_tokens` (deployed dev, version 4), `ChefService` logs it client-side too. Dev only — not deployed to prod. For item 1's pending validator: a future ~3,400-char cooking-times vocabulary block would cost an estimated $0.0022/call uncached vs $0.0011/call placed inside this cached prefix.
-16. Real payment provider integration (RevenueCat) — tier structure and the full gating stack are built end-to-end against mock/sandbox entitlement state (see `docs/DECISIONS.md`). Real Apple Developer/Play Console/RevenueCat account setup is deliberately deferred until Harris is actually approaching real-tester distribution; none of the four gating surfaces (Fridge Clearer cap, Custom AI Recipe Creator gate, post-cook nudge, Chef Harris chat cap) has been live-tested end to end yet.
+16. Real payment provider integration (RevenueCat) — tier structure and the full gating stack are built end-to-end against mock/sandbox entitlement state (see `docs/DECISIONS.md`). Real Apple Developer/Play Console/RevenueCat account setup is deliberately deferred until Harris is actually approaching real-tester distribution; none of the gating surfaces (Fridge Clearer cap, Custom AI Recipe Creator gate, post-cook nudge) has been live-tested end to end yet. **The fourth, the Chef Harris chat cap, no longer exists as of 2026-08-20**: the Home hub's cut list removed the "Get an idea" chip, which was `_ChefSuggestionSheet`'s only entry point, so the sheet and `kChefHarrisChatFreeDailyLimit` were deleted with it and nothing now reads `UsageFeature.chefHarrisChat`. Open product question — where, or whether, that surface returns.
 17. Apple/Google OAuth account linking — not started, needs native iOS/Android config; likely blocked on this being a Windows dev machine (check `flutter devices` before assuming either platform is testable here).
 18. Deep link fix for the email-confirmation redirect (currently goes to `localhost:3000`) — not started, same native-platform-config caveat as above.
 19. Lower priority, not urgent: rate limiting on Edge Functions; privacy policy covering Swiss FADP + EU GDPR (needs legal review before the first external tester); Supabase Storage bucket policies (once photos/recipe images are added); duplicate RLS policy cleanup (cosmetic, see RLS table above); `UsageCapService.increment(...)` firing even when `askChefHarris`'s internal call to Supabase never actually reaches OpenAI (harmless while Harris is the only user, becomes a real problem once caps gate paying subscribers).
