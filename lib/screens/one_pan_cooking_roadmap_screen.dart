@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
+import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/confidence_climb_service.dart';
@@ -38,11 +39,15 @@ import 'package:optimeal/services/cook_session_storage_service.dart';
 // removed.
 enum RoadmapTechnique { bakeTrayRoast, sautePanFry, stirFry }
 
-/// The surface a Cook Mode launch originated from. Drives whether a
-/// completed cook is eligible to log to the Waste Ledger — see
-/// [isRescueEligible] — and, for eligible surfaces, what
-/// `waste_ledger_events.source` value to record. See CLAUDE.md Roadmap
-/// item 28.
+/// The surface a Cook Mode launch originated from — **launch context only**.
+///
+/// This used to decide Waste Ledger eligibility. It no longer does: rescue
+/// provenance travels with the recipe ([CookModeRecipePayload.origin] /
+/// [RecipeOrigin]), because a Fridge Clearer recipe scheduled into the
+/// Weekly Planner and cooked from there is still a real fridge rescue. The
+/// old `isRescueEligible` / `ledgerSourceValue` members are gone from this
+/// enum and live on [RecipeOrigin] instead. This value is still recorded on
+/// the saved active session so a resumed cook remembers where it came from.
 ///
 /// `fridgeCountdown` was removed as a member (housekeeping session,
 /// follow-up to commit 8f23fcc) — `FridgeCountdownSheet`, the only code
@@ -59,23 +64,7 @@ enum RoadmapTechnique { bakeTrayRoast, sautePanFry, stirFry }
 enum CookModeSurface {
   fridgeClearer,
   customAiRecipeCreator,
-  weeklyPlanner;
-
-  /// Whether a genuine (non-re-cook) completion from this surface counts as
-  /// a real ingredient rescue. Only Fridge Clearer generates a recipe
-  /// directly from what's actually in the user's fridge — Custom AI
-  /// Recipe Creator and Weekly Planner don't, by design decision.
-  bool get isRescueEligible => this == CookModeSurface.fridgeClearer;
-
-  /// The `waste_ledger_events.source` value for this surface. Null for
-  /// non-rescue-eligible surfaces — `logCompletion` is never called for
-  /// those, so no value is ever needed or written.
-  String? get ledgerSourceValue => switch (this) {
-        CookModeSurface.fridgeClearer => 'fridge_clearer',
-        CookModeSurface.customAiRecipeCreator ||
-        CookModeSurface.weeklyPlanner =>
-          null,
-      };
+  weeklyPlanner,
 }
 
 /// Envelope for a fresh (non-resume) Cook Mode launch, passed as go_router's
@@ -113,6 +102,8 @@ class CookModeRecipePayload {
     this.structuredIngredients,
     this.basePortions,
     this.curriculumLessonIds,
+    this.origin,
+    this.originEnteredIngredients,
   });
 
   final String title;
@@ -138,6 +129,45 @@ class CookModeRecipePayload {
   /// This is expected to come from AI JSON as `curriculum_lesson_ids`, but is
   /// defensively treated as optional throughout the app.
   final List<String>? curriculumLessonIds;
+
+  /// Where this recipe was **generated** — the single source of truth for
+  /// Waste Ledger rescue eligibility. Stamped once by `parseChefRecipeJson`
+  /// and carried through every persistence hop thereafter, so a Fridge
+  /// Clearer recipe cooked weeks later out of the Weekly Planner still
+  /// counts. Null for the demo recipe and for recipes persisted before this
+  /// field existed — both correctly read as "not rescue-eligible".
+  final RecipeOrigin? origin;
+
+  /// The ingredients the user actually entered into Fridge Clearer for the
+  /// generation that produced this recipe. Only ever populated when [origin]
+  /// is [RecipeOrigin.fridgeClearer].
+  ///
+  /// This has to travel with the recipe for the same reason [origin] does.
+  /// `FridgeClearerEntryService` only ever holds the *most recent*
+  /// generation's list and is cleared on completion, so by the time a
+  /// planner-scheduled fridge recipe is cooked, that store has long since
+  /// moved on — without this field a planner-cooked rescue would count as a
+  /// rescue of zero ingredients, which is worse than not counting at all.
+  final List<String>? originEnteredIngredients;
+
+  CookModeRecipePayload copyWith({
+    RecipeOrigin? origin,
+    List<String>? originEnteredIngredients,
+  }) {
+    return CookModeRecipePayload(
+      title: title,
+      ingredients: ingredients,
+      steps: steps,
+      kitchenGear: kitchenGear,
+      description: description,
+      structuredIngredients: structuredIngredients,
+      basePortions: basePortions,
+      curriculumLessonIds: curriculumLessonIds,
+      origin: origin ?? this.origin,
+      originEnteredIngredients:
+          originEnteredIngredients ?? this.originEnteredIngredients,
+    );
+  }
 }
 
 /// One step in Cook Mode.
@@ -683,28 +713,37 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     _cookSequenceStarted = true;
     unawaited(_sessionStorage.clearActiveSession());
     try {
-      // Waste Ledger logging — gated on both conditions from CLAUDE.md
-      // Roadmap item 28: the surface must be rescue-eligible (Fridge
-      // Clearer only — Weekly Planner and Custom AI Recipe Creator never
-      // log), AND this must not be a re-cook (Home's Recently Cooked never
-      // logs, regardless of the recipe's original surface). A failed write
-      // also falls through rather than aborting — the rest of this
-      // sequence must never depend on a ledger result existing, only on
-      // whether it was a [LedgerCompletionSuccess].
-      final surface = _surface;
-      final shouldLog =
-          surface != null && surface.isRescueEligible && !_isReCook;
+      // Waste Ledger logging — gated on the RECIPE's provenance, not on
+      // which screen launched this cook. A Fridge Clearer recipe scheduled
+      // into the Weekly Planner and cooked from there is still a real
+      // fridge rescue and must count; only a re-cook (Home's Recently
+      // Cooked) is excluded, since the rescue was already credited the
+      // first time. A failed write falls through rather than aborting —
+      // the rest of this sequence must never depend on a ledger result
+      // existing, only on whether it was a [LedgerCompletionSuccess].
+      final origin = _payload?.origin;
       final isGenuineFridgeClearerCompletion =
-          surface == CookModeSurface.fridgeClearer && !_isReCook;
+          (origin?.isRescueEligible ?? false) && !_isReCook;
+      final shouldLog = isGenuineFridgeClearerCompletion;
 
       // What the user actually entered into Fridge Clearer for this
       // recipe (device-test round F12/F13) — read once here, since both
       // the leftover-nudge check below and the Waste Ledger provenance
-      // rule need exactly the same list. Empty for any surface other than
-      // Fridge Clearer, or if nothing was ever recorded.
-      final enteredIngredients = isGenuineFridgeClearerCompletion
-          ? await _fridgeClearerEntryService.peekEnteredIngredients()
-          : const <String>[];
+      // rule need exactly the same list.
+      //
+      // Preferred source is the recipe's own carried list: it is the only
+      // one that survives a trip through the Weekly Planner. The
+      // FridgeClearerEntryService read is a fallback for recipes generated
+      // before that field existed, and is the only case that consumes (and
+      // therefore clears) that store.
+      final carriedEntered = _payload?.originEnteredIngredients ?? const [];
+      final usedEntryServiceFallback =
+          isGenuineFridgeClearerCompletion && carriedEntered.isEmpty;
+      final enteredIngredients = !isGenuineFridgeClearerCompletion
+          ? const <String>[]
+          : (carriedEntered.isNotEmpty
+              ? carriedEntered
+              : await _fridgeClearerEntryService.peekEnteredIngredients());
 
       // Fridge nudge cancellation + leftover check (docs/decisions_2026-08-17.md
       // item 5; two-case spec is Harris's 18 Aug decision): a genuine
@@ -720,17 +759,20 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
           enteredIngredients: enteredIngredients,
           cookedIngredients: _ingredients,
         );
-        // Consumed — enteredIngredients above already captured what's
-        // needed for both the nudge check and the ledger/share-card
-        // provenance rule below, so a later, unrelated completion can't
-        // accidentally reuse this generation's entered list.
-        unawaited(_fridgeClearerEntryService.clear());
+        // Consumed — only when this completion actually read from that
+        // store. A recipe that carried its own entered list never touched
+        // it, so clearing here would silently discard a *different*,
+        // still-pending generation's list (e.g. cooking a planner-scheduled
+        // fridge recipe on a day the user also generated a fresh one).
+        if (usedEntryServiceFallback) {
+          unawaited(_fridgeClearerEntryService.clear());
+        }
       }
 
       LedgerCompletionSuccess? ledgerSuccess;
       if (shouldLog) {
         final result = await _ledgerService.logCompletion(
-          source: surface.ledgerSourceValue!,
+          source: origin!.ledgerSourceValue!,
           recipeId: null,
           enteredIngredients: enteredIngredients,
           cookedIngredients: _ingredients,
@@ -750,17 +792,18 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         }
       } else {
         debugPrint(
-          'Cook Mode: not rescue-eligible, skipping Waste Ledger write — surface=$surface isReCook=$_isReCook',
+          'Cook Mode: not rescue-eligible, skipping Waste Ledger write — origin=$origin surface=$_surface isReCook=$_isReCook',
         );
       }
 
       // Verdict selection — see docs/DECISIONS.md "Waste Ledger legibility —
       // option B". Pure, display-only classification over state already
-      // computed above; does not touch LedgerService or CookModeSurface.
+      // computed above; does not touch LedgerService. Keyed on the recipe's
+      // origin, matching the logging gate above.
       final verdict = selectLedgerVerdict(
         hasPayload: _payload != null,
         isReCook: _isReCook,
-        surface: surface,
+        origin: origin,
         result: shouldLog
             ? (ledgerSuccess ??
                 const LedgerCompletionWriteFailed(

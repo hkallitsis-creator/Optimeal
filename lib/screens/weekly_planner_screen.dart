@@ -1,12 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:optimeal/data/diagram_keys.dart';
-import 'package:optimeal/data/sensory_cue_vocabulary.dart';
+import 'package:optimeal/models/cook_mode_recipe_codec.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
@@ -253,115 +251,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
   User? _currentUser() => Supabase.instance.client.auth.currentUser;
 
-  Map<String, dynamic> _cookModePayloadToJson(CookModeRecipePayload payload) => {
-    'title': payload.title,
-    'ingredients': payload.ingredients,
-    'kitchen_gear': payload.kitchenGear,
-    'steps': payload.steps
-        .map((s) => {
-              'title': s.title,
-              'heat': s.heat,
-              'duration_minutes': s.durationMinutes,
-              'bullets': s.bullets,
-              'ingredients_added': s.ingredientsAdded,
-              'sensory_cue': s.sensoryCue,
-              'technique_diagram_id': s.techniqueDiagramId,
-            })
-        .toList(growable: false),
-    'description': payload.description,
-    'structured_ingredients': payload.structuredIngredients?.map((i) => i.toJson()).toList(),
-    'base_portions': payload.basePortions,
-    'curriculum_lesson_ids': payload.curriculumLessonIds,
-  };
-
-  CookModeRecipePayload? _cookModePayloadFromJson(dynamic raw) {
-    try {
-      final decoded = raw is String ? jsonDecode(raw) : raw;
-      if (decoded is! Map) return null;
-      final title = (decoded['title'] ?? '').toString().trim();
-
-      final ingredients = <String>[];
-      final ingRaw = decoded['ingredients'];
-      if (ingRaw is List) {
-        for (final e in ingRaw) {
-          final s = e.toString().trim();
-          if (s.isNotEmpty) ingredients.add(s);
-        }
-      }
-
-      final gear = <String>[];
-      final gearRaw = decoded['kitchen_gear'] ?? decoded['kitchenGear'];
-      if (gearRaw is List) {
-        for (final e in gearRaw) {
-          final s = e.toString().trim();
-          if (s.isNotEmpty) gear.add(s);
-        }
-      }
-
-      final steps = <CookModeStepPayload>[];
-      final stepsRaw = decoded['steps'];
-      if (stepsRaw is List) {
-        for (final s in stepsRaw) {
-          if (s is! Map) continue;
-          final stepTitle = (s['title'] ?? '').toString().trim();
-          if (stepTitle.isEmpty) continue;
-          final duration = int.tryParse('${s['duration_minutes'] ?? s['durationMinutes'] ?? ''}'.trim()) ?? 0;
-          final heat = (s['heat'] ?? 'medium').toString().trim();
-          final bullets = <String>[];
-          final bulletsRaw = s['bullets'];
-          if (bulletsRaw is List) {
-            for (final b in bulletsRaw) {
-              final blt = b.toString().trim();
-              if (blt.isNotEmpty) bullets.add(blt);
-            }
-          }
-          if (bullets.isEmpty) bullets.add('Keep going and taste as you go.');
-          final ingredientsAddedRaw = s['ingredients_added'] ?? s['ingredientsAdded'];
-          final ingredientsAdded =
-              ingredientsAddedRaw is List ? ingredientsAddedRaw.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList() : null;
-          final sensoryCueRaw = s['sensory_cue'] ?? s['sensoryCue'];
-          final sensoryCue = SensoryCueVocabulary.allKeys.contains(sensoryCueRaw) ? sensoryCueRaw as String : SensoryCueVocabulary.noCueKey;
-          final techniqueDiagramIdRaw = s['technique_diagram_id'] ?? s['techniqueDiagramId'];
-          final techniqueDiagramId =
-              allTechniqueDiagramKeys.contains(techniqueDiagramIdRaw) ? techniqueDiagramIdRaw as String : noTechniqueDiagramKey;
-          steps.add(CookModeStepPayload(
-            title: stepTitle,
-            heat: heat,
-            durationMinutes: duration,
-            bullets: bullets,
-            ingredientsAdded: (ingredientsAdded?.isEmpty ?? true) ? null : ingredientsAdded,
-            sensoryCue: sensoryCue,
-            techniqueDiagramId: techniqueDiagramId,
-          ));
-        }
-      }
-
-      if (steps.isEmpty) return null;
-
-      final structuredRaw = decoded['structured_ingredients'] ?? decoded['structuredIngredients'];
-      final structuredIngredients = structuredRaw is List
-          ? structuredRaw.whereType<Map>().map((e) => RecipeIngredient.fromJson(Map<String, dynamic>.from(e))).toList(growable: false)
-          : null;
-
-      final curriculumRaw = decoded['curriculum_lesson_ids'] ?? decoded['curriculumLessonIds'];
-      final curriculumLessonIds = curriculumRaw is List ? curriculumRaw.map((e) => e.toString()).toList(growable: false) : null;
-
-      return CookModeRecipePayload(
-        title: title.isEmpty ? 'Planned meal' : title,
-        ingredients: ingredients.isEmpty ? const ['Salt', 'Pepper', 'Cooking oil'] : ingredients,
-        steps: steps,
-        kitchenGear: gear.isEmpty ? const ['1 Pan or Pot', 'Knife', 'Spoon/Spatula'] : gear,
-        description: (decoded['description'] as String?)?.trim(),
-        structuredIngredients: (structuredIngredients?.isEmpty ?? true) ? null : structuredIngredients,
-        basePortions: int.tryParse('${decoded['base_portions'] ?? decoded['basePortions'] ?? ''}'.trim()),
-        curriculumLessonIds: curriculumLessonIds,
-      );
-    } catch (e) {
-      debugPrint('WeeklyPlanner: failed to decode CookMode payload: $e');
-      return null;
-    }
-  }
-
   Map<String, dynamic> _plannedMealToPlanRow({required String userId, required int dayIndex, required int slotIndex, required _PlannedMeal meal}) => {
     // Expected schema (adjust server-side as needed):
     // user_id (uuid), day_index (int), slot_index (int), title (text), source (text),
@@ -374,7 +263,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     'aisle_items': meal.aisleItems
         .map((e) => {'aisle': e.aisle.name, 'item': e.item, 'qty': e.qty})
         .toList(growable: false),
-    'recipe_payload': meal.recipe == null ? null : _cookModePayloadToJson(meal.recipe!),
+    'recipe_payload': meal.recipe == null ? null : cookModeRecipeToJson(meal.recipe!),
     'is_cooked': meal.cooked,
     'updated_at': DateTime.now().toUtc().toIso8601String(),
   };
@@ -399,7 +288,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
         }
       }
 
-      final recipe = _cookModePayloadFromJson(row['recipe_payload'] ?? row['recipePayload']);
+      final recipe = cookModeRecipeFromJson(row['recipe_payload'] ?? row['recipePayload']);
       final cooked = (row['is_cooked'] ?? row['isCooked']) == true;
       return _PlannedMeal(
         title: title,

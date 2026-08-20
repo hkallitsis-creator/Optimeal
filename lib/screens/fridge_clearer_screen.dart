@@ -585,6 +585,14 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       debugPrint(
           'CookModeRecipePayload constructed with curriculumLessonIds=${recipe.curriculumLessonIds}');
 
+      // Provenance travels with the recipe. `origin` is already stamped by
+      // the parser; the entered list has to be attached here, since only
+      // this screen knows it. Together these are what let a Fridge Clearer
+      // recipe scheduled into the Weekly Planner still count as a rescue
+      // when it's finally cooked — see RecipeOrigin.
+      final enteredIngredients = _selectedIngredients.toList(growable: false);
+      recipe = recipe.copyWith(originEnteredIngredients: enteredIngredients);
+
       RecentGenerationsService.instance.record(recipe.title);
       // Fridge nudge (docs/decisions_2026-08-17.md item 5): a generated
       // recipe is the earliest durable signal that these ingredients were
@@ -594,8 +602,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       // Persists the entered ingredients (device-test round F12/F13) so a
       // later completed cook can check for leftovers and the Waste Ledger
       // can apply its provenance rule — see FridgeClearerEntryService.
-      unawaited(FridgeClearerEntryService()
-          .recordEnteredIngredients(_selectedIngredients.toList(growable: false)));
+      unawaited(
+          FridgeClearerEntryService().recordEnteredIngredients(enteredIngredients));
 
       setState(() {
         _precisionCards = cards;

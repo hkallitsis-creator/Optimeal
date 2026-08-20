@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
+import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/chef_service.dart';
 
@@ -17,7 +18,18 @@ import 'package:optimeal/services/chef_service.dart';
 /// caller that ever passed this value) was already deleted.
 enum ChefRecipeSurface {
   fridgeClearer,
-  customAiRecipeCreator,
+  customAiRecipeCreator;
+
+  /// The provenance stamped onto every recipe this surface generates. This
+  /// is where [RecipeOrigin] enters the system — every generated recipe gets
+  /// one here, at construction, so no downstream call site has to remember
+  /// to set it. See [RecipeOrigin] for why eligibility lives on the recipe
+  /// rather than on the screen that launches a cook.
+  RecipeOrigin get recipeOrigin => switch (this) {
+        ChefRecipeSurface.fridgeClearer => RecipeOrigin.fridgeClearer,
+        ChefRecipeSurface.customAiRecipeCreator =>
+          RecipeOrigin.customAiRecipeCreator,
+      };
 }
 
 const List<String> _defaultFallbackIngredients = ['Salt', 'Pepper', 'Cooking oil'];
@@ -267,6 +279,7 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
       structuredIngredients: structuredIngredients.isEmpty ? null : structuredIngredients,
       basePortions: portions,
       curriculumLessonIds: curriculumLessonIds,
+      origin: surface.recipeOrigin,
     );
   } catch (e) {
     debugPrint('parseChefRecipeJson[$surface]: failed to parse JSON: $e');

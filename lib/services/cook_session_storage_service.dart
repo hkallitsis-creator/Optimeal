@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
+import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 
 /// Local (on-device) persistence for two related Cook Mode features:
@@ -282,6 +283,12 @@ class CookSessionStorageService {
             recipe.structuredIngredients?.map((i) => i.toJson()).toList(),
         'basePortions': recipe.basePortions,
         'curriculumLessonIds': recipe.curriculumLessonIds,
+        // Provenance travels with the recipe (see RecipeOrigin), so a
+        // resumed session and a re-cook both still know where the recipe
+        // came from. Entries written before these keys existed decode to a
+        // null origin, which correctly reads as "not rescue-eligible".
+        'origin': recipe.origin?.name,
+        'originEnteredIngredients': recipe.originEnteredIngredients,
       };
 
   static CookModeRecipePayload _recipeFromJson(Map<String, dynamic> json) {
@@ -314,7 +321,18 @@ class CookSessionStorageService {
           .toList(),
       basePortions: json['basePortions'] as int?,
       curriculumLessonIds: _readStringList(json['curriculumLessonIds']),
+      origin: RecipeOrigin.fromName(json['origin']),
+      originEnteredIngredients: _readNullableStringList(json['originEnteredIngredients']),
     );
+  }
+
+  /// Like [_readStringList] but preserves the difference between "absent"
+  /// and "present but empty" — [CookModeRecipePayload.originEnteredIngredients]
+  /// is null when unknown, and that is not the same as an empty fridge.
+  static List<String>? _readNullableStringList(dynamic raw) {
+    if (raw is! List) return null;
+    final out = _readStringList(raw);
+    return out.isEmpty ? null : out;
   }
 
   static List<String> _readStringList(dynamic raw) {
