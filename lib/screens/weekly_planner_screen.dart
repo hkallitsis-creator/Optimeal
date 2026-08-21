@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:optimeal/models/cook_mode_recipe_codec.dart';
 import 'package:optimeal/models/planner_slot_ref.dart';
+import 'package:optimeal/models/planner_week.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
@@ -16,20 +17,22 @@ import 'package:optimeal/services/weekly_plan_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/widgets/recipe_provenance_badges.dart';
 
-/// How the plan's 14 stored day slots split into two weeks.
+/// How the two visible weeks are addressed **inside this screen**.
 ///
-/// `user_meal_plans` has no week column — only `day_index` — so "next week"
-/// is carried as an offset into the same integer: Mon–Sun of this week are
-/// 0–6, Mon–Sun of next week are 7–13. Verified against live dev on
-/// 2026-08-22: `day_index` has no CHECK constraint and accepts 7 and 13, and
-/// any reader that still filters to 0–6 simply ignores next week's rows
-/// rather than mis-reading them.
+/// These are view offsets into a 0–13 index space — this week's Mon–Sun are
+/// 0–6, next week's are 7–13 — used for the day cards, the per-slot inline
+/// error keys and the in-flight write set. They are **not** a storage
+/// encoding. That distinction is new: until migration `20260822120000` the
+/// same 0–13 integer WAS what went into `user_meal_plans.day_index`, because
+/// the table had no week column and nothing anchored a week to a date, so
+/// neither week ever rolled over.
 ///
-/// **Known gap, not solvable without a migration:** nothing anchors either
-/// week to a calendar date, so neither week rolls over — next week never
-/// becomes this week on its own. That was already true of the single-week
-/// model (day 0 has always meant "Monday, whichever Monday you are looking
-/// at"); the toggle makes it visible. Fixing it needs a `week_start` column.
+/// Now every row carries `week_start` (the Monday of its week) and
+/// `day_index` is 0–6 again on both weeks. The mapping between the two lives
+/// in `_weekStartValueFor` / `_dayOfWeekFor` / `_absoluteIndexFor`, and both
+/// Mondays are computed from the clock at read time — see
+/// `lib/models/planner_week.dart` — so rollover happens by itself at midnight
+/// on Sunday with nothing to advance and nothing stored.
 const int kDaysPerWeek = 7;
 const int kThisWeekOffset = 0;
 const int kNextWeekOffset = 7;
@@ -192,6 +195,36 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   int get _todayIndex => _now.weekday - DateTime.monday;
 
   bool get _isThisWeek => _weekOffset == kThisWeekOffset;
+
+  /// The two weeks this screen can show, recomputed from the clock every time
+  /// they are asked for. Nothing here is stored or advanced: at midnight on
+  /// Sunday, [_thisWeekStart] simply starts returning the next Monday, last
+  /// week's rows stop being read at all, and what was "next week" becomes
+  /// "this week" with no migration and no state change. Past weeks are not
+  /// deleted — there is just no way to select one, by design.
+  DateTime get _thisWeekStart => plannerWeekStartFor(_now);
+  DateTime get _nextWeekStart => plannerWeekAfter(_thisWeekStart);
+
+  /// The `week_start` value an absolute 0–13 index belongs to.
+  String _weekStartValueFor(int absoluteDayIndex) => plannerWeekValue(
+      absoluteDayIndex < kNextWeekOffset ? _thisWeekStart : _nextWeekStart);
+
+  /// The stored 0–6 `day_index` for an absolute 0–13 index.
+  int _dayOfWeekFor(int absoluteDayIndex) => absoluteDayIndex % kDaysPerWeek;
+
+  /// The inverse: a stored row's `(week_start, day_index)` back to this
+  /// screen's 0–13 index. Null for any other week — a row from a week that has
+  /// rolled into the past is ignored rather than rendered somewhere wrong.
+  int? _absoluteIndexFor(String weekStartValue, int dayIndex) {
+    if (dayIndex < 0 || dayIndex >= kDaysPerWeek) return null;
+    if (weekStartValue == plannerWeekValue(_thisWeekStart)) {
+      return kThisWeekOffset + dayIndex;
+    }
+    if (weekStartValue == plannerWeekValue(_nextWeekStart)) {
+      return kNextWeekOffset + dayIndex;
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -369,8 +402,11 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       extra: CookModeLaunchRequest(
         recipe: recipe,
         surface: CookModeSurface.weeklyPlanner,
-        plannerSlot:
-            PlannerSlotRef(dayIndex: dayIndex, slotIndex: slotIndex),
+        plannerSlot: PlannerSlotRef(
+          weekStart: _weekStartValueFor(dayIndex),
+          dayIndex: _dayOfWeekFor(dayIndex),
+          slotIndex: slotIndex,
+        ),
       ),
     );
   }
@@ -470,9 +506,12 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   /// behaviour in that case too. See [WeeklyPlanBackend.currentUserId].
   String? _userId() => _backend.currentUserId;
 
+  /// [dayIndex] is this screen's absolute 0–13 index; the row it builds carries
+  /// the anchored `(week_start, day_index 0–6)` pair the table actually stores.
   Map<String, dynamic> _plannedMealToPlanRow({required String userId, required int dayIndex, required int slotIndex, required _PlannedMeal meal}) => {
     'user_id': userId,
-    'day_index': dayIndex,
+    'week_start': _weekStartValueFor(dayIndex),
+    'day_index': _dayOfWeekFor(dayIndex),
     'slot_index': slotIndex,
     'title': meal.title,
     'source': meal.source,
@@ -544,16 +583,27 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     final epochAtReadStart = _writeEpoch;
 
     try {
-      final rows = await _backend.listForUser(userId);
+      // Week-scoped: only the two weeks this screen can show are asked for, so
+      // rows from a week that has rolled into the past never arrive.
+      final rows = await _backend.listForWeeks(userId, weekStarts: [
+        plannerWeekValue(_thisWeekStart),
+        plannerWeekValue(_nextWeekStart),
+      ]);
 
       final next = <int, List<_PlannedMeal>>{};
       for (final r in rows) {
-        final dayIndex = int.tryParse('${r['day_index'] ?? r['dayIndex'] ?? ''}'.trim());
+        final storedDay = int.tryParse('${r['day_index'] ?? r['dayIndex'] ?? ''}'.trim());
         final slotIndex = int.tryParse('${r['slot_index'] ?? r['slotIndex'] ?? ''}'.trim());
-        if (dayIndex == null || slotIndex == null) continue;
-        // 0–13: both weeks. See kNextWeekOffset.
-        if (dayIndex < 0 || dayIndex >= kNextWeekOffset + kDaysPerWeek) continue;
+        final weekStart = '${r['week_start'] ?? r['weekStart'] ?? ''}'.trim();
+        if (storedDay == null || slotIndex == null) continue;
         if (slotIndex < 0 || slotIndex >= kMaxMealsPerDay) continue;
+
+        // A `date` column can come back as a bare `yyyy-MM-dd` or with a time
+        // component depending on the transport; take the date part either way.
+        final dayIndex =
+            _absoluteIndexFor(weekStart.split('T').first, storedDay);
+        // Belt and braces: the query already filtered to these two weeks.
+        if (dayIndex == null) continue;
 
         final meal = _plannedMealFromPlanRow(r);
         if (meal == null) continue;
@@ -663,7 +713,10 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
     try {
       await _backend.deleteSlot(
-          userId: userId, dayIndex: dayIndex, slotIndex: slotIndex);
+          userId: userId,
+          weekStart: _weekStartValueFor(dayIndex),
+          dayIndex: _dayOfWeekFor(dayIndex),
+          slotIndex: slotIndex);
     } catch (e) {
       debugPrint('WeeklyPlanner: deleteMealSlot failed: $e');
       rethrow;

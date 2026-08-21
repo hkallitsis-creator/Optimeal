@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:optimeal/models/cook_mode_recipe_codec.dart';
 import 'package:optimeal/models/planner_slot_ref.dart';
+import 'package:optimeal/models/planner_week.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
@@ -12,6 +13,7 @@ import 'package:optimeal/screens/weekly_planner_screen.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/data_change_signal.dart';
 import 'package:optimeal/services/planner_cook_attribution_service.dart';
+import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/services/weekly_plan_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
@@ -27,6 +29,14 @@ import '../support/fake_weekly_plan_backend.dart';
 /// A fixed Monday, so "today" is deterministic no matter when the suite runs.
 final DateTime _monday = DateTime(2026, 8, 24, 9, 0);
 final DateTime _wednesday = DateTime(2026, 8, 26, 9, 0);
+
+/// The two anchored weeks those dates fall into, since migration
+/// `20260822120000` — `week_start` is the Monday, and `day_index` is 0–6 on
+/// both weeks. `_nextMonday` is also used as a "the clock moved on" value for
+/// the rollover test.
+final DateTime _nextMonday = DateTime(2026, 8, 31, 9, 0);
+final String _thisWeekValue = plannerWeekValueFor(_monday);
+final String _nextWeekValue = plannerWeekValueFor(_nextMonday);
 
 /// Captures what Cook Mode was launched with, so provenance can be asserted
 /// on the launch itself rather than on a screen that drags in Supabase.
@@ -56,7 +66,13 @@ Map<String, dynamic> planRow({
 }) =>
     {
       'user_id': 'user-1',
-      'day_index': dayIndex,
+      // [dayIndex] stays the 0–13 index these tests were written against, for
+      // readability; the row it produces is the anchored shape the table now
+      // stores, so 7–13 means "same weekday, next week" rather than a day
+      // index the database has never heard of.
+      'week_start':
+          dayIndex < kNextWeekOffset ? _thisWeekValue : _nextWeekValue,
+      'day_index': dayIndex % kDaysPerWeek,
       'slot_index': slotIndex,
       'title': title,
       'source': source,
@@ -67,14 +83,17 @@ Map<String, dynamic> planRow({
       'is_cooked': cooked,
     };
 
-Widget _wrap(WeeklyPlanBackend backend, {DateTime? now}) {
+Widget _wrap(WeeklyPlanBackend backend,
+    {DateTime? now, SavedRecipesService? savedRecipesService}) {
   final router = GoRouter(
     initialLocation: AppRoutes.weeklyPlan,
     routes: [
       GoRoute(
         path: AppRoutes.weeklyPlan,
-        builder: (context, state) =>
-            WeeklyPlannerScreen(backend: backend, now: now ?? _monday),
+        builder: (context, state) => WeeklyPlannerScreen(
+            backend: backend,
+            now: now ?? _monday,
+            savedRecipesService: savedRecipesService),
       ),
       GoRoute(
           path: AppRoutes.home, builder: (c, s) => const _StubScreen('home')),
@@ -107,11 +126,13 @@ Future<void> _pumpPlanner(
   WidgetTester tester,
   WeeklyPlanBackend backend, {
   DateTime? now,
+  SavedRecipesService? savedRecipesService,
 }) async {
   tester.view.physicalSize = const Size(420, 1600);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
-  await tester.pumpWidget(_wrap(backend, now: now));
+  await tester.pumpWidget(_wrap(backend,
+      now: now, savedRecipesService: savedRecipesService));
   await tester.pumpAndSettle();
 }
 
@@ -573,7 +594,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(lastCookLaunch!.plannerSlot,
-          const PlannerSlotRef(dayIndex: 0, slotIndex: 0));
+          PlannerSlotRef(
+              weekStart: _thisWeekValue, dayIndex: 0, slotIndex: 0));
     });
 
     testWidgets('the day\'s second meal stamps slot 1, not slot 0',
@@ -590,7 +612,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(lastCookLaunch!.plannerSlot,
-          const PlannerSlotRef(dayIndex: 0, slotIndex: 1));
+          PlannerSlotRef(
+              weekStart: _thisWeekValue, dayIndex: 0, slotIndex: 1));
     });
 
     testWidgets(
@@ -656,7 +679,8 @@ void main() {
       await tester.pumpAndSettle();
       await leaveCookMode(tester);
 
-      expect(backend.markCookedTargets, [(dayIndex: 0, slotIndex: 0)]);
+      expect(backend.markCookedTargets,
+          [(weekStart: _thisWeekValue, dayIndex: 0, slotIndex: 0)]);
       expect(
           backend.rows
               .firstWhere((r) => r['day_index'] == 0)['is_cooked'],
@@ -702,6 +726,167 @@ void main() {
     });
   });
 
+  /// Week anchoring (migration `20260822120000`). Both weeks are computed from
+  /// the clock at read time, so rollover is a property of asking rather than of
+  /// stored state — nothing is advanced, nothing is migrated weekly.
+  group('week anchoring', () {
+    testWidgets('the read is scoped to exactly this week and next week',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      await _pumpPlanner(tester, backend);
+
+      expect(backend.readWeekScopes.single, [_thisWeekValue, _nextWeekValue]);
+    });
+
+    testWidgets('this week and next week are disjoint sets of rows',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      // Same weekday (Monday), same slot, different weeks — two rows that were
+      // indistinguishable before week_start joined the key.
+      backend.rows.add(planRow(dayIndex: 0, title: 'This Monday Dish'));
+      backend.rows
+          .add(planRow(dayIndex: kNextWeekOffset, title: 'Next Monday Dish'));
+
+      await _pumpPlanner(tester, backend);
+      expect(find.text('This Monday Dish'), findsOneWidget);
+      expect(find.text('Next Monday Dish'), findsNothing);
+
+      await tester.tap(find.text('Next week'));
+      await tester.pumpAndSettle();
+      expect(find.text('Next Monday Dish'), findsOneWidget);
+      expect(find.text('This Monday Dish'), findsNothing);
+    });
+
+    testWidgets('a placement stores an anchored week and a 0–6 day index',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      await _pumpPlanner(tester, backend);
+
+      await tester.tap(find.text('Next week'));
+      await tester.pumpAndSettle();
+
+      WeeklyPlannerIntentService.instance.queueAddMeal(
+        dayIndex: 3,
+        recipe: testRecipe('Anchored Dish'),
+        source: kFromSavedMealSource,
+      );
+      await tester.pumpAndSettle();
+
+      // The intent snaps back to this week, and what lands in the table is the
+      // anchored pair — never the old 0–13 offset encoding.
+      expect(backend.rows.single['week_start'], _thisWeekValue);
+      expect(backend.rows.single['day_index'], 3);
+    });
+
+    testWidgets(
+        'a placement into NEXT week stores next week\'s Monday, not day 10',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      final service = SavedRecipesService(
+        backend: FakeSavedRecipesBackend(),
+        sessionStorage: CookSessionStorageService(),
+      );
+      await service.save(testRecipe('Saved Dish'));
+
+      await _pumpPlanner(tester, backend, savedRecipesService: service);
+
+      await tester.tap(find.text('Next week'));
+      await tester.pumpAndSettle();
+
+      // Next week's Thursday (the 4th empty day card).
+      await tester.tap(find.text('Nothing planned').at(3));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('My recipes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Saved Dish').last);
+      await tester.pumpAndSettle();
+
+      expect(backend.rows.single['week_start'], _nextWeekValue);
+      expect(backend.rows.single['day_index'], 3);
+    });
+
+    testWidgets(
+        'rollover: with no data change, last week\'s "next week" becomes this '
+        'week', (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 0, title: 'This Monday Dish'));
+      backend.rows
+          .add(planRow(dayIndex: kNextWeekOffset, title: 'Next Monday Dish'));
+
+      // Before: only "This Monday Dish" is in the default (this-week) view.
+      await _pumpPlanner(tester, backend);
+      expect(find.text('This Monday Dish'), findsOneWidget);
+      expect(find.text('Next Monday Dish'), findsNothing);
+
+      // The clock moves a week. Nothing else changes — no write, no migration,
+      // no stored week to advance.
+      await _pumpPlanner(tester, backend, now: _nextMonday);
+
+      expect(find.text('Next Monday Dish'), findsOneWidget,
+          reason: 'what was next week is now this week');
+      expect(find.text('This Monday Dish'), findsNothing,
+          reason: 'last week has rolled into the past and is unreachable');
+      // And it is genuinely cookable now, which it could not be before.
+      expect(find.text('Cook'), findsOneWidget);
+    });
+
+    testWidgets('a week that has rolled into the past is never fetched',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 0, title: 'Old Dish'));
+
+      await _pumpPlanner(tester, backend, now: _nextMonday);
+
+      // The row still exists — this is not a delete — it is simply outside
+      // every week this screen can ask for.
+      expect(backend.rows, hasLength(1));
+      expect(backend.readWeekScopes.single, isNot(contains(_thisWeekValue)));
+      expect(find.text('Old Dish'), findsNothing);
+      expect(find.text('Nothing planned'), findsNWidgets(kDaysPerWeek));
+    });
+
+    testWidgets(
+        'the Sunday→Monday boundary moves the whole screen forward one day '
+        'before midnight and one after', (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 6, title: 'Sunday Dish'));
+      backend.rows
+          .add(planRow(dayIndex: kNextWeekOffset, title: 'Next Monday Dish'));
+
+      // 23:59 on Sunday: still the old week, Sunday is today and cookable.
+      await _pumpPlanner(tester, backend,
+          now: DateTime(2026, 8, 30, 23, 59, 59));
+      expect(find.text('Sunday Dish'), findsOneWidget);
+      expect(_cardFillUnder(tester, 'Sun'), AppDesignTokens.champagneTint);
+      expect(find.text('Cook'), findsOneWidget);
+
+      // One minute later: the new week, Monday is today, and Sunday's meal is
+      // in the past and unreachable.
+      await _pumpPlanner(tester, backend, now: DateTime(2026, 8, 31, 0, 0, 0));
+      expect(find.text('Next Monday Dish'), findsOneWidget);
+      expect(find.text('Sunday Dish'), findsNothing);
+      expect(_cardFillUnder(tester, 'Mon'), AppDesignTokens.champagneTint);
+    });
+
+    testWidgets(
+        'a cook launched just before midnight marks the week it was planned in',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 6, title: 'Sunday Dish'));
+
+      await _pumpPlanner(tester, backend,
+          now: DateTime(2026, 8, 30, 23, 55));
+      await tester.tap(find.text('Cook'));
+      await tester.pumpAndSettle();
+
+      // The stamp is taken at launch, so it names the week the row lives in —
+      // not whatever week it happens to be when the cook finishes.
+      expect(lastCookLaunch!.plannerSlot,
+          PlannerSlotRef(
+              weekStart: _thisWeekValue, dayIndex: 6, slotIndex: 0));
+    });
+  });
+
   group('the active cook session carries the slot through an interruption',
       () {
     test('a planner cook resumes still knowing its row', () async {
@@ -718,12 +903,14 @@ void main() {
         currentPortions: 2,
         surface: CookModeSurface.weeklyPlanner,
         isReCook: false,
-        plannerSlot: const PlannerSlotRef(dayIndex: 4, slotIndex: 1),
+        plannerSlot: PlannerSlotRef(
+            weekStart: _thisWeekValue, dayIndex: 4, slotIndex: 1),
       );
 
       final resumed = await storage.loadActiveSession();
       expect(resumed!.plannerSlot,
-          const PlannerSlotRef(dayIndex: 4, slotIndex: 1));
+          PlannerSlotRef(
+              weekStart: _thisWeekValue, dayIndex: 4, slotIndex: 1));
     });
 
     test('a session saved without a slot resumes attributing nothing',

@@ -13,6 +13,77 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Weekly Planner corrections (palette, slot attribution, week anchoring)
+
+Full prompt and report: `docs/sessions/2026-08-22_planner-corrections.md`.
+Closes the three open items left by the redesign commit `fb177c3`.
+
+**Palette.** `AppDesignTokens.champagneTint` corrected from `#F7E7CE`
+(invented by the redesign, which had a hue name and no hex) to the signed
+palette v1.2 value **`#F7DBCB`**. One token, so the today-row tint and every
+other champagne consumer picked it up. `cookedNeutralGray` `#8B918E` reviewed
+and kept as provisionally signed pending a device pass.
+
+**Cooked-state slot attribution — roadmap item 27 closed, ruling: option A.**
+A cook now knows which planner row it came from, because the row stamps its
+own identity onto the launch: `PlannerSlotRef` (`week_start`, `day_index`,
+`slot_index`) rides on `CookModeLaunchRequest` and through the saved active
+session, so an interrupted planner cook still attributes when resumed. On
+completion `PlannerCookAttributionService` marks exactly that row via a
+targeted UPDATE through `WeeklyPlanBackend`, then raises the new
+`AppDataChanges.mealPlan` signal; the planner subscribes it into the re-read
+handler it already had and the row flips in place.
+
+Deliberately **not** a field on `CookModeRecipePayload` — that payload is
+persisted into `saved_recipes.recipe_payload`, and a saved recipe that
+permanently remembered "Tuesday, slot 1" would mark the wrong row the next
+time it was cooked from anywhere. Slot identity is launch context, like
+`CookModeSurface`; provenance is recipe data, like `RecipeOrigin`.
+
+`mealPlan` is its own signal rather than reusing `cookLog`, because
+`cookLog` fires at the *top* of the post-cook sequence (`clearActiveSession`),
+long before the plan row is written — a `cookLog`-driven re-read would read
+the row back uncooked. Counted-vs-not is unchanged: still derived from
+`RecipeOrigin.isRescueEligible`, no column, no ledger join.
+
+Nothing is inferred anywhere in this path. A cook launched from Home, the
+Fridge Clearer, a generation sheet or Recently Cooked carries null and touches
+no plan row; the same dish planned on two days flips only the launched one.
+
+**Week anchoring — migration `20260822120000`, applied to dev.**
+`user_meal_plans` gained `week_start date not null` (the Monday of the plan's
+week); the backfill mapped `day_index` 0–6 to this week's Monday and 7–13 to
+next week's Monday while normalizing `day_index` back to 0–6, and the slot
+identity became `(user_id, week_start, day_index, slot_index)`. The old
+constraint had to be dropped *before* the backfill, since normalizing
+`day_index` 7 down to 0 collides with this week's day 0 until `week_start` is
+part of the key.
+
+App side: `WeeklyPlanBackend.listForUser` became `listForWeeks(userId,
+weekStarts:)`, `deleteSlot`/`markSlotCooked` take the week, and
+`slotConflictTarget` became the four-column form. Both Mondays are computed
+from the clock at read time (`lib/models/planner_week.dart`), so rollover is
+automatic and nothing is stored or advanced. Reasoning and the
+device-local-vs-Zurich ruling: `docs/DECISIONS.md`.
+
+**Verified against live dev** with an authenticated anonymous session, probes
+deleted afterwards and the table read back empty on both the authenticated and
+anon views: the same `(day, slot)` in two different weeks inserts cleanly
+(201/201); a duplicate without a conflict target fails `23505` naming the new
+`user_meal_plans_slot_identity_key`; the four-column `on_conflict` target
+updates in place (200); **the old three-column target now fails `42P10`**,
+which would have broken every planner overwrite had the app not changed in the
+same step; week-scoped reads return each week separately and both together,
+and a past week returns `[]`; and a PATCH by full identity flipped only the
+targeted week's row, leaving the identical `(day 0, slot 0)` row in the other
+week untouched.
+
+`flutter test`: **263 passing** (221 baseline + 42 new). `flutter analyze`:
+**46 issues**, 0 errors, 0 warnings — the same 46 as at session start, none in
+any file this session touched.
+
+---
+
 ## 2026-08-22 — Weekly Planner screen redesign
 
 Full prompt and report: `docs/sessions/2026-08-22_weekly-planner-redesign.md`.

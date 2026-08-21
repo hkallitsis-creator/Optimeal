@@ -7,6 +7,67 @@ Read on request, not auto-loaded.
 
 ---
 
+## Planner weeks are anchored to a Monday, computed at read time (22 August 2026)
+
+**Binding rule:** every `user_meal_plans` row stores `week_start` — the
+**Monday of its week** — and `day_index` is 0–6 within that week. The two
+weeks the planner can show are **computed from the clock every time they are
+read**: "this week" is the Monday of today, "next week" is that Monday plus
+seven. Neither is stored, cached, or advanced.
+
+**Boundary: Monday, device-local time. Deliberately NOT pinned to
+Europe/Zurich** (Harris's ruling, 22 August 2026). A travelling user's "this
+week" should follow the phone in their pocket; a fixed zone would roll their
+planner over at the wrong hour and, worse, would disagree with the date the
+phone itself is showing them. Switzerland is the default in practice because
+the device is in Switzerland — same answer, no special case. The one place
+Zurich *is* named explicitly is migration `20260822120000`'s backfill, which
+has no device to ask and had to pick something; picking UTC there would have
+rolled a plan forward a week if the migration ran on a Sunday evening.
+
+**Why read-time rather than stored.** The alternative — a stored "current
+week" that something advances — needs a thing that does the advancing: a
+background job, a launch-time check, or a migration every Monday. All three
+can fail to run, and all three have a wrong-answer state (the app open across
+midnight on Sunday, a phone that was off all week). Deriving it from the clock
+has no such state: at 00:00 on Monday the same code starts returning a
+different Monday, last week's rows stop being fetched, and what was "next
+week" is now "this week". Rollover is a property of asking, not of stored
+data.
+
+**Past weeks are unreachable, not deleted.** There is no way to navigate
+backwards — history lives in My recipes and the Waste Ledger, which is where
+users actually look for it. But the rows stay: the read is scoped to the two
+weeks the screen can show, so a past week is simply never asked for. That
+keeps the migration non-destructive and leaves a past-weeks feature possible
+later without recovering anything.
+
+**What this supersedes.** The 22 August redesign encoded next week as
+`day_index + 7` (0–6 this week, 7–13 next), because the table had no week
+column. That was storable — verified against live dev — but nothing anchored
+either week to a date, so neither ever rolled over: "next week" stayed next
+week forever, and last week's meals sat there labelled as this week's. That
+was already true of the single-week model before the toggle existed; the
+toggle only made it visible. 0–13 survives **only as a view offset inside
+`weekly_planner_screen.dart`** (day cards, inline-error keys, the in-flight
+write set) and is no longer a storage encoding.
+
+**Consequence for slot identity.** `(user_id, day_index, slot_index)` stopped
+being unique the moment weeks were anchored, so the unique constraint — and
+therefore PostgREST's `on_conflict` target — became
+`(user_id, week_start, day_index, slot_index)`. Verified against live dev:
+the old three-column target now returns `42P10` ("no unique or exclusion
+constraint matching the ON CONFLICT specification"), which would have broken
+every planner overwrite had the app not been changed in the same step. This is
+the second instance of the same lesson recorded on 22 August: having a
+constraint is not the same as PostgREST using it.
+
+`PlannerSlotRef` carries the week for the same reason — a cook launched at
+23:55 on Sunday and finished at 00:05 on Monday must mark the row it was
+planned in, not the same weekday of the week that just began.
+
+---
+
 ## Cooking times reach the model as a declared key, not a table — option C (21 August 2026)
 
 **Binding rule:** the cooking-times vocabulary is **never sent to the model as

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:optimeal/models/planner_week.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/weekly_planner_screen.dart';
@@ -106,6 +107,10 @@ void main() {
     final backend = FakeWeeklyPlanBackend();
     backend.rows.add({
       'user_id': 'user-1',
+      // This screen is pumped with the real clock, so the row has to sit in
+      // the week the screen will actually ask for — week-scoped reads mean an
+      // unanchored or stale row is simply not returned.
+      'week_start': plannerWeekValueFor(DateTime.now()),
       'day_index': 0,
       'slot_index': 0,
       'title': 'Planned Earlier',

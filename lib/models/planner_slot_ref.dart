@@ -19,15 +19,29 @@
 /// **Nothing infers this value.** A cook launched from anywhere other than a
 /// planner row carries null, and null means "no planner row was cooked".
 class PlannerSlotRef {
-  const PlannerSlotRef({required this.dayIndex, required this.slotIndex});
+  const PlannerSlotRef({
+    required this.weekStart,
+    required this.dayIndex,
+    required this.slotIndex,
+  });
 
-  /// Monday-based day of the week, matching `user_meal_plans.day_index`.
+  /// `yyyy-MM-dd` Monday, matching `user_meal_plans.week_start` — see
+  /// `plannerWeekValue`. Part of the slot's identity since migration
+  /// `20260822120000`: without it a cook finished after midnight on Sunday
+  /// would mark the *new* week's Tuesday, because `(day, slot)` alone stopped
+  /// being unique the moment weeks were anchored to dates. Carried as the
+  /// stored string rather than a `DateTime` so week identity is plain string
+  /// equality and can never pick up a stray time component.
+  final String weekStart;
+
+  /// Monday-based day of the week, 0–6, matching `user_meal_plans.day_index`.
   final int dayIndex;
 
   /// 0-based position within the day, matching `user_meal_plans.slot_index`.
   final int slotIndex;
 
   Map<String, dynamic> toJson() => {
+        'weekStart': weekStart,
         'dayIndex': dayIndex,
         'slotIndex': slotIndex,
       };
@@ -38,22 +52,29 @@ class PlannerSlotRef {
   /// safe answer — it attributes nothing rather than attributing wrongly.
   static PlannerSlotRef? fromJson(dynamic raw) {
     if (raw is! Map) return null;
+    final week = '${raw['weekStart'] ?? raw['week_start'] ?? ''}'.trim();
     final day = int.tryParse('${raw['dayIndex'] ?? raw['day_index'] ?? ''}'.trim());
     final slot = int.tryParse('${raw['slotIndex'] ?? raw['slot_index'] ?? ''}'.trim());
     if (day == null || slot == null) return null;
     if (day < 0 || slot < 0) return null;
-    return PlannerSlotRef(dayIndex: day, slotIndex: slot);
+    // A session saved before week anchoring has no week, and there is no
+    // honest way to invent one — the plan it belonged to may since have rolled
+    // over. Read as "no slot", which attributes nothing.
+    if (week.isEmpty) return null;
+    return PlannerSlotRef(weekStart: week, dayIndex: day, slotIndex: slot);
   }
 
   @override
   bool operator ==(Object other) =>
       other is PlannerSlotRef &&
+      other.weekStart == weekStart &&
       other.dayIndex == dayIndex &&
       other.slotIndex == slotIndex;
 
   @override
-  int get hashCode => Object.hash(dayIndex, slotIndex);
+  int get hashCode => Object.hash(weekStart, dayIndex, slotIndex);
 
   @override
-  String toString() => 'PlannerSlotRef(day: $dayIndex, slot: $slotIndex)';
+  String toString() =>
+      'PlannerSlotRef(week: $weekStart, day: $dayIndex, slot: $slotIndex)';
 }

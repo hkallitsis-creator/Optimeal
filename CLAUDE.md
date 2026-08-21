@@ -108,20 +108,43 @@ request or when a task needs the "why."
   signed three-source add sheet directly. Colours come from
   `AppDesignTokens` only (`champagneTint`, `cookedCountedGold`,
   `cookedNeutralGray` were added for this).
-  **Week toggle — this week ↔ next week, no past.** `user_meal_plans` has no
-  week column, so next week rides the same `day_index`: 0–6 this week, 7–13
-  next (`kNextWeekOffset`). Verified against live dev — `day_index` has no
-  CHECK constraint and accepts 7 and 13. **Neither week is anchored to a
-  calendar date, so nothing rolls over**; that was already true of the
-  single-week model and the toggle makes it visible. Fixing it needs a
-  `week_start` column, i.e. a migration.
-  **Nothing currently sets `user_meal_plans.is_cooked`** — see the roadmap
-  item; the two cooked states render correctly from stored rows but cannot be
-  reached live until a cook can be attributed to a (day, slot).
+  **Week toggle — this week ↔ next week, no past. Anchored 2026-08-22.**
+  Every row carries `week_start` (the Monday of its week, migration
+  `20260822120000`, dev only) and `day_index` is 0–6 within it. Both visible
+  weeks are **computed from the clock at read time** — `lib/models/planner_week.dart`
+  (`plannerWeekStartFor` / `plannerWeekAfter` / `plannerWeekValue`) — so
+  rollover happens by itself at midnight on Sunday with nothing stored and
+  nothing to advance. Boundary is **Monday, device-local time, deliberately
+  NOT pinned to Europe/Zurich** (see `docs/DECISIONS.md`). Past weeks are
+  unreachable, not deleted: the read is scoped to those two weeks, so a past
+  week is simply never asked for. The 0–13 index survives **only as a view
+  offset inside the screen** (`kNextWeekOffset` — day cards, inline-error
+  keys, the in-flight write set); it is no longer a storage encoding.
+  **`is_cooked` now has a writer** — see the slot-attribution entry below.
+- **A cook carries the planner slot it was launched from (2026-08-22).**
+  `PlannerSlotRef` (`lib/models/planner_slot_ref.dart`) — `week_start`,
+  `day_index`, `slot_index` — is stamped **once, at launch**, by the planner
+  row whose Cook button was pressed, and rides on `CookModeLaunchRequest` and
+  through the saved `ActiveCookSession` (so an interrupted planner cook still
+  attributes when resumed). On completion `PlannerCookAttributionService`
+  (`lib/services/planner_cook_attribution_service.dart`) marks exactly that
+  row via `WeeklyPlanBackend.markSlotCooked` — a targeted UPDATE, never an
+  upsert, so it cannot resurrect a meal deleted mid-cook — and then raises
+  `AppDataChanges.mealPlan`. **It is launch context, exactly like
+  `CookModeSurface`: do NOT move it into `CookModeRecipePayload`**, which is
+  persisted into `saved_recipes.recipe_payload` and would make a saved recipe
+  permanently remember one day slot. **Nothing is inferred**: a cook launched
+  anywhere else carries null and touches no plan row, and the same dish
+  planned on two days flips only the launched one. Counted-vs-not stays
+  derived from `RecipeOrigin.isRescueEligible` — no column, no ledger join.
+  Closes roadmap item 27 (ruling: option A).
 - **`user_meal_plans` upserts MUST pass the conflict target** (fixed
   2026-08-22). `WeeklyPlanBackend.upsertSlot` sends
-  `onConflict: 'user_id,day_index,slot_index'`
-  (`SupabaseWeeklyPlanBackend.slotConflictTarget`). PostgREST resolves
+  `onConflict: 'user_id,week_start,day_index,slot_index'`
+  (`SupabaseWeeklyPlanBackend.slotConflictTarget`) — **four columns since
+  week anchoring**; the old three-column form now returns `42P10` ("no unique
+  or exclusion constraint matching the ON CONFLICT specification") against
+  live dev, verified. PostgREST resolves
   `merge-duplicates` against the PRIMARY KEY unless told otherwise, and the
   app never sends an `id`, so without the target every overwrite of an
   occupied slot failed `23505` into the planner's "Couldn't save. Tap to
@@ -132,19 +155,24 @@ request or when a task needs the "why."
 - **Stale-read invalidation — one mechanism, write-driven (2026-08-22).**
   `DataChangeSignal` (`lib/services/data_change_signal.dart`) is a broadcast
   `Stream<void>` announced by whichever service performed a write; mounted
-  readers re-read. Two process-global signals in `AppDataChanges`:
+  readers re-read. Three process-global signals in `AppDataChanges`:
   `ledger` (fired by `LedgerService.logCompletion` — on both outcomes, since
   the local weekly store changes even when the remote insert fails — and by a
-  successful `retryPendingWrite`) and `cookLog` (fired by
+  successful `retryPendingWrite`), `cookLog` (fired by
   `CookSessionStorageService.saveActiveSession` / `clearActiveSession` /
-  `addRecentlyCooked`). Home subscribes to both; My recipes to `cookLog`.
+  `addRecentlyCooked`) and, since 2026-08-22, `mealPlan` (fired by
+  `PlannerCookAttributionService` **after** its write lands). `mealPlan` is
+  separate from `cookLog` on purpose even though one completion raises both:
+  `cookLog` fires at the top of the post-cook sequence, before the plan row is
+  written, so a `cookLog`-driven re-read would read the row back uncooked.
+  Home subscribes to `ledger` + `cookLog`; My recipes to `cookLog`.
   `SavedRecipesService` uses the same class **per-instance**, not a global —
   it is injected with a fake backend in tests. **Rule: a new cross-screen
   read gets a subscription to the signal for its store, never a new
   navigation callback** — navigation callbacks are structurally unreliable
   here (`RouteObserver` forwards only `didPop`, and Flutter marks an exiting
   page that still owns a modal sheet as *complete*, not *pop*).
-  The Weekly Planner subscribes to both signals too (2026-08-22) and
+  The Weekly Planner subscribes to all three signals (2026-08-22) and
   additionally carries a generation guard (`_writeEpoch`), because its reader
   and writer are the same `State`: a load whose epoch moved while it was in
   flight is discarded and re-read once slot writes settle. Its `user_meal_plans` access sits behind the injectable
@@ -341,7 +369,7 @@ request or when a task needs the "why."
 
 ## Current Supabase RLS state (all public-schema tables have RLS enabled — none exposed with RLS disabled)
 
-**DEV is now ahead of PROD.** The 2026-08-20 migrations (`20260820120000`, `20260820130000`) were applied to **dev only**: dev has 10 tables (`shopping_list_items` and `fridge_items` dropped, `saved_recipes` added), prod still has the original 11. The rows below describe **dev** unless marked. Re-verify before trusting this if time has passed.
+**DEV is now ahead of PROD by five migrations** (`20260818120000`, `20260820120000`, `20260820130000`, `20260821120000`, `20260822120000` — none pushed to prod). Dev has 10 tables (`shopping_list_items` and `fridge_items` dropped, `saved_recipes` added), prod still has the original 11. The rows below describe **dev** unless marked. Re-verify before trusting this if time has passed.
 
 Re-audited 2026-08-15. This is the state as of that audit — re-verify before
 trusting it if significant time has passed or migrations have landed since.
@@ -349,7 +377,7 @@ trusting it if significant time has passed or migrations have landed since.
 | table | RLS | policy intent | grants match policy intent? |
 |---|---|---|---|
 | `user_profiles` | on | owner-only (`id = auth.uid()`) | policy correct; `anon` has broader CRUD grants than needed (not exploitable — `auth.uid()` is null for `anon` callers — but a least-privilege gap) |
-| `user_meal_plans` | on | owner-only | yes, clean |
+| `user_meal_plans` | on | owner-only | yes, clean. Dev-only column: `week_start` (`20260822120000`), and the slot unique is now `(user_id, week_start, day_index, slot_index)` — index `user_meal_plans_slot_identity_key`, replacing `user_meal_plans_user_id_day_index_slot_index_key` |
 | ~~`shopping_list_items`~~ | — | — | **dropped from dev 2026-08-20** (0 rows, zero live code references). Still present on prod |
 | `waste_ledger_events` | on | owner-only | policy correct; same `anon`-too-broad gap as `user_profiles` |
 | `user_ledger_totals` | on | owner-scoped SELECT-only | **fixed 2026-08-15** — revoked stray INSERT/UPDATE/DELETE grants on `anon`/`authenticated` (writes happen only via a `SECURITY DEFINER` trigger, no direct grant needed) |
@@ -402,14 +430,34 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 25. **Per-surface cost attribution — done 2026-08-21 (dev).** `api_call_cost_log.surface` (migration `20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart` (`fridge_clearer` / `custom_creator` / `chef_sos` — three, matching the three live call sites). `cost_usd` now bills cached prompt tokens at the cached rate rather than the full input rate; it was overstating by ~14% and would have grown with the hit rate. `ask-chef-harris` is **v5 on dev**. Still open: **three dev-only migrations have never been pushed to prod** (`20260818120000`, `20260820120000`/`20260820130000`, `20260821120000`), and prod still runs the older function version. Also open: `user_id` was null on every `api_call_cost_log` row on dev, because `decodeUserIdFromAuthHeader` needs a 3-part JWT and the app was sending the `sb_publishable_…` key as the bearer. **Anonymous sign-ins are now ENABLED on dev** (turned on and device-verified 2026-08-21; re-verified 2026-08-22 — `POST /auth/v1/signup` returns a real 3-part JWT with `is_anonymous: true`, `role: authenticated`), so a signed-in client now sends a decodable bearer and per-user attribution should work. Not re-checked against live rows yet.
 26. **Curriculum drawers are matched against the prompt's own boilerplate — found 2026-08-21, not fixed (behavioural, Harris's call).** `_buildCurriculumAddendum` keyword-matches the whole assembled request, and the recipe surfaces' static block embeds the literal curriculum key list and cut vocabulary. So `sauteing`, `braising`, `julienne`, `dice`, `food_storage` and `leftovers` are present on **every** recipe-surface call regardless of what the user asked for, and both surfaces always pull the same few drawers from keyword noise rather than relevance. The 2026-08-21 prompt-ordering fix deliberately **preserved** this (it passes the static block into the match text) so that an ordering change stayed an ordering change — fixing it alters what reaches the model. Related to item 9.
 
-27. **A finished cook cannot be attributed to a Weekly Planner day slot — BLOCKED, needs Harris's ruling.** The redesigned planner renders both cooked states (gold check = counted, gray = didn't count) from `user_meal_plans.is_cooked`, and *counted-ness* is fully derived (`RecipeOrigin.isRescueEligible`) with no ledger join. What is missing is the other half: **nothing sets `is_cooked` any more.** The old writer — the planner awaiting `push<bool>` from Cook Mode — was deleted 2026-08-22 because the post-cook `context.go('/')` removes the planner page and completes that future with `null`, so it never fired on a real completion. Deriving it from data instead is not possible with the current schema: the cook log stores `{recipe, cookedAt}` **deduplicated by title** (so two cooks of one dish collapse to one entry), `waste_ledger_events` writes `recipe_id: null` and the local weekly store keeps only `{ts, ingredients}` — no recipe reference anywhere. Matching by title alone is ambiguous the moment the same dish is planned on two days, and would also mark a planner slot for a cook launched from Home. **Two candidate fixes, both Harris's call**: (a) carry the originating `(day_index, slot_index)` through `CookModeLaunchRequest` → `CookModeRecipePayload` so the completion knows which slot it belongs to; or (b) give `waste_ledger_events` / the cook log a real recipe key and attribute on that. Do not invent a title-matching heuristic in the meantime.
+27. **A finished cook is attributed to its Weekly Planner slot — DONE
+2026-08-22 (ruling: option A).** `PlannerSlotRef` is stamped at launch on the
+row whose Cook button was pressed and carried through `CookModeLaunchRequest`
+and the saved active session; `PlannerCookAttributionService` marks exactly
+that row on completion and raises `AppDataChanges.mealPlan`, which the planner
+already subscribes. Both cooked states are now reachable in the running app.
+See the architecture entry above; option (b) — giving `waste_ledger_events` /
+the cook log a real recipe key — was not taken and remains available if a
+recipe-level join is ever wanted for its own sake. No title matching was
+introduced anywhere.
+
+    **Week anchoring shipped in the same build** (migration
+    `20260822120000`, dev only): `user_meal_plans.week_start` plus read-time
+    Monday computation, so rollover is automatic and past weeks are
+    unreachable but not deleted. Boundary is Monday, **device-local** time —
+    reasoning and the ruling in `docs/DECISIONS.md`. One piece deliberately
+    deferred: a `CHECK (day_index between 0 and 6)`, the right invariant now
+    but one that would have broken any client still running the pre-migration
+    build the moment it wrote `day_index` 7. Worth adding once the app change
+    has settled.
+
 
 ## Working conventions
 
 - **`docs/DECISIONS.md` and `docs/CHANGELOG.md` exist alongside this file.** DECISIONS.md holds binding product/architecture decisions and their reasoning (not descriptions of current code). CHANGELOG.md holds completed work and full session history, newest first. Neither is auto-loaded — read on request or when a task needs history/reasoning this file deliberately omits to stay small.
 - **CLAUDE.md is authoritative for Roadmap item numbering.** If Harris refers to an item by a number that doesn't match what's actually here, stop and ask — don't guess which item was meant.
 - **Locate code by content/class name, not filename** — the Dreamflow-export filename-shuffling issue was checked and is NOT present in this repo, but this remains the safer default if it's ever in doubt again.
-- **Supabase CLI is authenticated**, and **linked to DEV** (ref `suuafglvrxrllnhipkiv`) — see the standing note further down; it is deliberately NOT linked to production. `supabase db push` applies migrations directly — no manual Dashboard SQL Editor paste-and-run needed (still confirm with Harris before pushing schema changes to production, same as any other prod DB write). `supabase functions deploy <name> --project-ref xwugnhzlnfgmczkbbcbh --use-api` deploys Edge Functions directly — the `--use-api` flag is required on this machine (no Docker/Podman installed, so the default Docker-based bundler fails). The CLI hardcodes `supabase/functions/<name>/index.ts` relative to the project root, no flag to point elsewhere — any edge function brought into CLI-managed deploys goes there, no second copy anywhere else. `supabase functions --help` lists no `logs` subcommand — read Edge Function logs via Dashboard → Edge Functions → Logs. **There is no `db query` subcommand** in the installed CLI (2.110.0) — this file claimed there was, and that was wrong; `db dump` needs Docker, which isn't installed either. For read-only checks without Docker use `supabase inspect db table-stats --linked` (real query: tables + row counts), `supabase migration list --linked`, or probe PostgREST directly with the committed dev publishable key (404 `PGRST205` = table gone; `?select=<col>&limit=0` returning 200 vs 400 = column exists or not). Reading `pg_policies`/`pg_constraint` still needs the Dashboard SQL editor.
+- **Supabase CLI is authenticated**, and **linked to DEV** (ref `suuafglvrxrllnhipkiv`) — see the standing note further down; it is deliberately NOT linked to production. `supabase db push --linked` applies migrations directly to **dev** and is **allowed without confirmation** as of 2026-08-22 (`.claude/settings.json`): `supabase link`/`unlink`/`projects` are denied, which mechanically pins `--linked` to dev, so prod is unreachable by this route. Production schema changes remain stop-and-report. `supabase functions deploy <name> --project-ref xwugnhzlnfgmczkbbcbh --use-api` deploys Edge Functions directly — the `--use-api` flag is required on this machine (no Docker/Podman installed, so the default Docker-based bundler fails). The CLI hardcodes `supabase/functions/<name>/index.ts` relative to the project root, no flag to point elsewhere — any edge function brought into CLI-managed deploys goes there, no second copy anywhere else. `supabase functions --help` lists no `logs` subcommand — read Edge Function logs via Dashboard → Edge Functions → Logs. **There is no `db query` subcommand** in the installed CLI (2.110.0) — this file claimed there was, and that was wrong; `db dump` needs Docker, which isn't installed either. For read-only checks without Docker use `supabase inspect db table-stats --linked` (real query: tables + row counts), `supabase migration list --linked`, or probe PostgREST directly with the committed dev publishable key (404 `PGRST205` = table gone; `?select=<col>&limit=0` returning 200 vs 400 = column exists or not). Reading `pg_policies`/`pg_constraint` still needs the Dashboard SQL editor.
 - When a fix touches a Supabase Edge Function, give exact code plus explicit deployment steps and confirm the deploy actually happened — never assume it's live until confirmed via `supabase functions list` (check `version`/`updated_at`) or Harris's own confirmation.
 - When something seems like it "should already be fixed" per this document but live behavior contradicts it, verify the actual current source first — don't assume regression, and don't assume the documented fix is stale either. Check before concluding either way. (This exact convention is what caught the Pluralization Audit and the Design Polish backgroundColor batch both already being silently completed — see `docs/CHANGELOG.md`, 2026-08-17.)
 - Prefer running `flutter analyze` and any available tests after changes.

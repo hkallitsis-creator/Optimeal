@@ -27,22 +27,30 @@ class FakeWeeklyPlanBackend implements WeeklyPlanBackend {
   int deleteCalls = 0;
   int markCookedCalls = 0;
 
-  /// Every `(day, slot)` [markSlotCooked] was called with, in order — so a
-  /// test can assert not just which row ended up cooked but that no other row
+  /// Every `(week, day, slot)` [markSlotCooked] was called with, in order — so
+  /// a test can assert not just which row ended up cooked but that no other row
   /// was even addressed.
-  final List<({int dayIndex, int slotIndex})> markCookedTargets = [];
+  final List<({String weekStart, int dayIndex, int slotIndex})>
+      markCookedTargets = [];
+
+  /// Every `weekStarts` list [listForWeeks] was called with, so a test can
+  /// prove the read was week-scoped rather than fetching everything and
+  /// filtering client-side.
+  final List<List<String>> readWeekScopes = [];
 
   final List<Completer<List<Map<String, dynamic>>>> _pendingReads = [];
   final List<List<Map<String, dynamic>>> _snapshots = [];
 
   int get pendingReadCount => _pendingReads.length;
 
-  String _slotKey(int day, int slot) => '$day-$slot';
+  String _slotKey(String week, int day, int slot) => '$week|$day-$slot';
 
-  int _indexOf(String userId, int day, int slot) => rows.indexWhere((r) =>
-      r['user_id'] == userId &&
-      _slotKey(r['day_index'] as int, r['slot_index'] as int) ==
-          _slotKey(day, slot));
+  int _indexOf(String userId, String week, int day, int slot) =>
+      rows.indexWhere((r) =>
+          r['user_id'] == userId &&
+          _slotKey(r['week_start'] as String, r['day_index'] as int,
+                  r['slot_index'] as int) ==
+              _slotKey(week, day, slot));
 
   /// Releases the oldest held read with the snapshot it captured.
   void completeRead() {
@@ -50,11 +58,19 @@ class FakeWeeklyPlanBackend implements WeeklyPlanBackend {
     completer.complete(_snapshots.removeAt(0));
   }
 
+  /// Mirrors the real query's `week_start IN (...)` filter, which is what makes
+  /// past weeks unreachable — a fake that returned everything would hide the
+  /// bug this scoping exists to prevent.
   @override
-  Future<List<Map<String, dynamic>>> listForUser(String userId) {
+  Future<List<Map<String, dynamic>>> listForWeeks(
+    String userId, {
+    required List<String> weekStarts,
+  }) {
     listCalls++;
+    readWeekScopes.add(List<String>.from(weekStarts));
     final snapshot = rows
-        .where((r) => r['user_id'] == userId)
+        .where((r) =>
+            r['user_id'] == userId && weekStarts.contains(r['week_start']))
         .map((r) => Map<String, dynamic>.from(r))
         .toList(growable: false);
     if (!holdReads) return Future.value(snapshot);
@@ -65,10 +81,16 @@ class FakeWeeklyPlanBackend implements WeeklyPlanBackend {
     return completer.future;
   }
 
+  /// Enforces the real table's slot identity, which since migration
+  /// `20260822120000` includes `week_start` — the same four columns
+  /// `SupabaseWeeklyPlanBackend.slotConflictTarget` names.
   @override
   Future<void> upsertSlot(Map<String, dynamic> row) async {
     upsertCalls++;
-    final i = _indexOf(row['user_id'] as String, row['day_index'] as int,
+    final i = _indexOf(
+        row['user_id'] as String,
+        row['week_start'] as String,
+        row['day_index'] as int,
         row['slot_index'] as int);
     if (i == -1) {
       rows.add(Map<String, dynamic>.from(row));
@@ -80,11 +102,12 @@ class FakeWeeklyPlanBackend implements WeeklyPlanBackend {
   @override
   Future<void> deleteSlot({
     required String userId,
+    required String weekStart,
     required int dayIndex,
     required int slotIndex,
   }) async {
     deleteCalls++;
-    final i = _indexOf(userId, dayIndex, slotIndex);
+    final i = _indexOf(userId, weekStart, dayIndex, slotIndex);
     if (i != -1) rows.removeAt(i);
   }
 
@@ -93,13 +116,15 @@ class FakeWeeklyPlanBackend implements WeeklyPlanBackend {
   @override
   Future<void> markSlotCooked({
     required String userId,
+    required String weekStart,
     required int dayIndex,
     required int slotIndex,
     required bool cooked,
   }) async {
     markCookedCalls++;
-    markCookedTargets.add((dayIndex: dayIndex, slotIndex: slotIndex));
-    final i = _indexOf(userId, dayIndex, slotIndex);
+    markCookedTargets.add(
+        (weekStart: weekStart, dayIndex: dayIndex, slotIndex: slotIndex));
+    final i = _indexOf(userId, weekStart, dayIndex, slotIndex);
     if (i == -1) return;
     rows[i] = {...rows[i], 'is_cooked': cooked};
   }

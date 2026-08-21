@@ -18,19 +18,29 @@ abstract class WeeklyPlanBackend {
   /// initialized. Callers treat null as "stay local, stop the loader".
   String? get currentUserId;
 
-  /// All of the user's planned slots. Ordered by day then slot, though the
-  /// screen re-indexes anyway.
-  Future<List<Map<String, dynamic>>> listForUser(String userId);
+  /// The user's planned slots for the given weeks, and no others.
+  ///
+  /// [weekStarts] are `yyyy-MM-dd` Mondays (see `plannerWeekValue`) — in
+  /// practice this week and next week, both computed from the clock at read
+  /// time. Scoping the read here is what makes rollover free: a week that has
+  /// fallen into the past is simply never asked for. Ordered by day then slot,
+  /// though the screen re-indexes anyway.
+  Future<List<Map<String, dynamic>>> listForWeeks(
+    String userId, {
+    required List<String> weekStarts,
+  });
 
   Future<void> upsertSlot(Map<String, dynamic> row);
 
   Future<void> deleteSlot({
     required String userId,
+    required String weekStart,
     required int dayIndex,
     required int slotIndex,
   });
 
-  /// Flips `is_cooked` on exactly one existing slot.
+  /// Flips `is_cooked` on exactly one existing slot, identified by its full
+  /// `(week, day, slot)` identity.
   ///
   /// Deliberately an UPDATE, not an upsert: this is called from Cook Mode's
   /// completion, which knows a `(day, slot)` but holds none of the row's other
@@ -40,6 +50,7 @@ abstract class WeeklyPlanBackend {
   /// was being cooked) and is not an error.
   Future<void> markSlotCooked({
     required String userId,
+    required String weekStart,
     required int dayIndex,
     required int slotIndex,
     required bool cooked,
@@ -62,18 +73,28 @@ class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> listForUser(String userId) async {
+  Future<List<Map<String, dynamic>>> listForWeeks(
+    String userId, {
+    required List<String> weekStarts,
+  }) async {
+    if (weekStarts.isEmpty) return const [];
     final rows = await _withJwtRetry(() => _db
         .from(table)
         .select()
         .eq('user_id', userId)
+        .inFilter('week_start', weekStarts)
+        .order('week_start', ascending: true)
         .order('day_index', ascending: true)
         .order('slot_index', ascending: true));
     return rows.map((r) => Map<String, dynamic>.from(r)).toList(growable: false);
   }
 
   /// The table's real slot identity — a UNIQUE on
-  /// `(user_id, day_index, slot_index)`, separate from its `id` primary key.
+  /// `(user_id, week_start, day_index, slot_index)`, separate from its `id`
+  /// primary key. `week_start` joined the key in migration `20260822120000`,
+  /// which replaced `user_meal_plans_user_id_day_index_slot_index_key` with
+  /// `user_meal_plans_slot_identity_key`; this string must always name the
+  /// live constraint's columns exactly, or the failure below returns.
   ///
   /// **This must be passed explicitly.** PostgREST resolves
   /// `merge-duplicates` against the PRIMARY KEY unless told otherwise, and
@@ -87,7 +108,8 @@ class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
   /// the row updates in place. Every overwrite of an existing slot (marking
   /// it cooked, replacing its meal) failed silently into the planner's
   /// "Couldn't save. Tap to retry." until this was added.
-  static const String slotConflictTarget = 'user_id,day_index,slot_index';
+  static const String slotConflictTarget =
+      'user_id,week_start,day_index,slot_index';
 
   @override
   Future<void> upsertSlot(Map<String, dynamic> row) => _withJwtRetry(
@@ -96,6 +118,7 @@ class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
   @override
   Future<void> deleteSlot({
     required String userId,
+    required String weekStart,
     required int dayIndex,
     required int slotIndex,
   }) =>
@@ -103,12 +126,14 @@ class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
           .from(table)
           .delete()
           .eq('user_id', userId)
+          .eq('week_start', weekStart)
           .eq('day_index', dayIndex)
           .eq('slot_index', slotIndex));
 
   @override
   Future<void> markSlotCooked({
     required String userId,
+    required String weekStart,
     required int dayIndex,
     required int slotIndex,
     required bool cooked,
@@ -120,6 +145,7 @@ class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           })
           .eq('user_id', userId)
+          .eq('week_start', weekStart)
           .eq('day_index', dayIndex)
           .eq('slot_index', slotIndex));
 

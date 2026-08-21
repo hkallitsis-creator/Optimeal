@@ -16,9 +16,12 @@ import 'package:optimeal/services/weekly_plan_service.dart';
 /// completes that future with null.
 ///
 /// **The attribution is carried, never inferred.** [PlannerSlotRef] is stamped
-/// once, at launch, on the planner row the user actually pressed Cook on, and
-/// rides in `CookModeLaunchRequest` (and through the saved active session, so
-/// an interrupted planner cook still attributes when it is resumed). A cook
+/// once, at launch, on the planner row the user actually pressed Cook on —
+/// week, day and slot together, so a cook that finishes after midnight on
+/// Sunday still marks the week it was planned in rather than the same weekday
+/// of the week that just began. It rides in `CookModeLaunchRequest` (and
+/// through the saved active session, so an interrupted planner cook still
+/// attributes when it is resumed). A cook
 /// launched from Home, the Fridge Clearer, a generation sheet or Recently
 /// Cooked carries null and touches no plan row at all. There is no title
 /// matching anywhere in this path: the same dish planned on Tuesday and Friday
@@ -67,6 +70,7 @@ class PlannerCookAttributionService {
     try {
       await _backend.markSlotCooked(
         userId: userId,
+        weekStart: slot.weekStart,
         dayIndex: slot.dayIndex,
         slotIndex: slot.slotIndex,
         cooked: true,
