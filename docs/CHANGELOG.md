@@ -13,6 +13,65 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Cook Mode layout finalization (Unit B)
+
+Full prompt and report: `docs/sessions/2026-08-22_cookmode-unit-b.md`. Unit B
+of the signed 2026-08-21 Cook Mode/Palette card, sitting on the consolidated
+v1.2 tokens.
+
+**One step, dominant.** Cook Mode's scrolling list of every step card is gone
+from the cooking state. The composition is now header (with a persistent SOS
+square, top-right, present in every state) → tappable progress bar
+("Step N of M · title") → one ivory step card → bottom bar. The card's reading
+order is the design: the action line, then heat/time as pills with the timer as
+quiet text beside them, then the **cue panel promoted above the detail**, then
+the original bullets demoted to small muted prose with their diagram pills.
+A next-step **whisper** is fused to the card's bottom edge — neutral pill tone,
+no icon, small-caps "NEXT" — and there is deliberately no previous-step
+whisper.
+
+**Everything else is one tap away.** `_CookOverviewSheet` is one sheet with two
+panes swapped in place (never stacked): all steps (done faded with a check,
+current champagne, upcoming tappable to jump) and the full ingredient list with
+quantities, servings read-only. **Finish & Plate now lives only at the end of
+that step list** — never per-step, because it skips every remaining step and
+fires a permanent ledger write.
+
+**Bottom bar**: an outlined pause square, one terracotta CTA ("Next step"), and
+Ask-Chef-Harris demoted to a hint line. One filled button on the screen, with a
+test asserting it.
+
+**The cue data contract is LIVE, not dormant.** Steps already carry a declared
+`sensory_cue` key: both recipe prompts require it, `chef_recipe_parser`
+validates it against the signed vocabulary, and `SensoryCueVocabulary` supplies
+phase, sentence and remedies. The panel renders "HOW YOU KNOW IT'S RIGHT"
+(readiness) / "HOW YOU KNOW IT'S DONE" (doneness), the signed sentence, and an
+**inline** expander for the remedies. A step with `no_cue` renders no panel at
+all — never an empty frame.
+
+**Consolidated to one cue presentation**: `_SensoryCueCard` and
+`_SensoryCueDetailSheet` were deleted; the pre-cook step list now renders the
+same `_CuePanel`. The remedy is inline rather than a sheet, which is what the
+spec asks for and one less thing to dismiss while standing over a pan.
+
+**Four side parts.** (1) The 13 terracotta-alpha washes deferred from
+`15325f5` converted to `champagneTint`, minus three that became gold. (2) The
+four named gold earned moments moved onto the gold family — the celebration
+sheet (counted verdict *and* rescue milestone), the **Confidence** tier-up
+sheet, and both share-card accents; `UpgradePromptSheet`'s star stays
+terracotta, being a sales CTA rather than an earned moment. (3) Dev builds
+never show the paywall — a route-level `redirect` on `/paywall`, so every
+entry point is covered at once. (4) The phantom "CLAUDE.md Roadmap item 28"
+comments (item 28 never existed) now point at the rescue-provenance rule.
+
+Out of scope by fence and untouched: the pre-cook moment merge, the SOS sheet
+redesign, generation prompts, and tier-3 timer promotion (evidence-gated).
+
+`flutter test`: **285 passing** (266 + 19). `flutter analyze`: **45 issues**,
+0 errors, 0 warnings. Palette guard still green, zero stray colour literals.
+
+---
+
 ## 2026-08-22 — Palette v1.2 (variant D) token swap, app-wide
 
 Full prompt and report: `docs/sessions/2026-08-22_palette-v12-swap.md`. Unit A

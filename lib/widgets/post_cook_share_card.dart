@@ -109,11 +109,12 @@ class _PostCookShareCardSheetState extends State<PostCookShareCardSheet> {
                   height: 38,
                   width: 38,
                   decoration: BoxDecoration(
-                    color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.14),
+                    // Gold = earned: the share accent is a named gold moment.
+                    color: AppDesignTokens.goldEarnedBadgeTint,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.18)),
+                    border: Border.all(color: AppDesignTokens.goldEarnedFill),
                   ),
-                  child: const Icon(Icons.ios_share_rounded, color: AppDesignTokens.ctaTerracotta, size: 20),
+                  child: const Icon(Icons.ios_share_rounded, color: AppDesignTokens.goldEarnedOnLight, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -211,7 +212,10 @@ class _RecapCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.eco_rounded, color: AppDesignTokens.ctaTerracotta, size: 20),
+              // goldEarnedFill, not goldEarnedOnLight: this glyph sits on the
+              // deep-forest gradient, and the on-light value exists to survive
+              // ivory, not darkness.
+              const Icon(Icons.eco_rounded, color: AppDesignTokens.goldEarnedFill, size: 20),
               const SizedBox(width: 8),
               Text(
                 'OPTIMEAL',

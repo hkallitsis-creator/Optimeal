@@ -51,10 +51,39 @@ request or when a task needs the "why."
   `goldEarnedBadgeTint` — never CTAs, teaching panels, or large fills; the Home
   rescue strip stays sage because a running total is not an earned moment).
   Renamed in this sweep: `surfaceCream` → `surfaceIvory`, `cookedCountedGold` →
-  `goldEarnedOnLight`. Known open: several earned-moment surfaces (post-cook
-  celebration, share card) still render terracotta rather than gold — audited
-  and listed in `docs/sessions/2026-08-22_palette-v12-swap.md`, deliberately
-  not redesigned in a token swap.
+  `goldEarnedOnLight`. The four named earned moments were moved onto gold in
+  Unit B (2026-08-22): the Waste Ledger celebration sheet (counted verdict
+  **and** rescue milestone), `ConfidenceTierUpSheet`, and both post-cook
+  share-card accents. `UpgradePromptSheet`'s star stays terracotta on purpose —
+  it is a sales CTA, and gold never goes on a CTA. Remaining audited-but-unfixed
+  semantic drift is listed in
+  `docs/sessions/2026-08-22_palette-v12-swap.md`.
+- **Cook Mode is a focused, one-step layout (2026-08-22, Unit B).** While a
+  cook is under way (`_cookStarted && _activeStepIndex != null`) the screen is
+  header → tappable progress bar → **one** ivory step card → bottom bar. The
+  card reads action line → heat/time pills (heat is the only warm pill; timer
+  is quiet text, not a third pill) → **cue panel above the detail** → demoted
+  bullets + diagram pills → a next-step **whisper** fused to the bottom edge
+  (no previous-step whisper, deliberately). Everything else is one tap away in
+  `_CookOverviewSheet` — two panes (all steps / ingredients) swapped in place,
+  never stacked. **Finish & Plate exists only at the end of that step list.**
+  Bottom bar is an outlined pause square + one terracotta CTA + Ask-Chef as a
+  hint; the **SOS square is persistent in the app bar in every state**.
+  The pre-cook and finished bodies are unchanged (`_buildPreCookBody`) — the
+  pre-cook moment merge and the SOS sheet redesign are separate queued builds.
+  Tier-3 timer promotion is evidence-gated and deliberately not built.
+  **Cue rendering is one widget, `_CuePanel`** (`_SensoryCueCard` /
+  `_SensoryCueDetailSheet` deleted): sage teaching panel, "HOW YOU KNOW IT'S
+  RIGHT"/"...IT'S DONE" per the signed `phase`, the signed sentence, and an
+  **inline** remedy expander. A `no_cue` step renders no panel — never an empty
+  frame. The cue contract is live end to end: both recipe prompts require
+  `sensory_cue`, `chef_recipe_parser` validates it, the vocabulary supplies the
+  voice.
+- **Dev builds never show the paywall (2026-08-22).** A route-level `redirect`
+  on `AppRoutes.paywall` in `lib/nav.dart` sends `kIsDevEnvironment` builds to
+  Home, so every entry point (onboarding skip, `UpgradePromptSheet`) is covered
+  at once and a future third one cannot forget. Release behaviour unchanged;
+  the branch folds away in a prod build, same as the DEV badge.
 - **Home is a one-screen, no-scroll hub (2026-08-20).**
   `HomeDashboardScreen` is six top-anchored zones with exactly one `Spacer`
   absorbing surplus: greeting + avatar → Fridge Clearer hero → custom recipe

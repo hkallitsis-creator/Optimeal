@@ -45,7 +45,7 @@ class UpgradePromptSheet extends StatelessWidget {
                   height: 38,
                   width: 38,
                   decoration: BoxDecoration(
-                    color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.14),
+                    color: AppDesignTokens.champagneTint,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.18)),
                   ),

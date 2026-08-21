@@ -107,7 +107,7 @@ class _RatioSummaryBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = AppDesignTokens.ctaTerracotta.withValues(alpha: 0.12);
+    const bg = AppDesignTokens.champagneTint;
     return Align(
       alignment: Alignment.centerLeft,
       child: DecoratedBox(

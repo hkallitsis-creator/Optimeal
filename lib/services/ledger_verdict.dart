@@ -3,7 +3,7 @@ import 'package:optimeal/services/ledger_service.dart';
 
 /// Every outcome a completed cook session can produce with respect to the
 /// Waste Ledger — see CLAUDE.md, "Waste Ledger legibility — option B"
-/// (docs/DECISIONS.md) and Roadmap item 28. Display-only over the existing
+/// (docs/DECISIONS.md) and the rescue-provenance rule. Display-only over the existing
 /// [LedgerCompletionResult] sealed type and [RecipeOrigin] — neither is
 /// modified to support this; both already carry enough information (see
 /// [selectLedgerVerdict]'s doc for how each variant is distinguished).

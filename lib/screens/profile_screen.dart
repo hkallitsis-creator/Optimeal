@@ -201,7 +201,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     selected: selected,
                     showCheckmark: false,
                     label: Text(opt.label),
-                    selectedColor: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.12),
+                    selectedColor: AppDesignTokens.champagneTint,
                     side: BorderSide(
                       color: (selected ? AppDesignTokens.ctaTerracotta : scheme.outline).withValues(alpha: 0.18),
                       width: selected ? 1.2 : 1.0,

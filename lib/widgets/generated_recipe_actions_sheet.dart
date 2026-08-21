@@ -39,7 +39,7 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
 
   /// Which surface generated [recipe] — this widget is shared by Fridge
   /// Countdown and Custom AI Recipe Creator, which need to be
-  /// distinguishable for Waste Ledger gating (CLAUDE.md Roadmap item 28).
+  /// distinguishable for Waste Ledger gating (see RecipeOrigin).
   final CookModeSurface surface;
 
   @override

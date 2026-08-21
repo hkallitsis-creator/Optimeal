@@ -885,7 +885,7 @@ class _ResumeSessionBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.10),
+        color: AppDesignTokens.champagneTint,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(
             color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.24)),
@@ -899,7 +899,7 @@ class _ResumeSessionBanner extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.16),
+                  color: AppDesignTokens.champagneTint,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Icon(Icons.restaurant_menu_rounded,

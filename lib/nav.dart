@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
+import 'package:optimeal/config/app_environment.dart';
 import 'package:optimeal/screens/home_dashboard_screen.dart';
 import 'package:optimeal/screens/my_recipes_screen.dart';
 import 'package:optimeal/screens/onboarding_screen.dart';
@@ -148,6 +149,17 @@ class AppRouter {
         GoRoute(
           path: AppRoutes.paywall,
           name: 'paywall',
+          // Dev builds never see the paywall — they route straight through to
+          // Home. Release behaviour is untouched.
+          //
+          // Done as a route-level redirect rather than at the two call sites
+          // (onboarding's "skip", UpgradePromptSheet's CTA) deliberately: a
+          // guard at the destination cannot be forgotten by whoever adds the
+          // third entry point. `kIsDevEnvironment` is a genuine compile-time
+          // constant, so this branch — and the redirect itself — folds away
+          // entirely in a prod build, exactly like the DEV badge.
+          redirect: (context, state) =>
+              kIsDevEnvironment ? AppRoutes.home : null,
           builder: (context, state) => const PaywallScreen(),
         ),
       ],

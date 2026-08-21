@@ -304,7 +304,7 @@ class _FeatureRow extends StatelessWidget {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.12),
+            color: AppDesignTokens.champagneTint,
             borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
             border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10)),
           ),

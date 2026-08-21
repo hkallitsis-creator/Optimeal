@@ -127,7 +127,7 @@ class LedgerService {
   /// [source] must be one of: 'fridge_clearer', 'cook_mode', 'custom_ai_recipe',
   /// 'fridge_countdown'. In practice, callers should use
   /// [CookModeSurface.ledgerSourceValue] rather than a literal — see
-  /// CLAUDE.md Roadmap item 28.
+  /// the rescue-provenance rule (see RecipeOrigin).
   ///
   /// Does not throw for expected failure modes (auth, network, database) —
   /// returns [LedgerCompletionWriteFailed] instead, with the pending write

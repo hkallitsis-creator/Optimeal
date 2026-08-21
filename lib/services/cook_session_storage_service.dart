@@ -101,9 +101,10 @@ class CookSessionStorageService {
       final recipe = _recipeFromJson(json['recipe'] as Map<String, dynamic>);
       final progress = json['progress'] as Map<String, dynamic>;
 
-      // surface/isReCook are absent on sessions saved before CLAUDE.md
-      // Roadmap item 28 — default to null/false (non-rescue-eligible)
-      // rather than guessing an origin surface that was never recorded.
+      // surface/isReCook are absent on sessions saved before the
+      // rescue-provenance rule existed — default to null/false
+      // (non-rescue-eligible) rather than guessing an origin surface that was
+      // never recorded.
       final surfaceName = json['surface'] as String?;
       CookModeSurface? surface;
       if (surfaceName != null) {
@@ -389,7 +390,7 @@ class ActiveCookSession {
   /// a re-cook — carried through resume so a backgrounded-then-resumed
   /// session still logs (or doesn't log) exactly as it would have if
   /// finished without interruption. Null [surface] on sessions saved before
-  /// CLAUDE.md Roadmap item 28 existed.
+  /// the rescue-provenance rule existed.
   final CookModeSurface? surface;
   final bool isReCook;
 

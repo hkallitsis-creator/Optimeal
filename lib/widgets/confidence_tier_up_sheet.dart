@@ -49,11 +49,13 @@ class ConfidenceTierUpSheet extends StatelessWidget {
                   height: 38,
                   width: 38,
                   decoration: BoxDecoration(
-                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
+                    // Gold = earned (palette v1.2): a confidence tier-up is
+                    // one of the four named earned moments.
+                    color: AppDesignTokens.goldEarnedBadgeTint,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
+                    border: Border.all(color: AppDesignTokens.goldEarnedFill),
                   ),
-                  child: const Icon(Icons.trending_up_rounded, color: AppDesignTokens.deepForest, size: 20),
+                  child: const Icon(Icons.trending_up_rounded, color: AppDesignTokens.goldEarnedOnLight, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

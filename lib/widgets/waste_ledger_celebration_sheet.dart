@@ -67,15 +67,15 @@ class WasteLedgerCelebrationSheet extends StatelessWidget {
                   height: 44,
                   width: 44,
                   decoration: BoxDecoration(
-                    color:
-                        AppDesignTokens.ctaTerracotta.withValues(alpha: 0.14),
+                    // Gold = earned (palette v1.2). Badge tint fill + a thin
+                    // gold border + the contrast-safe gold glyph — never a
+                    // large gold fill, never gold on a CTA.
+                    color: AppDesignTokens.goldEarnedBadgeTint,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                        color: AppDesignTokens.ctaTerracotta
-                            .withValues(alpha: 0.18)),
+                    border: Border.all(color: AppDesignTokens.goldEarnedFill),
                   ),
                   child: const Icon(Icons.eco_rounded,
-                      color: AppDesignTokens.ctaTerracotta, size: 22),
+                      color: AppDesignTokens.goldEarnedOnLight, size: 22),
                 ),
                 const Spacer(),
                 if (recipe != null)

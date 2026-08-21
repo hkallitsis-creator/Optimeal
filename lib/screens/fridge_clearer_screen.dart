@@ -1143,7 +1143,7 @@ class GeneratedRecipeCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(
           horizontal: AppDesignTokens.spaceSM, vertical: 6),
       decoration: BoxDecoration(
-        color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.10),
+        color: AppDesignTokens.champagneTint,
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
             color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.22)),

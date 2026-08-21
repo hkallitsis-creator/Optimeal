@@ -247,7 +247,7 @@ class OnePanCookingRoadmapScreen extends StatefulWidget {
   /// Which surface this fresh launch originated from — see
   /// [CookModeSurface]. Ignored (superseded by [resumeSession]'s own
   /// surface) if [resumeSession] is provided. Null for the demo recipe.
-  /// See CLAUDE.md Roadmap item 28.
+  /// See the rescue-provenance entry in CLAUDE.md.
   final CookModeSurface? surface;
 
   /// Whether this is a re-cook of an already-cooked recipe (Home's
@@ -276,7 +276,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// (the back button, Weekly Planner's `completed` check) — deliberately
   /// independent of whether the Waste Ledger write itself was attempted or
   /// succeeded, since not every cook is rescue-eligible (see CLAUDE.md
-  /// Roadmap item 28). Named for what it tracks now; was `_ledgerSessionLogged`
+  /// the rescue-provenance rule). Named for what it tracks now; was `_ledgerSessionLogged`
   /// before that item decoupled the sequence from the ledger result.
   bool _cookSequenceStarted = false;
   final _ledgerService = LedgerService();
@@ -295,7 +295,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// [OnePanCookingRoadmapScreen.resumeSession] if resuming, otherwise from
   /// the widget's own [OnePanCookingRoadmapScreen.surface]/[OnePanCookingRoadmapScreen.isReCook].
   /// Null [_surface] (demo recipe, or a pre-Roadmap-28 resumed session) is
-  /// never rescue-eligible. See CLAUDE.md Roadmap item 28.
+  /// never rescue-eligible. See the rescue-provenance entry in CLAUDE.md.
   late final CookModeSurface? _surface;
   late final bool _isReCook;
 
@@ -873,7 +873,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       // Learned, Confidence Climb, the tier-up offer, the share card, and
       // the upgrade nudge all still run unconditionally for a cook that
       // didn't log (wrong surface, a re-cook, or a failed write) — see
-      // CLAUDE.md Roadmap item 28 — they just now run BEFORE the verdict
+      // the rescue-provenance rule — they just now run BEFORE the verdict
       // sheet rather than after it.
       if (!mounted) return;
       final payload = _payload;
@@ -942,7 +942,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       // sheets close. Uses the same provenance rule logCompletion applies
       // internally (LedgerService.computeRescuedIngredients) — rather than
       // the ledger result — so it renders identically whether or not this
-      // cook actually logged (CLAUDE.md Roadmap item 28). enteredIngredients
+      // cook actually logged (see RecipeOrigin). enteredIngredients
       // is empty for any non-Fridge-Clearer surface, so this now correctly
       // shows nothing for a cook with no real "entered ingredient"
       // provenance at all, rather than crediting the recipe's own choices.
@@ -1046,7 +1046,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// Shared entry point for Finish & Plate, whether pressed mid-cook (the
   /// skip-ahead control on [_CookPlayerBar]) or at the finished state (the
   /// existing button on [_CookModeBottomBar], not-yet-started branch only —
-  /// see CLAUDE.md Roadmap item 28). Confirms first (a permanent ledger
+  /// see the Finish & Plate note below). Confirms first (a permanent ledger
   /// write, subject to the same logging rules as the last-step tick — an
   /// accidental tap would otherwise end the session early), then stops any
   /// running timer and runs the exact same completion sequence
@@ -1247,6 +1247,68 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     return _steps[stepIndex].duration;
   }
 
+  /// Tier 2 of the tiered mid-step access model: one tap from the focused
+  /// layout to every step and every ingredient. Reached from the progress bar
+  /// and from the next-step whisper — both land here, because the question
+  /// "what's coming?" and "where am I?" have the same answer.
+  ///
+  /// One sheet, two panes, swapped in place. Sheets never stack in this app,
+  /// and the ingredients pane is the whole reason this exists: "how much
+  /// garlic?" mid-cook must be answerable without leaving the step.
+  Future<void> _openOverview({bool startOnIngredients = false}) async {
+    if (!mounted) return;
+    await AppBottomSheet.show<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceIvory,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(
+        child: _CookOverviewSheet(
+          steps: _steps,
+          activeStepIndex: _activeStepIndex,
+          completedSteps: _completedSteps ?? const <int>{},
+          ingredients: _ingredients,
+          portions: _currentPortions ?? _basePortions,
+          showPortions: _baseStructuredIngredients != null,
+          startOnIngredients: startOnIngredients,
+          onJumpToStep: (i) => _postFrame(() async {
+            context.pop();
+            if (!mounted) return;
+            _jumpToStep(i);
+          }),
+          onFinishPressed: () => _postFrame(() async {
+            context.pop();
+            if (!mounted) return;
+            await _confirmAndFinish();
+          }),
+        ),
+      ),
+    );
+  }
+
+  /// Moves the cook to [stepIndex] from the overview sheet.
+  ///
+  /// Everything before it is marked done and everything after it is cleared,
+  /// so "where am I" stays a single number rather than a set with holes in it
+  /// — jumping forward past a step is the user saying they have done it, and
+  /// jumping back is them saying they have not.
+  void _jumpToStep(int stepIndex) {
+    if (!mounted) return;
+    if (stepIndex < 0 || stepIndex >= _steps.length) return;
+    if (!_cookStarted) return;
+
+    _activeTicker?.cancel();
+    setState(() {
+      _completedSteps = <int>{for (var i = 0; i < stepIndex; i++) i};
+      _activeStepIndex = stepIndex;
+      _activeRemaining = _steps[stepIndex].duration;
+      _cookPaused = false;
+    });
+    _resumeTimer();
+  }
+
   Future<void> _openSos() async {
     // Prevent rapid multi-taps from stacking multiple modal sheets.
     if (_isSosOpen) return;
@@ -1431,7 +1493,6 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final prepController = context.watch<IngredientPrepController>();
 
     return Scaffold(
       backgroundColor: AppDesignTokens.backgroundSage,
@@ -1458,10 +1519,21 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             tooltip: 'Back to Plan',
           ),
         ),
-        title: Text('Cook Mode',
+        title: Text(
+            // PLACEHOLDER
+            'Cook mode',
             style: theme.textTheme.titleLarge
                 ?.copyWith(fontWeight: FontWeight.w800)),
         centerTitle: false,
+        actions: [
+          // Persistent, top-right, present in every state — the one control
+          // that must be findable in a panic, so it does not move or hide
+          // depending on where the cook has got to.
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: _SosSquare(onPressed: () => _postFrame(_openSos)),
+          ),
+        ],
       ),
       bottomNavigationBar: !_cookStarted
           ? _StartCookingBottomBar(
@@ -1494,11 +1566,8 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                     _postFrame(_confirmAndFinish);
                   },
                 )
-              : _CookPlayerBar(
+              : _FocusedCookBottomBar(
                   isPaused: _cookPaused,
-                  activeStepNumber:
-                      _activeStepIndex == null ? null : _activeStepIndex! + 1,
-                  remaining: _activeRemaining,
                   onPausePressed: () => _postFrame(_togglePause),
                   onNextPressed: () => _postFrame(() {
                     if (_activeStepIndex != null) {
@@ -1506,9 +1575,69 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                     }
                   }),
                   onAskChefPressed: () => _postFrame(_openSos),
-                  onFinishPressed: () => _postFrame(_confirmAndFinish),
                 )),
-      body: SafeArea(
+      body: _isFocusedCook ? _buildFocusedBody() : _buildPreCookBody(),
+    );
+  }
+
+  /// True once the cook is under way and there is a step to be on.
+  ///
+  /// The focused, one-step-dominant layout is exactly this state. Before Start
+  /// the screen is still the pre-cook body below (the pre-cook moment merge is
+  /// a separate build and deliberately untouched here), and after the last
+  /// step `_activeStepIndex` is null and the finished body takes over — the
+  /// focused layout has nothing to focus on in either case.
+  bool get _isFocusedCook => _cookStarted && _activeStepIndex != null;
+
+  /// The signed composition: progress bar → one step card → bottom bar. No
+  /// scrolling list of every step: that is what the overview sheet is for.
+  Widget _buildFocusedBody() {
+    final index = _activeStepIndex!;
+    final step = _steps[index];
+
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+            child: _CookProgressBar(
+              stepNumber: index + 1,
+              totalSteps: _steps.length,
+              stepTitle: step.actionTitle,
+              // Progress counts completed steps, not the active index: a jump
+              // backwards from the overview sheet has to move the bar back.
+              progress: (_completedSteps?.length ?? 0) / _steps.length,
+              onTap: () => _postFrame(_openOverview),
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics()),
+              child: _FocusedStepCard(
+                step: step,
+                isPaused: _cookPaused,
+                remaining: _activeRemaining,
+                nextStep:
+                    index + 1 < _steps.length ? _steps[index + 1] : null,
+                onWhisperTap: () => _postFrame(_openOverview),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The pre-cook and finished states — unchanged from before Unit B. The
+  /// pre-cook moment merge is a separate queued build; this body is its
+  /// subject, not this one's.
+  Widget _buildPreCookBody() {
+    final prepController = context.watch<IngredientPrepController>();
+
+    return SafeArea(
         bottom: false,
         child: CustomScrollView(
           controller: _scrollController,
@@ -1575,9 +1704,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
               ),
             ),
           ],
-        ),
-      ),
-    );
+        ));
   }
 
   models.CulinaryMatrixCard? _scienceNoteForDemoStep(int stepIndex) {
@@ -2223,105 +2350,6 @@ class _CutDefinitionSheet extends StatelessWidget {
 /// Deliberately display-only — no readiness gate blocking the timer from
 /// starting, and no doneness auto-completion. That gating behavior is a
 /// separate design decision, not built here.
-class _SensoryCueCard extends StatelessWidget {
-  const _SensoryCueCard({required this.cueKey});
-
-  final String cueKey;
-
-  String _phaseLabel(CuePhase phase) {
-    switch (phase) {
-      case CuePhase.readiness:
-        return 'BEFORE IT GOES IN';
-      case CuePhase.during:
-        return 'WHILE IT COOKS';
-      case CuePhase.doneness:
-        // Doneness cues are the authority on "actually done" — the timer
-        // is only ever an estimate of when to start checking.
-        return 'HOW YOU KNOW IT\'S DONE';
-    }
-  }
-
-  void _showRemedies(BuildContext context, SensoryCue cue) {
-    AppBottomSheet.show<void>(
-      context: context,
-      backgroundColor: AppDesignTokens.surfaceIvory,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => SafeArea(child: _SensoryCueDetailSheet(cue: cue)),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cue = SensoryCueVocabulary.byKey(cueKey);
-    if (cue == null) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    final hasRemedy = cue.ifNotReady != null || cue.ifOvershot != null;
-
-    return Container(
-      margin: const EdgeInsets.only(top: 4, bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppDesignTokens.deepForest.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-            color: AppDesignTokens.deepForest.withValues(alpha: 0.16)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.spa_outlined,
-              size: 18, color: AppDesignTokens.deepForest),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _phaseLabel(cue.phase),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.4,
-                      color: AppDesignTokens.deepForest),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  cue.harrisSays,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: AppDesignTokens.textCharcoal,
-                      height: 1.35),
-                ),
-                if (hasRemedy) ...[
-                  const SizedBox(height: 6),
-                  InkWell(
-                    onTap: () => _showRemedies(context, cue),
-                    borderRadius: BorderRadius.circular(999),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Not there yet, or gone too far?',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              color: AppDesignTokens.terracottaOnLight),
-                        ),
-                        const SizedBox(width: 3),
-                        const Icon(Icons.info_outline_rounded,
-                            size: 12, color: AppDesignTokens.ctaTerracotta),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// Display-only mapping from a raw remedy token in
 /// lib/data/sensory_cue_vocabulary.dart (e.g. `more_heat`) to a plain,
 /// warm phrase in Chef Harris's voice. Most `ifNotReady`/`ifOvershot`
@@ -2354,124 +2382,6 @@ String _displaySensoryCueRemedy(String raw) {
         RegExp(r'\b' + RegExp.escape(entry.key) + r'\b'), entry.value);
   }
   return out;
-}
-
-/// Reached by tapping a sensory cue card's remedy prompt — shows
-/// [SensoryCue.ifNotReady]/[SensoryCue.ifOvershot]/[SensoryCue.action] (and
-/// [SensoryCue.safetyNote] when present), never shown inline on the step
-/// card itself. Mirrors [_CutDefinitionSheet]'s layout.
-class _SensoryCueDetailSheet extends StatelessWidget {
-  const _SensoryCueDetailSheet({required this.cue});
-
-  final SensoryCue cue;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    return Material(
-      color: AppDesignTokens.surfaceIvory,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  height: 38,
-                  width: 38,
-                  decoration: BoxDecoration(
-                    color: AppDesignTokens.deepForest.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                        color:
-                            AppDesignTokens.deepForest.withValues(alpha: 0.18)),
-                  ),
-                  child: const Icon(Icons.spa_outlined,
-                      color: AppDesignTokens.deepForest, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    cue.harrisSays,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        color: AppDesignTokens.textCharcoal),
-                  ),
-                ),
-                IconButton(
-                  onPressed: () => context.pop(),
-                  icon:
-                      Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-            if (cue.ifNotReady != null) ...[
-              const SizedBox(height: 14),
-              Text('Not there yet',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color:
-                          AppDesignTokens.textCharcoal.withValues(alpha: 0.6))),
-              const SizedBox(height: 4),
-              Text(_displaySensoryCueRemedy(cue.ifNotReady!),
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                      color: AppDesignTokens.textCharcoal,
-                      height: 1.4,
-                      fontWeight: FontWeight.w600)),
-            ],
-            if (cue.ifOvershot != null) ...[
-              const SizedBox(height: 14),
-              Text('Gone too far',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color:
-                          AppDesignTokens.textCharcoal.withValues(alpha: 0.6))),
-              const SizedBox(height: 4),
-              Text(_displaySensoryCueRemedy(cue.ifOvershot!),
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                      color: AppDesignTokens.textCharcoal,
-                      height: 1.4,
-                      fontWeight: FontWeight.w600)),
-            ],
-            if (cue.action != null) ...[
-              const SizedBox(height: 14),
-              Text('What to do',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color:
-                          AppDesignTokens.textCharcoal.withValues(alpha: 0.6))),
-              const SizedBox(height: 4),
-              Text(_displaySensoryCueRemedy(cue.action!),
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                      color: AppDesignTokens.textCharcoal,
-                      height: 1.4,
-                      fontWeight: FontWeight.w600)),
-            ],
-            if (cue.safetyNote != null) ...[
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.warning_amber_rounded,
-                      size: 16, color: scheme.error),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(cue.safetyNote!,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.error, fontWeight: FontWeight.w800)),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _CookStepCard extends StatefulWidget {
@@ -2661,7 +2571,7 @@ class _CookStepCardState extends State<_CookStepCard> {
                 const SizedBox(height: 10),
               ],
               if (widget.step.sensoryCue != SensoryCueVocabulary.noCueKey)
-                _SensoryCueCard(cueKey: widget.step.sensoryCue),
+                _CuePanel(cueKey: widget.step.sensoryCue),
               if (hasScience) ...[
                 const SizedBox(height: 4),
                 _ScienceNoteDisclosure(
@@ -2850,145 +2760,1105 @@ class _StartCookingCard extends StatelessWidget {
   }
 }
 
-class _CookPlayerBar extends StatelessWidget {
-  const _CookPlayerBar({
-    required this.isPaused,
-    required this.activeStepNumber,
-    required this.remaining,
-    required this.onPausePressed,
-    required this.onNextPressed,
-    required this.onAskChefPressed,
-    required this.onFinishPressed,
+// ═══════════════════════════════════════════════════════════════════════════
+// Cook Mode — the focused, one-step-dominant layout (Unit B, 2026-08-22).
+//
+// The composition, top to bottom: header with a persistent SOS square →
+// progress bar → one ivory step card → bottom bar. Everything that is not the
+// current step lives one tap away in [_CookOverviewSheet], which is the whole
+// point: a scrolling list of every step asked the cook to find their place in
+// it, every time they looked up from the pan.
+//
+// Tiered access, per the signed spec: **tier 1** on screen is the next-step
+// whisper; **tier 2** one tap is the steps pane, the ingredients pane, and the
+// diagram pills; **tier 3** (promoting the timer to its own chip) is
+// evidence-gated on device testing and deliberately NOT pre-built.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The persistent SOS control, top-right of the app bar.
+///
+/// A square, not a text button, and in the same place in every state — this is
+/// the control a panicking cook reaches for, so it must never move, never
+/// scroll away, and never be the thing that got demoted this release.
+/// Champagne fill: it is a terracotta-family background, not a CTA.
+class _SosSquare extends StatelessWidget {
+  const _SosSquare({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Ask ${AppBrand.assistantName}',
+      child: Material(
+        color: AppDesignTokens.champagneTint,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+          child: Container(
+            height: 40,
+            width: 40,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+              border: Border.all(
+                  color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.30)),
+            ),
+            alignment: Alignment.center,
+            child: const Text(
+              // PLACEHOLDER
+              'SOS',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 12,
+                letterSpacing: 0.4,
+                color: AppDesignTokens.terracottaOnLight,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Where the cook is, and the way into the overview sheet.
+///
+/// Tappable across its whole width, label included — the bar alone is a small
+/// target, and this is the primary route to both panes.
+class _CookProgressBar extends StatelessWidget {
+  const _CookProgressBar({
+    required this.stepNumber,
+    required this.totalSteps,
+    required this.stepTitle,
+    required this.progress,
+    required this.onTap,
   });
 
+  final int stepNumber;
+  final int totalSteps;
+  final String stepTitle;
+  final double progress;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Semantics(
+      button: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+          splashFactory: NoSplash.splashFactory,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: progress.clamp(0.0, 1.0),
+                    minHeight: 6,
+                    backgroundColor:
+                        AppDesignTokens.deepForest.withValues(alpha: 0.14),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                        AppDesignTokens.ctaTerracotta),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        // PLACEHOLDER
+                        'Step $stepNumber of $totalSteps · $stepTitle',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: AppDesignTokens.deepForest,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(Icons.expand_more_rounded,
+                        size: 18,
+                        color:
+                            AppDesignTokens.deepForest.withValues(alpha: 0.70)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The one dominant step card.
+///
+/// Reading order is the whole design: **what to do** (the action line), then
+/// **how hot / how long** (the meta row), then **how you know it worked** (the
+/// cue panel), and only then the detail. The original bullets are demoted to
+/// small muted prose deliberately — they used to be the loudest thing on the
+/// card, which put procedure above judgement.
+class _FocusedStepCard extends StatelessWidget {
+  const _FocusedStepCard({
+    required this.step,
+    required this.isPaused,
+    required this.remaining,
+    required this.nextStep,
+    required this.onWhisperTap,
+  });
+
+  final _CookStep step;
   final bool isPaused;
-  final int? activeStepNumber;
   final Duration remaining;
-  final VoidCallback onPausePressed;
-  final VoidCallback onNextPressed;
-  final VoidCallback onAskChefPressed;
 
-  /// Skip-ahead Finish & Plate — reachable from any step during an active
-  /// cook, not only once every step is ticked (CLAUDE.md Roadmap item 28).
-  /// The caller (`_confirmAndFinish`) shows a confirmation before this ever
-  /// actually fires the completion sequence.
-  final VoidCallback onFinishPressed;
+  /// Null on the last step — and then there is no whisper at all. There is
+  /// deliberately no previous-step whisper: the asymmetry is the point, since
+  /// the question mid-cook is always "what's coming", never "what did I just
+  /// do".
+  final _CookStep? nextStep;
+  final VoidCallback onWhisperTap;
 
-  String _format(Duration d) {
+  static String _format(Duration d) {
     final mins = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final secs = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$mins:$secs';
   }
+
+  static String heatPillLabel(_HeatLevel heat) => switch (heat) {
+        _HeatLevel.low => 'Low heat',
+        _HeatLevel.medium => 'Medium heat',
+        _HeatLevel.mediumHigh => 'Medium-high heat',
+        _HeatLevel.offHeat => 'Off heat',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasDetail = step.bullets.isNotEmpty;
+    final hasDiagrams = (step.techniqueDiagramId != noTechniqueDiagramKey &&
+            diagramFor(step.techniqueDiagramId) != null) ||
+        step.cutDiagramKey != null;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppDesignTokens.surfaceIvory,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
+        border: Border.all(
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10)),
+        boxShadow: AppDesignTokens.cardShadow,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 1 — the dominant action line. The instruction itself.
+                Text(
+                  step.actionTitle,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    height: 1.2,
+                    color: AppDesignTokens.textCharcoal,
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // 2 — meta row. Heat is the ONLY warm pill on this card.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (step.hasTimer) ...[
+                      _MetaPill(label: heatPillLabel(step.heat), warm: true),
+                      const SizedBox(width: 8),
+                      _MetaPill(
+                          label: '~${step.duration.inMinutes} min',
+                          warm: false),
+                      const SizedBox(width: 10),
+                      // Timer state as quiet text in the same row — not a
+                      // third pill. Promoting it to a chip is tier 3 and
+                      // waits on device evidence.
+                      Flexible(
+                        child: Text(
+                          isPaused
+                              // PLACEHOLDER
+                              ? 'Paused · ${_format(remaining)}'
+                              : _format(remaining),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: AppDesignTokens.textCharcoal
+                                .withValues(alpha: 0.60),
+                          ),
+                        ),
+                      ),
+                    ] else
+                      const _MetaPill(
+                          // PLACEHOLDER
+                          label: 'Go at your own pace',
+                          warm: false),
+                  ],
+                ),
+
+                // 3 — the cue panel, promoted ABOVE the detail. Absent
+                // entirely when the step declares no cue: an empty frame
+                // would teach the user to ignore the one panel that matters.
+                if (step.sensoryCue != SensoryCueVocabulary.noCueKey) ...[
+                  const SizedBox(height: 16),
+                  _CuePanel(cueKey: step.sensoryCue),
+                ],
+
+                // 4 — demoted detail.
+                if (hasDetail || hasDiagrams) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    // PLACEHOLDER
+                    'DETAIL',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.8,
+                      color:
+                          AppDesignTokens.textCharcoal.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final bullet in step.bullets)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        bullet,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          height: 1.45,
+                          color: AppDesignTokens.textCharcoal
+                              .withValues(alpha: 0.68),
+                        ),
+                      ),
+                    ),
+                  if (hasDiagrams) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (step.techniqueDiagramId != noTechniqueDiagramKey &&
+                            diagramFor(step.techniqueDiagramId) != null)
+                          DiagramPill(
+                            diagramKey: step.techniqueDiagramId,
+                            title: diagramFor(step.techniqueDiagramId)!.title,
+                          ),
+                        if (step.cutDiagramKey != null)
+                          DiagramPill(
+                            diagramKey: step.cutDiagramKey!,
+                            title: diagramFor(step.cutDiagramKey!)!.title,
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ],
+            ),
+          ),
+
+          // 5 — the whisper, fused to the card's bottom edge.
+          if (nextStep != null)
+            _NextStepWhisper(
+                nextTitle: nextStep!.actionTitle, onTap: onWhisperTap),
+        ],
+      ),
+    );
+  }
+}
+
+/// One pill in the step card's meta row.
+///
+/// [warm] is the heat pill and nothing else — the spec allows exactly one warm
+/// pill per card, so this flag is a budget, not a style option.
+class _MetaPill extends StatelessWidget {
+  const _MetaPill({required this.label, required this.warm});
+
+  final String label;
+  final bool warm;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: warm
+            ? AppDesignTokens.champagneTint
+            : AppDesignTokens.neutralPillTint,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w800,
+          color: warm
+              ? AppDesignTokens.terracottaOnLight
+              : AppDesignTokens.textCharcoal.withValues(alpha: 0.75),
+        ),
+      ),
+    );
+  }
+}
+
+/// "How you know it's right / done" — Chef Harris teaching, so sage.
+///
+/// The remedy is an **inline** expander rather than a sheet: at the moment a
+/// cook is asking "is this right?", they are standing over a pan, and the
+/// answer must not require dismissing something afterwards to get back to the
+/// step.
+///
+/// Renders only from the step's declared `sensory_cue` key. A step with
+/// `no_cue` never reaches this widget (the card omits it), and an unrecognized
+/// key renders nothing — a wrong cue is worse than a missing one, and an empty
+/// frame teaches the user to stop looking.
+class _CuePanel extends StatefulWidget {
+  const _CuePanel({required this.cueKey});
+
+  final String cueKey;
+
+  @override
+  State<_CuePanel> createState() => _CuePanelState();
+}
+
+class _CuePanelState extends State<_CuePanel> {
+  bool _expanded = false;
+
+  /// Labels are per the signed `phase` field.
+  ///
+  /// [CuePhase.during] is a schema addition beyond the signed document (see
+  /// the header of `sensory_cue_vocabulary.dart`, flagged to Harris on
+  /// 2026-08-17), so it keeps the label it already had rather than being
+  /// forced into one of the two signed phrasings.
+  static String phaseLabel(CuePhase phase) => switch (phase) {
+        // PLACEHOLDER
+        CuePhase.readiness => 'HOW YOU KNOW IT\'S RIGHT',
+        // PLACEHOLDER
+        CuePhase.during => 'WHILE IT COOKS',
+        // PLACEHOLDER
+        CuePhase.doneness => 'HOW YOU KNOW IT\'S DONE',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final cue = SensoryCueVocabulary.byKey(widget.cueKey);
+    if (cue == null) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final hasRemedy =
+        cue.ifNotReady != null || cue.ifOvershot != null || cue.action != null;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        // Sage = Chef Harris teaching. This is a panel on a card, which is the
+        // only place the teaching sage is allowed.
+        color: AppDesignTokens.sageTeachingPanel,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            phaseLabel(cue.phase),
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.6,
+              color: AppDesignTokens.deepForest,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            cue.harrisSays,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              height: 1.4,
+              color: AppDesignTokens.textCharcoal,
+            ),
+          ),
+          if (hasRemedy) ...[
+            const SizedBox(height: 8),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => setState(() => _expanded = !_expanded),
+                borderRadius: BorderRadius.circular(999),
+                splashFactory: NoSplash.splashFactory,
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      // PLACEHOLDER
+                      'Not there yet, or gone too far?',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: AppDesignTokens.terracottaOnLight,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Icon(
+                        _expanded
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        size: 16,
+                        color: AppDesignTokens.terracottaOnLight),
+                  ],
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              alignment: Alignment.topLeft,
+              child: !_expanded
+                  ? const SizedBox(width: double.infinity)
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (cue.ifNotReady != null)
+                            _RemedyLine(
+                                // PLACEHOLDER
+                                label: 'Not there yet',
+                                body:
+                                    _displaySensoryCueRemedy(cue.ifNotReady!)),
+                          if (cue.ifOvershot != null)
+                            _RemedyLine(
+                                // PLACEHOLDER
+                                label: 'Gone too far',
+                                body:
+                                    _displaySensoryCueRemedy(cue.ifOvershot!)),
+                          if (cue.action != null)
+                            _RemedyLine(
+                                // PLACEHOLDER
+                                label: 'What to do',
+                                body: _displaySensoryCueRemedy(cue.action!)),
+                          if (cue.safetyNote != null) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.warning_amber_rounded,
+                                    size: 16, color: scheme.error),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    cue.safetyNote!,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                        color: scheme.error,
+                                        fontWeight: FontWeight.w800),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RemedyLine extends StatelessWidget {
+  const _RemedyLine({required this.label, required this.body});
+
+  final String label;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontWeight: FontWeight.w900,
+              color: AppDesignTokens.deepForest.withValues(alpha: 0.75),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            body,
+            style: theme.textTheme.bodySmall?.copyWith(
+              height: 1.4,
+              fontWeight: FontWeight.w600,
+              color: AppDesignTokens.textCharcoal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The next-step whisper — tier 1 of the access model.
+///
+/// Fused to the step card's bottom edge (no gap, no separate card), neutral
+/// pill tone, and no icon: it has to be visibly quieter than everything above
+/// it, because its job is to answer "what's coming?" at a glance without ever
+/// competing with the step the cook is actually on.
+class _NextStepWhisper extends StatelessWidget {
+  const _NextStepWhisper({required this.nextTitle, required this.onTap});
+
+  final String nextTitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: AppDesignTokens.neutralPillTint,
+      child: InkWell(
+        onTap: onTap,
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                // PLACEHOLDER
+                'NEXT',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.8,
+                  color: AppDesignTokens.textCharcoal.withValues(alpha: 0.45),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  nextTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppDesignTokens.textCharcoal.withValues(alpha: 0.62),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom bar for the focused layout: a pause square, one terracotta CTA, and
+/// Ask-Chef-Harris demoted to a hint line.
+///
+/// **Finish & Plate is deliberately absent.** It lives only at the end of the
+/// overview sheet's step list — it skips every remaining step and fires a
+/// permanent ledger write, which is not something that should sit under the
+/// user's thumb for the whole cook.
+class _FocusedCookBottomBar extends StatelessWidget {
+  const _FocusedCookBottomBar({
+    required this.isPaused,
+    required this.onPausePressed,
+    required this.onNextPressed,
+    required this.onAskChefPressed,
+  });
+
+  final bool isPaused;
+  final VoidCallback onPausePressed;
+  final VoidCallback onNextPressed;
+  final VoidCallback onAskChefPressed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
 
-    final title = activeStepNumber == null
-        ? 'All steps complete'
-        : 'Active Step $activeStepNumber';
-    final subtitle = activeStepNumber == null
-        ? 'You’re done — plate up.'
-        : 'Remaining: ${_format(remaining)}';
-
     return Container(
-      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottom),
+      padding: EdgeInsets.fromLTRB(20, 12, 20, 10 + bottom),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
+        color: AppDesignTokens.surfaceIvory,
         border: Border(
             top: BorderSide(
-                color: theme.colorScheme.outline.withValues(alpha: 0.14))),
+                color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10))),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        style: theme.textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 2),
-                    Text(subtitle,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.3)),
-                  ],
+              // Outlined icon square — structurally quieter than the CTA, and
+              // deliberately not a second filled button.
+              SizedBox(
+                height: 52,
+                width: 52,
+                child: OutlinedButton(
+                  onPressed: onPausePressed,
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    foregroundColor: AppDesignTokens.deepForest,
+                    side: BorderSide(
+                        color:
+                            AppDesignTokens.deepForest.withValues(alpha: 0.30)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                            AppDesignTokens.radiusButton)),
+                  ),
+                  child: Icon(
+                      isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                      size: 24),
                 ),
               ),
               const SizedBox(width: 12),
-              FilledButton.icon(
-                onPressed: activeStepNumber == null ? null : onPausePressed,
-                style: FilledButton.styleFrom(
-                  backgroundColor: theme.colorScheme.tertiary,
-                  foregroundColor: theme.colorScheme.onTertiary,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+              Expanded(
+                child: SizedBox(
+                  height: 52,
+                  child: FilledButton(
+                    onPressed: onNextPressed,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppDesignTokens.ctaTerracotta,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                              AppDesignTokens.radiusButton)),
+                    ),
+                    child: const Text(
+                      // PLACEHOLDER
+                      'Next step',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                    ),
+                  ),
                 ),
-                icon: Icon(
-                    isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
-                label: Text(isPaused ? 'Resume' : 'Pause',
-                    style: const TextStyle(fontWeight: FontWeight.w900)),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          // Ask Chef Harris, demoted to a hint. The SOS square in the header
+          // is the findable-in-panic route; this is the calm one.
+          TextButton(
+            onPressed: onAskChefPressed,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 36),
+              foregroundColor: AppDesignTokens.textCharcoal,
+              overlayColor: Colors.transparent,
+            ),
+            child: Text(
+              // PLACEHOLDER
+              'Stuck? Ask ${AppBrand.assistantName}',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppDesignTokens.textCharcoal.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The overview sheet — tier 2. One sheet, two panes, swapped in place.
+///
+/// Sheets never stack in this app, so the ingredients pane is a body swap
+/// behind a back arrow rather than a second sheet, exactly like the Weekly
+/// Planner's add sheet. Standard chrome throughout: grab bar, dimmed
+/// background, drag-down / background-tap / explicit X.
+class _CookOverviewSheet extends StatefulWidget {
+  const _CookOverviewSheet({
+    required this.steps,
+    required this.activeStepIndex,
+    required this.completedSteps,
+    required this.ingredients,
+    required this.portions,
+    required this.showPortions,
+    required this.startOnIngredients,
+    required this.onJumpToStep,
+    required this.onFinishPressed,
+  });
+
+  final List<_CookStep> steps;
+  final int? activeStepIndex;
+  final Set<int> completedSteps;
+  final List<String> ingredients;
+  final int portions;
+  final bool showPortions;
+  final bool startOnIngredients;
+  final ValueChanged<int> onJumpToStep;
+  final VoidCallback onFinishPressed;
+
+  @override
+  State<_CookOverviewSheet> createState() => _CookOverviewSheetState();
+}
+
+class _CookOverviewSheetState extends State<_CookOverviewSheet> {
+  late bool _showingIngredients = widget.startOnIngredients;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: _showingIngredients
+          ? _OverviewIngredientsPane(
+              ingredients: widget.ingredients,
+              portions: widget.portions,
+              showPortions: widget.showPortions,
+              onBack: () => setState(() => _showingIngredients = false),
+            )
+          : _OverviewStepsPane(
+              steps: widget.steps,
+              activeStepIndex: widget.activeStepIndex,
+              completedSteps: widget.completedSteps,
+              onJumpToStep: widget.onJumpToStep,
+              onFinishPressed: widget.onFinishPressed,
+              onShowIngredients: () =>
+                  setState(() => _showingIngredients = true),
+            ),
+    );
+  }
+}
+
+/// Pane 1 — every step, with Finish & Plate at the end of the list.
+class _OverviewStepsPane extends StatelessWidget {
+  const _OverviewStepsPane({
+    required this.steps,
+    required this.activeStepIndex,
+    required this.completedSteps,
+    required this.onJumpToStep,
+    required this.onFinishPressed,
+    required this.onShowIngredients,
+  });
+
+  final List<_CookStep> steps;
+  final int? activeStepIndex;
+  final Set<int> completedSteps;
+  final ValueChanged<int> onJumpToStep;
+  final VoidCallback onFinishPressed;
+  final VoidCallback onShowIngredients;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Row(
             children: [
-              Expanded(
-                child: SizedBox(
-                  height: AppSizing.primaryButtonHeight,
-                  child: OutlinedButton.icon(
-                    onPressed: activeStepNumber == null ? null : onNextPressed,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: theme.colorScheme.onSurface,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                    icon: const Icon(Icons.skip_next_rounded),
-                    label: const Text('Next Step',
-                        style: TextStyle(fontWeight: FontWeight.w900)),
-                  ),
-                ),
+              const Expanded(
+                child: Text(
+                    // PLACEHOLDER
+                    'All steps',
+                    style: AppDesignTokens.headline),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: SizedBox(
-                  height: AppSizing.primaryButtonHeight,
-                  child: FilledButton.icon(
-                    onPressed: onAskChefPressed,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: theme.colorScheme.primary,
-                      foregroundColor: theme.colorScheme.onPrimary,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                    icon: const Icon(Icons.support_agent),
-                    label: Text('Ask ${AppBrand.assistantName}',
-                        style: const TextStyle(fontWeight: FontWeight.w900)),
-                  ),
-                ),
+              // Sheet rule: drag-down, barrier tap, AND an explicit X.
+              IconButton(
+                onPressed: () => context.pop(),
+                tooltip: 'Close',
+                icon: Icon(Icons.close_rounded,
+                    color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
+                style: const ButtonStyle(
+                    overlayColor: WidgetStatePropertyAll(Colors.transparent)),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          // Deliberately quieter than the two rows above — a rarer,
-          // consequential action (skips remaining steps, fires a permanent
-          // ledger write subject to a confirmation) rather than a routine
-          // one. See CLAUDE.md Roadmap item 28.
-          TextButton.icon(
-            onPressed: activeStepNumber == null ? null : onFinishPressed,
-            style: TextButton.styleFrom(
-                foregroundColor: theme.colorScheme.onSurfaceVariant),
-            icon: const Icon(Icons.restaurant, size: 18),
-            label: const Text('Finish & Plate',
-                style: TextStyle(fontWeight: FontWeight.w800)),
+          _OverviewPaneLink(
+            // PLACEHOLDER
+            label: 'Ingredients',
+            icon: Icons.egg_alt_outlined,
+            onTap: onShowIngredients,
+          ),
+          const SizedBox(height: 10),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < steps.length; i++)
+                    _OverviewStepRow(
+                      stepNumber: i + 1,
+                      title: steps[i].actionTitle,
+                      isDone: completedSteps.contains(i),
+                      isCurrent: activeStepIndex == i,
+                      onTap: () => onJumpToStep(i),
+                    ),
+                  const SizedBox(height: 10),
+                  // Finish & Plate lives HERE and only here — never per-step.
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton.icon(
+                      onPressed: onFinishPressed,
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppDesignTokens.terracottaOnLight,
+                        overlayColor: Colors.transparent,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      icon: const Icon(Icons.restaurant, size: 18),
+                      label: Text(
+                        // PLACEHOLDER
+                        'Finish & Plate',
+                        style: theme.textTheme.labelLarge
+                            ?.copyWith(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Pane 2 — the full ingredient list with quantities.
+///
+/// Read-only on servings by design: the adjuster lives on the recipe overview
+/// (pre-cook merge decision), because changing portions mid-cook cannot change
+/// what is already in the pan.
+class _OverviewIngredientsPane extends StatelessWidget {
+  const _OverviewIngredientsPane({
+    required this.ingredients,
+    required this.portions,
+    required this.showPortions,
+    required this.onBack,
+  });
+
+  final List<String> ingredients;
+  final int portions;
+  final bool showPortions;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: onBack,
+                tooltip: 'Back',
+                icon: const Icon(Icons.arrow_back,
+                    color: AppDesignTokens.textCharcoal),
+                style: const ButtonStyle(
+                    overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+              ),
+              const Expanded(
+                child: Text(
+                    // PLACEHOLDER
+                    'Ingredients',
+                    style: AppDesignTokens.headline),
+              ),
+              IconButton(
+                onPressed: () => context.pop(),
+                tooltip: 'Close',
+                icon: Icon(Icons.close_rounded,
+                    color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
+                style: const ButtonStyle(
+                    overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+              ),
+            ],
+          ),
+          if (showPortions) ...[
+            const SizedBox(height: 2),
+            Text(
+              // PLACEHOLDER
+              'For $portions ${portions == 1 ? 'serving' : 'servings'}',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppDesignTokens.textCharcoal.withValues(alpha: 0.60),
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final ingredient in ingredients)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 7),
+                      child: Text(
+                        ingredient,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppDesignTokens.textCharcoal,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OverviewPaneLink extends StatelessWidget {
+  const _OverviewPaneLink(
+      {required this.label, required this.icon, required this.onTap});
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: AppDesignTokens.neutralPillTint,
+      borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Icon(icon,
+                  size: 18,
+                  color: AppDesignTokens.textCharcoal.withValues(alpha: 0.70)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(label,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w800)),
+              ),
+              Icon(Icons.chevron_right_rounded,
+                  color: AppDesignTokens.textCharcoal.withValues(alpha: 0.55)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewStepRow extends StatelessWidget {
+  const _OverviewStepRow({
+    required this.stepNumber,
+    required this.title,
+    required this.isDone,
+    required this.isCurrent,
+    required this.onTap,
+  });
+
+  final int stepNumber;
+  final String title;
+  final bool isDone;
+  final bool isCurrent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        // Current step is champagne; done and upcoming are plain.
+        color: isCurrent ? AppDesignTokens.champagneTint : Colors.transparent,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: isDone
+                      ? Icon(Icons.check_rounded,
+                          size: 18,
+                          color: AppDesignTokens.deepForest
+                              .withValues(alpha: 0.55))
+                      : Text(
+                          '$stepNumber',
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: isCurrent
+                                ? AppDesignTokens.terracottaOnLight
+                                : AppDesignTokens.textCharcoal
+                                    .withValues(alpha: 0.55),
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w600,
+                      // Done steps fade; upcoming stay legible and tappable.
+                      color: isDone
+                          ? AppDesignTokens.textCharcoal
+                              .withValues(alpha: 0.45)
+                          : AppDesignTokens.textCharcoal,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -2997,7 +3867,7 @@ class _CookPlayerBar extends StatelessWidget {
 /// Confirmation before Finish & Plate fires — it triggers a permanent
 /// ledger write (for rescue-eligible, non-re-cook sessions) and skips
 /// straight to the post-cook sequence, so an accidental tap would end the
-/// session early. Returns true if confirmed. See CLAUDE.md Roadmap item 28.
+/// session early. Returns true if confirmed. See the rescue-provenance entry in CLAUDE.md.
 class _FinishAndPlateConfirmSheet extends StatelessWidget {
   const _FinishAndPlateConfirmSheet();
 
