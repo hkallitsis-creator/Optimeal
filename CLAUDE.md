@@ -58,6 +58,34 @@ request or when a task needs the "why."
   it is a sales CTA, and gold never goes on a CTA. Remaining audited-but-unfixed
   semantic drift is listed in
   `docs/sessions/2026-08-22_palette-v12-swap.md`.
+- **Fridge Clearer is one input screen + two-stage generation (2026-08-22).**
+  Input: one no-scroll screen — ingredients hero card, ONE settings card with
+  three rows (Time / Gear / For), pinned terracotta CTA. Suggestion chips and
+  typed ingredients share one wrap; typed ones are removable ✕-chips.
+  **Stage 1** (`kChefCallSurfaceFridgeIdeas` = `fridge_ideas`) returns three
+  idea summaries — no recipe. **Stage 2** (`fridge_clearer`) generates the full
+  recipe for the chosen idea only, then hands it to the existing
+  `GeneratedRecipeActionsSheet`. Both go through `ask-chef-harris`
+  **unchanged** — prompt assembly is client-side and the function stores
+  whatever `surface` arrives. Measured on dev: stage 1 = 2,857 prompt + 155
+  completion tokens vs ~6,950 + ~900 for a recipe.
+  **The clearance line is computed app-side** (`FridgeClearance.forIdea`,
+  `lib/models/fridge_idea.dart`) from the user's ENTERED list — the model is
+  never trusted to do the arithmetic, and an ingredient it invented cannot
+  inflate the count. A malformed stage-1 reply returns null → error card;
+  **it fabricates nothing** (contrast roadmap item 20).
+  The **regenerate affordance is removed from this flow** — choosing among
+  three replaces retrying one; back returns to the input with selections
+  intact. The free-tier cap counts stage 1 only. `GeneratedRecipeCard`,
+  `_SectionCard`, `_TapChip`, `_PillOption` and this screen's
+  `ai-recipe-precision` "Science Notes" call were deleted with the old flow.
+- **Kit rules, app-wide (2026-08-22).** (1) **Controls wrap, never clip** — no
+  horizontal-scrolling or edge-clipped selectors anywhere; `grep -rn
+  "scrollDirection: Axis.horizontal" lib/` returning nothing is the check.
+  (2) **Selection state is a champagne fill** — selected chips/segments use
+  `champagneTint` + `terracottaOnLight` text at weight 500, unselected use
+  `quietRowSurface` + hairline. Never border-only, never icon-only. Reasoning
+  in `docs/DECISIONS.md`.
 - **Cook Mode is a focused, one-step layout (2026-08-22, Unit B).** While a
   cook is under way (`_cookStarted && _activeStepIndex != null`) the screen is
   header → tappable progress bar → **one** ivory step card → bottom bar. The
@@ -296,9 +324,10 @@ request or when a task needs the "why."
   Configuration is updated; a real deep link (`optimeal://`) would fix this
   properly.
 - **AI calls**: `ChefService.askChefHarris()` (`lib/services/chef_service.dart`)
-  is the single centralized AI call for recipe generation and chat. **Three
-  live call sites, not four** (`_ChefSuggestionSheet` went with the Home hub
-  rework): Fridge Clearer, Custom AI Recipe Creator, Chef SOS — each tagged
+  is the single centralized AI call for recipe generation and chat. **Four
+  live call sites since the Fridge Clearer went two-stage (2026-08-22)** (`_ChefSuggestionSheet` went with the Home hub
+  rework): Fridge Clearer stage 1 (`fridge_ideas`), Fridge Clearer stage 2
+  (`fridge_clearer`), Custom AI Recipe Creator, Chef SOS — each tagged
   with a `surface` from `kChefCallSurfaces`, logged to
   `api_call_cost_log.surface`. Message assembly lives in the separately
   testable `ChefService.buildUserMessage`, whose **write order is
@@ -473,7 +502,7 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 22. Post-cook finish flow, two open UX gaps: (1) after the celebration → What You Learned → share card sequence, the app should return to Home once the share card is dismissed but currently sits idle; (2) if the share card is skipped/missed it's lost — should persist somewhere so it can be shared later.
 23. Custom AI Craving via Weekly Planner writes the generated recipe directly into the day slot with no confirmation step — open product question, linked to item 1 (nowhere to show a corrected recipe if the safety validator ever flags one on this surface).
 24. Custom AI Craving sheet's prompt-guidance copy (title, placeholder, 4 quick-pick chips) needs a rewrite — flagged as awkward, not rewritten. The feature's name itself ("Custom AI Craving") also reads awkwardly — naming question for Harris, not resolved.
-25. **Per-surface cost attribution — done 2026-08-21 (dev).** `api_call_cost_log.surface` (migration `20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart` (`fridge_clearer` / `custom_creator` / `chef_sos` — three, matching the three live call sites). `cost_usd` now bills cached prompt tokens at the cached rate rather than the full input rate; it was overstating by ~14% and would have grown with the hit rate. `ask-chef-harris` is **v5 on dev**. Still open: **three dev-only migrations have never been pushed to prod** (`20260818120000`, `20260820120000`/`20260820130000`, `20260821120000`), and prod still runs the older function version. Also open: `user_id` was null on every `api_call_cost_log` row on dev, because `decodeUserIdFromAuthHeader` needs a 3-part JWT and the app was sending the `sb_publishable_…` key as the bearer. **Anonymous sign-ins are now ENABLED on dev** (turned on and device-verified 2026-08-21; re-verified 2026-08-22 — `POST /auth/v1/signup` returns a real 3-part JWT with `is_anonymous: true`, `role: authenticated`), so a signed-in client now sends a decodable bearer and per-user attribution should work. Not re-checked against live rows yet.
+25. **Per-surface cost attribution — done 2026-08-21 (dev).** `api_call_cost_log.surface` (migration `20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart` (`fridge_ideas` / `fridge_clearer` / `custom_creator` / `chef_sos` — four since the Fridge Clearer went two-stage on 2026-08-22, matching the four live call sites; the edge function stores whatever string arrives and needed no change for the new one). `cost_usd` now bills cached prompt tokens at the cached rate rather than the full input rate; it was overstating by ~14% and would have grown with the hit rate. `ask-chef-harris` is **v5 on dev**. Still open: **three dev-only migrations have never been pushed to prod** (`20260818120000`, `20260820120000`/`20260820130000`, `20260821120000`), and prod still runs the older function version. Also open: `user_id` was null on every `api_call_cost_log` row on dev, because `decodeUserIdFromAuthHeader` needs a 3-part JWT and the app was sending the `sb_publishable_…` key as the bearer. **Anonymous sign-ins are now ENABLED on dev** (turned on and device-verified 2026-08-21; re-verified 2026-08-22 — `POST /auth/v1/signup` returns a real 3-part JWT with `is_anonymous: true`, `role: authenticated`), so a signed-in client now sends a decodable bearer and per-user attribution should work. Not re-checked against live rows yet.
 26. **Curriculum drawers are matched against the prompt's own boilerplate — found 2026-08-21, not fixed (behavioural, Harris's call).** `_buildCurriculumAddendum` keyword-matches the whole assembled request, and the recipe surfaces' static block embeds the literal curriculum key list and cut vocabulary. So `sauteing`, `braising`, `julienne`, `dice`, `food_storage` and `leftovers` are present on **every** recipe-surface call regardless of what the user asked for, and both surfaces always pull the same few drawers from keyword noise rather than relevance. The 2026-08-21 prompt-ordering fix deliberately **preserved** this (it passes the static block into the match text) so that an ordering change stayed an ordering change — fixing it alters what reaches the model. Related to item 9.
 
 27. **A finished cook is attributed to its Weekly Planner slot — DONE

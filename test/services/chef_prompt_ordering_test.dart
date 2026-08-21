@@ -149,12 +149,16 @@ void main() {
   });
 
   group('surface identifiers', () {
-    test('there are exactly three, matching the three live call sites', () {
-      expect(kChefCallSurfaces, hasLength(3));
+    test('there are exactly four, matching the four live call sites', () {
+      // Four since the Fridge Clearer went two-stage (2026-08-22): the
+      // menu-of-three call and the full-recipe call are separate surfaces, so
+      // browsing cost and committing cost can be told apart.
+      expect(kChefCallSurfaces, hasLength(4));
       expect(
         kChefCallSurfaces,
         containsAll(<String>[
           kChefCallSurfaceFridgeClearer,
+          kChefCallSurfaceFridgeIdeas,
           kChefCallSurfaceCustomCreator,
           kChefCallSurfaceChefSos,
         ]),
@@ -163,6 +167,7 @@ void main() {
 
     test('values are stable strings — they are stored in a DB column', () {
       expect(kChefCallSurfaceFridgeClearer, 'fridge_clearer');
+      expect(kChefCallSurfaceFridgeIdeas, 'fridge_ideas');
       expect(kChefCallSurfaceCustomCreator, 'custom_creator');
       expect(kChefCallSurfaceChefSos, 'chef_sos');
     });

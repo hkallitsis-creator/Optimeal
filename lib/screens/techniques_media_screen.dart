@@ -158,55 +158,61 @@ class _CategoryChipsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final double horizontalPad = AppDesignTokens.spaceSM.toDouble();
 
-    return SizedBox(
-      // Allow long labels (e.g., "Knife Skills & Heat Management") to wrap to
-      // two lines instead of truncating mid-word, while preserving styling and
-      // selection behavior.
-      height: 56,
-      child: ListView.separated(
-        padding: EdgeInsets.symmetric(horizontal: horizontalPad),
-        scrollDirection: Axis.horizontal,
-        itemCount: categories.length,
-        separatorBuilder: (context, index) => SizedBox(width: AppDesignTokens.spaceXS.toDouble()),
-        itemBuilder: (context, index) {
-          final category = categories[index];
-          final label = _categoryLabel(category);
-          final bool selected = category == selectedCategory;
+    // Kit rule (2026-08-22): controls wrap, never clip. This was a horizontal
+    // ListView, so a category past the fold was invisible with no cue that it
+    // existed — and the last visible one was sliced by the screen edge.
+    // Kit rule: selection is a champagne fill with terracotta-on-light text,
+    // not a terracotta fill loud enough to compete with a real CTA.
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+      child: Wrap(
+        spacing: AppDesignTokens.spaceXS.toDouble(),
+        runSpacing: AppDesignTokens.spaceXS.toDouble(),
+        children: [
+          for (final category in categories)
+            Builder(builder: (context) {
+              final label = _categoryLabel(category);
+              final bool selected = category == selectedCategory;
 
-          final Color bg = selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceIvory;
-          final Color fg = selected ? AppDesignTokens.surfaceIvory : AppDesignTokens.textCharcoal;
-          final Color border = AppDesignTokens.textCharcoal.withValues(alpha: selected ? 0 : 0.16);
+              final Color bg = selected
+                  ? AppDesignTokens.champagneTint
+                  : AppDesignTokens.quietRowSurface;
+              final Color fg = selected
+                  ? AppDesignTokens.terracottaOnLight
+                  : AppDesignTokens.textCharcoal;
+              final Color border = selected
+                  ? AppDesignTokens.terracottaOnLight.withValues(alpha: 0.28)
+                  : AppDesignTokens.textCharcoal.withValues(alpha: 0.16);
 
-          return GestureDetector(
-            onTap: () => onSelected(category),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              padding: EdgeInsets.symmetric(
-                horizontal: AppDesignTokens.spaceSM.toDouble(),
-                vertical: (AppDesignTokens.spaceXS / 2).toDouble(),
-              ),
-              decoration: BoxDecoration(
-                color: bg,
-                borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip.toDouble()),
-                border: Border.all(color: border, width: 1),
-              ),
-              child: Center(
-                child: Text(
-                  label,
-                  style: AppDesignTokens.body.copyWith(
-                    color: fg,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12.5,
-                    height: 1.05,
+              return GestureDetector(
+                onTap: () => onSelected(category),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOut,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppDesignTokens.spaceSM.toDouble(),
+                    vertical: AppDesignTokens.spaceXS.toDouble(),
                   ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
+                  decoration: BoxDecoration(
+                    color: bg,
+                    borderRadius: BorderRadius.circular(
+                        AppDesignTokens.radiusChip.toDouble()),
+                    border: Border.all(color: border, width: 1),
+                  ),
+                  child: Text(
+                    label,
+                    style: AppDesignTokens.body.copyWith(
+                      color: fg,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 12.5,
+                      height: 1.15,
+                    ),
+                    maxLines: 2,
+                  ),
                 ),
-              ),
-            ),
-          );
-        },
+              );
+            }),
+        ],
       ),
     );
   }

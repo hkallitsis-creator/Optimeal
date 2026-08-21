@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:optimeal/nav.dart';
-import 'package:optimeal/screens/fridge_clearer_screen.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
@@ -14,13 +13,21 @@ import 'package:optimeal/widgets/save_recipe_bookmark_button.dart';
 import '../support/fake_saved_recipes_backend.dart';
 
 /// Covers the gap closed on 2026-08-21: a freshly generated recipe could not
-/// be saved until after it had been cooked, because neither generation-result
+/// be saved until after it had been cooked, because no generation-result
 /// surface mounted the universal bookmark. The earliest save point was the
 /// post-cook verdict card.
 ///
-/// Both surfaces hold a plain [CookModeRecipePayload] with nothing persisted
-/// yet, which is exactly what [SaveRecipeBookmarkButton] already expects —
-/// identity is the title, and `save` writes the payload inline. There is no
+/// **One surface, not two, since the Fridge Clearer went two-stage
+/// (2026-08-22).** `GeneratedRecipeCard` — the inline result card with its own
+/// Cook / Plan / Try Another row — was deleted with the single-stage flow it
+/// belonged to; "Try Another" is precisely the regenerate affordance the
+/// two-stage spec removes. Every generated recipe now arrives through
+/// [GeneratedRecipeActionsSheet], so the coverage below is the whole surface
+/// area rather than half of it.
+///
+/// The sheet holds a plain [CookModeRecipePayload] with nothing persisted yet,
+/// which is exactly what [SaveRecipeBookmarkButton] already expects — identity
+/// is the title, and `save` writes the payload inline. There is no
 /// not-yet-saved special case, so these tests assert ordinary behaviour.
 Widget _wrap(Widget child) {
   final router = GoRouter(
@@ -43,52 +50,6 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-  });
-
-  group('GeneratedRecipeCard (Fridge Clearer result)', () {
-    Widget card(SavedRecipesService service, {String title = 'Fresh Bake'}) =>
-        _wrap(SingleChildScrollView(
-          child: GeneratedRecipeCard(
-            recipe: testRecipe(title),
-            portions: 2,
-            onCookNow: () {},
-            onPlanForDay: () {},
-            onTryAnother: () {},
-            service: service,
-          ),
-        ));
-
-    testWidgets('mounts the universal bookmark, outline when unsaved',
-        (tester) async {
-      await tester.pumpWidget(card(_service(FakeSavedRecipesBackend())));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(SaveRecipeBookmarkButton), findsOneWidget);
-      expect(find.byIcon(Icons.bookmark_border_rounded), findsOneWidget);
-    });
-
-    testWidgets('bookmark saves the freshly generated recipe', (tester) async {
-      final backend = FakeSavedRecipesBackend();
-      await tester.pumpWidget(card(_service(backend)));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byType(SaveRecipeBookmarkButton));
-      await tester.pumpAndSettle();
-
-      expect(backend.rows, hasLength(1));
-      expect(backend.rows.single['title'], 'Fresh Bake');
-      expect(find.byIcon(Icons.bookmark_rounded), findsOneWidget);
-    });
-
-    testWidgets('Cook Now is still the only primary action', (tester) async {
-      await tester.pumpWidget(card(_service(FakeSavedRecipesBackend())));
-      await tester.pumpAndSettle();
-
-      // The bookmark is quiet: it must not have become a third button in the
-      // action row, and must not have displaced Cook Now.
-      expect(find.byType(FilledButton), findsOneWidget);
-      expect(find.text('🔥 Cook Now'), findsOneWidget);
-    });
   });
 
   group('GeneratedRecipeActionsSheet', () {

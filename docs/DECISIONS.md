@@ -7,6 +7,82 @@ Read on request, not auto-loaded.
 
 ---
 
+## Fridge Clearer generation is two-stage; regenerate is removed (22 August 2026)
+
+**Binding rule:** pressing "Let's cook" makes ONE small call that returns three
+**idea summaries** — title, total time, which ingredients each would clear. No
+full recipe is generated until the user picks one. Stage 2 generates the full
+recipe for that idea alone.
+
+**The regenerate affordance ("Try Another") is removed from this flow.**
+Choosing among three replaces retrying one. If all three disappoint, back
+returns to the input screen with every selection intact and re-runs stage 1.
+
+**Measured on live dev, 2026-08-22** (one real `ask-chef-harris` call):
+
+| | prompt tokens | completion | ≈ cost (gpt-4o) |
+|---|---|---|---|
+| stage 1 (menu of three) | **2,857** | **155** | ~$0.0087 |
+| stage 2 (full recipe) | ~6,950 | ~900 | ~$0.026 |
+
+So the split costs ~30% more when the user commits, and ~65% **less** when
+they browse and back out. The comparison that actually matters is against what
+it replaces: the old flow's "Try Another" cost a full recipe generation every
+time, so two retries ran ~$0.079 for three dishes seen one at a time, against
+~$0.035 for three seen at once and one cooked. The user also waits 7–10s
+**after** committing rather than before, which is the perceived-speed argument
+independent of cost.
+
+**Clearance arithmetic is computed app-side, never read from model prose.**
+The model is asked which of the user's ingredients a dish uses; the app
+partitions the user's own entered list against that answer
+(`FridgeClearance.forIdea`). The loop iterates the ENTERED list, so an
+ingredient the model invented cannot inflate the count. `ingredients_left` is
+requested in the schema and deliberately not read — asking for it makes the
+model commit to a full partition, which improves how honestly it fills
+`ingredients_cleared`; the app's own subtraction is what reaches the screen.
+A number a user can check against their own counter is the whole feature.
+
+**A malformed stage-1 reply fabricates nothing.** `parseFridgeIdeasJson`
+returns null and the screen shows its error card with a retry. This is the
+opposite of what this screen did when full-recipe parsing failed (roadmap item
+20: a hardcoded fallback recipe), and deliberately so — a made-up menu is worse
+than a visible failure, because a fabricated idea then anchors a real stage-2
+generation.
+
+**No edge-function change was required.** Both stages go through
+`ask-chef-harris` unchanged: prompt assembly is client-side, and the function
+stores whatever `surface` string arrives without validating it against a list.
+The two stages log as `fridge_ideas` and `fridge_clearer`, so browsing cost and
+committing cost are separable in `api_call_cost_log`.
+
+**The free-tier cap counts stage 1 only.** The cap bounds cost per user
+*intent*, and browsing three ideas then cooking one is a single intent.
+Charging twice would penalise exactly the behaviour the split encourages.
+
+## Kit rules adopted app-wide (22 August 2026)
+
+Two rules from the Fridge Clearer card, binding on every screen:
+
+**1. Controls wrap, never clip.** No horizontal-scrolling or edge-clipped
+selectors anywhere. The failure this exists to prevent is real and shipped:
+the Fridge Clearer's time and portion pickers rendered "45+ M…" and "4 …" at
+common phone widths, and the Techniques category bar hid whole categories past
+the fold with no cue they existed. Anything that does not fit moves to the next
+line where it can still be read.
+
+**2. Selection state is a champagne fill.** Selected chips and segments use
+champagne (`#F7DBCB`) with terracotta-on-light text (`#A44E2B`, weight 500);
+unselected use the quiet row surface with a hairline border. **Never
+border-only, never icon-only** — both read as "nothing is selected" at a
+glance in a kitchen. This also frees terracotta: a screen's selected chips no
+longer compete visually with its one real CTA.
+
+Enforced by convention rather than a test today; `grep -rn "scrollDirection:
+Axis.horizontal" lib/` returning nothing is the cheap check for rule 1.
+
+---
+
 ## Palette v1.2 (variant D) is the sole token set, enforced by a guard test (22 August 2026)
 
 **Binding rule:** `lib/theme/app_design_tokens.dart` is the **only** file in

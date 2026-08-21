@@ -1860,16 +1860,15 @@ class _CookModeHeader extends StatelessWidget {
               ?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 10),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              for (var i = 0; i < kitchenGear.length; i++) ...[
-                _GearChip(label: kitchenGear[i]),
-                if (i != kitchenGear.length - 1) const SizedBox(width: 10),
-              ],
-            ],
-          ),
+        // Kit rule (2026-08-22): wrap, never clip. These are informational
+        // rather than a selector, but a gear chip sliced by the screen edge is
+        // no more readable for being unselectable.
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final gear in kitchenGear) _GearChip(label: gear),
+          ],
         ),
       ],
     );

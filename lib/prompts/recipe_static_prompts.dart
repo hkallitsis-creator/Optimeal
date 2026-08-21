@@ -95,3 +95,46 @@ String buildCustomCreatorStaticPrompt() {
       '- Each step\'s "technique_diagram_id" field is optional — include it only when the step visually demonstrates one of these five techniques, using exactly one key, or "none"/omit otherwise. Most steps should have no value here:\n${ChefService.techniqueDiagramPromptDeclaration}',
   ].join('\n');
 }
+
+/// Stage 1 of the two-stage Fridge Clearer flow: a **menu**, not meals.
+///
+/// Deliberately tiny next to [buildFridgeClearerStaticPrompt]. That is the
+/// whole economic argument for splitting the flow — this call has to come back
+/// fast enough that three choices feel cheaper than one guess, so it asks for
+/// no steps, no quantities, no cuts, no vocabulary declarations, and no
+/// curriculum key. Everything the full recipe needs is asked for once, later,
+/// for the one idea the user actually chose.
+///
+/// Static in the strict sense this file requires: identical on every stage-1
+/// call, for every user, forever. The ingredients, time box, gear and portions
+/// all travel in the caller's variable half, which lands after this block —
+/// see `ChefService.buildUserMessage`.
+///
+/// `ingredients_left` is requested even though the app computes clearance
+/// itself and never reads that field. It is there to force the model to
+/// partition the user's list rather than casually over-claiming in
+/// `ingredients_cleared`; the app's arithmetic is what reaches the screen.
+String buildFridgeIdeasStaticPrompt() {
+  return [
+    'Return ONLY valid JSON (no markdown, no extra text) matching this schema:',
+    '{',
+    '  "ideas": [',
+    '    {',
+    '      "title": "...",',
+    '      "total_time_minutes": 0,',
+    '      "ingredients_cleared": ["..."],',
+    '      "ingredients_left": ["..."]',
+    '    }',
+    '  ]',
+    '}',
+    '',
+    'Guidelines:',
+    '- Return EXACTLY three ideas. Each is a one-line menu suggestion, not a recipe: no steps, no quantities, no method description.',
+    '- "title" is the dish, in plain appetising words a home cook would recognise. Keep it under 6 words.',
+    '- "total_time_minutes" is the whole thing start to finish, including prep.',
+    '- "ingredients_cleared" must list ONLY ingredients the user actually gave you, copied in their words, and only the ones this dish genuinely uses in a meaningful quantity. Do not pad it. A garnish-sized pinch does not clear an ingredient.',
+    '- "ingredients_left" must list every ingredient the user gave you that this dish does NOT use. Together the two lists must account for the user\'s whole list exactly once.',
+    '- Do not add ingredients the user did not list, beyond assumed pantry staples (oil, salt, pepper, common dried spices, pasta/rice/flour).',
+    '- Make the three genuinely different from each other — different technique or different shape of meal, not three names for the same dish. At least one should aim to use everything the user has.',
+  ].join('\n');
+}

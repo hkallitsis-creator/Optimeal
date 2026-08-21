@@ -13,6 +13,59 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Fridge Clearer redesign: one-screen input + two-stage ideas
+
+Full prompt and report: `docs/sessions/2026-08-22_fridge-clearer-redesign.md`.
+
+**Input screen.** The four-card scrolling interview (≈2 screens: a headline and
+an explainer paragraph per question) collapses to one no-scroll screen — an
+ingredients hero card, ONE settings card with three rows (Time / Gear / For,
+icon + one-word label, no headlines, no explainers), and a pinned terracotta
+CTA. Suggestion chips and typed ingredients now share one wrap, typed ones as
+removable ✕-chips. Per-chip icons, the explainer copy, and the
+horizontal-scrolling selectors are all cut.
+
+**Two-stage generation.** "Let's cook" makes one small call returning three
+**idea summaries**; the full recipe is generated only for the idea the user
+picks. The ideas screen is three cream cards whose hero is the clearance line —
+"Clears 4 of your 4 ingredients" / "Clears 2 of your 3 — potatoes stay." —
+computed app-side from the user's entered list, never read from model prose.
+Tapping a card runs stage 2 and hands the real recipe to the existing
+`GeneratedRecipeActionsSheet` (Cook / Save / Plan, reused not rebuilt), so all
+three actions always act on a real recipe rather than a summary. The
+"Try Another" regenerate affordance is gone: choosing among three replaces
+retrying one, and back returns to the input with selections intact.
+
+**Measured on live dev**: stage 1 is **2,857 prompt + 155 completion tokens**
+against ~6,950 + ~900 for a full recipe. Browsing and backing out costs ~65%
+less than the old single-stage flow; browsing and committing costs ~30% more,
+against ~$0.079 for the two "Try Another" retries it replaces. **No
+edge-function change was required** — prompt assembly is client-side and
+`ask-chef-harris` stores whatever `surface` arrives. The two stages log as
+`fridge_ideas` and `fridge_clearer`.
+
+A malformed stage-1 reply returns null and shows the error card — it fabricates
+nothing, unlike the hardcoded fallback recipe roadmap item 20 flags on the
+old parse-failure path.
+
+**Kit rules, app-wide.** *Controls wrap, never clip*: the last four horizontal
+scrollers in `lib/` are gone (Fridge Clearer time + portions, the Techniques
+category bar, Cook Mode's kitchen-gear row); `grep -rn "scrollDirection:
+Axis.horizontal" lib/` now returns nothing. *Selection is a champagne fill*:
+applied to the new chips, the Techniques categories, and Profile's allergy
+chips — the last terracotta-fill selection in the app.
+
+**Deleted with the flow they belonged to**: `GeneratedRecipeCard` (the inline
+result card, whose action row carried "Try Another"), `_SectionCard`,
+`_TapChip`, `_PillOption`, and the Fridge Clearer's `ai-recipe-precision`
+"Science Notes" call — see the session record's ambiguities, that last one is
+flagged for a ruling rather than assumed dead.
+
+`flutter test`: **319 passing** (285 − 3 deleted + 37 new). `flutter analyze`:
+**44 issues**, 0 errors, 0 warnings. Palette guard green.
+
+---
+
 ## 2026-08-22 — Cook Mode layout finalization (Unit B)
 
 Full prompt and report: `docs/sessions/2026-08-22_cookmode-unit-b.md`. Unit B

@@ -13,19 +13,29 @@ import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 /// fact from prompt-size clustering (which was all the 2026-08-21 numbers
 /// session could do — the column did not exist yet).
 ///
-/// **Three, not four.** `_ChefSuggestionSheet` was the fourth surface until
-/// the Home hub rework deleted it on 2026-08-20. `grep -n 'askChefHarris('
-/// lib/` is the check that this list still matches reality; a call site with
-/// no constant here logs null rather than being silently miscounted.
+/// `grep -n 'askChefHarris(' lib/` is the check that this list still matches
+/// reality; a call site with no constant here logs null rather than being
+/// silently miscounted. (`_ChefSuggestionSheet` was a fourth surface until the
+/// Home hub rework deleted it on 2026-08-20.)
 const String kChefCallSurfaceFridgeClearer = 'fridge_clearer';
 const String kChefCallSurfaceCustomCreator = 'custom_creator';
 const String kChefCallSurfaceChefSos = 'chef_sos';
+
+/// Stage 1 of the two-stage Fridge Clearer flow (2026-08-22): the small
+/// menu-of-three call. Distinct from [kChefCallSurfaceFridgeClearer], which is
+/// now specifically the stage-2 full-recipe call, so the cost of "browsing"
+/// and the cost of "committing" can be told apart in `api_call_cost_log`.
+///
+/// **No edge-function change was needed for this**: `ask-chef-harris` stores
+/// whatever `surface` string arrives without validating it against any list.
+const String kChefCallSurfaceFridgeIdeas = 'fridge_ideas';
 
 /// Every value the client may send as `surface`. The edge function does not
 /// validate against this list (it stores whatever string arrives); this
 /// exists so tests can assert the call sites stay in sync.
 const List<String> kChefCallSurfaces = [
   kChefCallSurfaceFridgeClearer,
+  kChefCallSurfaceFridgeIdeas,
   kChefCallSurfaceCustomCreator,
   kChefCallSurfaceChefSos,
 ];

@@ -279,14 +279,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     selected: selected,
                     showCheckmark: false,
                     label: Text(label),
-                    selectedColor: AppDesignTokens.ctaTerracotta,
+                    // Kit rule (2026-08-22): selection is a champagne fill
+                    // with terracotta-on-light text. This was the last
+                    // terracotta-fill selection left in the app; the diet
+                    // chips above moved during the palette sweep.
+                    selectedColor: AppDesignTokens.champagneTint,
                     side: BorderSide(
-                      color: (selected ? AppDesignTokens.ctaTerracotta : scheme.outline).withValues(alpha: 0.18),
+                      color: (selected
+                              ? AppDesignTokens.terracottaOnLight
+                              : scheme.outline)
+                          .withValues(alpha: selected ? 0.28 : 0.18),
                       width: selected ? 1.2 : 1.0,
                     ),
                     labelStyle: TextStyle(
-                      color: selected ? Colors.white : scheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w800,
+                      color: selected
+                          ? AppDesignTokens.terracottaOnLight
+                          : scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
                     ),
                     onSelected: (v) {
                       setState(() {
