@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:optimeal/data/pantry_staples.dart';
+import 'package:optimeal/services/data_change_signal.dart';
 import 'package:optimeal/services/pending_ledger_write_service.dart';
 
 /// Result of [LedgerService.logCompletion] or [LedgerService.retryPendingWrite].
@@ -177,6 +178,13 @@ class LedgerService {
         PendingLedgerWrite(idempotencyKey: idempotencyKey, payload: payload, queuedAt: DateTime.now()),
       );
     }
+
+    // Announce regardless of outcome: [_appendWeeklyEvent] above has already
+    // changed the local weekly store, which is what Home's rescue strip
+    // counts, so a failed *remote* write still leaves a stale reader. Fired
+    // once, here, rather than inside _performLedgerInsert — see
+    // [retryPendingWrite] for the other entry point.
+    AppDataChanges.ledger.notify();
     return result;
   }
 
@@ -211,6 +219,9 @@ class LedgerService {
     final result = await _performLedgerInsert(write.payload);
     if (result is LedgerCompletionSuccess) {
       await _pendingWriteService.clear(write.idempotencyKey);
+      // The lifetime total just moved for a rescue the user made earlier —
+      // whatever is on screen is now understating it.
+      AppDataChanges.ledger.notify();
     }
     return result;
   }
@@ -277,18 +288,27 @@ class LedgerService {
         weeklyIngredients.addAll(e.ingredients);
       }
 
-      // Keep existing lifetime logic as-is (still sourced from the current
-      // ledger totals store).
-      final user = _db.auth.currentUser;
+      // Lifetime still comes from the remote totals store, and it gets its
+      // OWN try/catch on purpose: it is the only part of this summary that
+      // touches the network. Sharing the outer catch meant an offline user —
+      // or any Supabase read failure — reported a weekly count of ZERO for
+      // rescues that are sitting right there in local storage, which is the
+      // same "shows the wrong number" failure this method exists to answer.
+      // Weekly must degrade independently of lifetime.
       int lifetimeIngredientsRescued = 0;
-      if (user != null) {
-        final totalsRow = await _db.from('user_ledger_totals').select().eq('user_id', user.id).maybeSingle();
-        final v = totalsRow?['lifetime_ingredients_rescued'];
-        if (v is int) lifetimeIngredientsRescued = v;
-        if (v is num) lifetimeIngredientsRescued = v.toInt();
-        if (v != null && lifetimeIngredientsRescued == 0) {
-          lifetimeIngredientsRescued = int.tryParse('$v') ?? 0;
+      try {
+        final user = _db.auth.currentUser;
+        if (user != null) {
+          final totalsRow = await _db.from('user_ledger_totals').select().eq('user_id', user.id).maybeSingle();
+          final v = totalsRow?['lifetime_ingredients_rescued'];
+          if (v is int) lifetimeIngredientsRescued = v;
+          if (v is num) lifetimeIngredientsRescued = v.toInt();
+          if (v != null && lifetimeIngredientsRescued == 0) {
+            lifetimeIngredientsRescued = int.tryParse('$v') ?? 0;
+          }
         }
+      } catch (e) {
+        debugPrint('LedgerService.getWeeklySummary: lifetime read failed, weekly figures stand: $e');
       }
 
       return {

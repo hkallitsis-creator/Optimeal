@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:optimeal/models/cook_mode_recipe_codec.dart';
 import 'package:optimeal/models/recipe_model.dart';
@@ -12,15 +11,23 @@ import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/custom_ai_recipe_creator_sheet.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
+import 'package:optimeal/services/weekly_plan_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/widgets/recipe_provenance_badges.dart';
 
 class WeeklyPlannerScreen extends StatefulWidget {
-  const WeeklyPlannerScreen({super.key, this.savedRecipesService});
+  const WeeklyPlannerScreen({
+    super.key,
+    this.savedRecipesService,
+    this.backend,
+  });
 
   /// Injectable for tests. Defaults to the shared singleton, which is what
   /// keeps My recipes consistent across surfaces.
   final SavedRecipesService? savedRecipesService;
+
+  /// Injectable for tests. Defaults to the real `user_meal_plans` transport.
+  final WeeklyPlanBackend? backend;
 
   @override
   State<WeeklyPlannerScreen> createState() => _WeeklyPlannerScreenState();
@@ -44,7 +51,20 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   /// Each day can hold 1–2 meal slots.
   final Map<int, List<_PlannedMeal>> _planned = <int, List<_PlannedMeal>>{};
 
+  /// Bumped by every local mutation (add, remove, mark-cooked). A load that
+  /// started before the bump is stale by the time it returns and must not be
+  /// applied — see [_loadPlanFromSupabase].
+  int _writeEpoch = 0;
+
+  /// Set when a load was discarded as stale. The next moment no slot write is
+  /// in flight, the plan is re-read so the discarded snapshot is replaced by
+  /// one that actually contains the new row.
+  bool _reloadWhenWritesSettle = false;
+
   late final VoidCallback _intentListener;
+
+  late final WeeklyPlanBackend _backend =
+      widget.backend ?? SupabaseWeeklyPlanBackend();
 
   @override
   void initState() {
@@ -287,18 +307,10 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   String _slotKey(int dayIndex, int slotIndex) => '$dayIndex-$slotIndex';
 
   /// Null when there is no signed-in user — and also when Supabase was never
-  /// initialized at all, which `Supabase.instance` asserts on rather than
-  /// returning null for. Every caller here already treats null as "keep the
-  /// local, in-memory plan and stop showing the loader", which is exactly the
-  /// right behaviour in that case too.
-  User? _currentUser() {
-    try {
-      return Supabase.instance.client.auth.currentUser;
-    } catch (e) {
-      debugPrint('WeeklyPlanner: Supabase unavailable, staying local: $e');
-      return null;
-    }
-  }
+  /// initialized at all. Every caller here treats null as "keep the local,
+  /// in-memory plan and stop showing the loader", which is exactly the right
+  /// behaviour in that case too. See [WeeklyPlanBackend.currentUserId].
+  String? _userId() => _backend.currentUserId;
 
   Map<String, dynamic> _plannedMealToPlanRow({required String userId, required int dayIndex, required int slotIndex, required _PlannedMeal meal}) => {
     // Expected schema (adjust server-side as needed):
@@ -352,9 +364,25 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }
   }
 
+  /// Reads the whole plan back and replaces local state with it.
+  ///
+  /// **The replacement is conditional, and that is the point.** This is a
+  /// one-shot read of data this screen also writes, so it can lose a race:
+  /// the classic case is arriving here with a queued
+  /// [WeeklyPlannerAddMealIntent] (from Fridge Clearer, My recipes, or a
+  /// generation sheet). `initState` starts this read, the intent is consumed
+  /// on the first frame and places the meal optimistically, its upsert lands —
+  /// and then this read, issued *before* that upsert, returns a snapshot with
+  /// no such row and wipes the meal off the screen. The row is in the
+  /// database the whole time, which is why it reappeared "after a restart"
+  /// (device report, 2026-08-22, symptom B).
+  ///
+  /// So: capture [_writeEpoch] before the read, and if any local mutation
+  /// happened while it was in flight, discard the snapshot instead of applying
+  /// it, and re-read once the writes it missed have settled.
   Future<void> _loadPlanFromSupabase() async {
-    final user = _currentUser();
-    if (user == null) {
+    final userId = _userId();
+    if (userId == null) {
       // No auth: keep existing local behavior, but stop showing loader.
       if (!mounted) return;
       setState(() {
@@ -370,36 +398,28 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       _planLoadError = null;
     });
 
-    try {
-      final db = Supabase.instance.client;
+    final epochAtReadStart = _writeEpoch;
 
-      final rows = await db
-          .from('user_meal_plans')
-          .select()
-          .eq('user_id', user.id)
-          .order('day_index', ascending: true)
-          .order('slot_index', ascending: true);
+    try {
+      final rows = await _backend.listForUser(userId);
 
       final next = <int, List<_PlannedMeal>>{};
-      if (rows is List) {
-        for (final r in rows) {
-          if (r is! Map) continue;
-          final dayIndex = int.tryParse('${r['day_index'] ?? r['dayIndex'] ?? ''}'.trim());
-          final slotIndex = int.tryParse('${r['slot_index'] ?? r['slotIndex'] ?? ''}'.trim());
-          if (dayIndex == null || slotIndex == null) continue;
-          if (dayIndex < 0 || dayIndex > 6) continue;
-          if (slotIndex < 0 || slotIndex > 1) continue;
+      for (final r in rows) {
+        final dayIndex = int.tryParse('${r['day_index'] ?? r['dayIndex'] ?? ''}'.trim());
+        final slotIndex = int.tryParse('${r['slot_index'] ?? r['slotIndex'] ?? ''}'.trim());
+        if (dayIndex == null || slotIndex == null) continue;
+        if (dayIndex < 0 || dayIndex > 6) continue;
+        if (slotIndex < 0 || slotIndex > 1) continue;
 
-          final meal = _plannedMealFromPlanRow(r);
-          if (meal == null) continue;
+        final meal = _plannedMealFromPlanRow(r);
+        if (meal == null) continue;
 
-          final list = next[dayIndex] ??= <_PlannedMeal>[];
-          // Keep slots ordered by slot_index.
-          while (list.length <= slotIndex) {
-            list.add(const _PlannedMeal(title: '', source: '', aisleItems: <_AisleItem>[], recipe: null));
-          }
-          list[slotIndex] = meal;
+        final list = next[dayIndex] ??= <_PlannedMeal>[];
+        // Keep slots ordered by slot_index.
+        while (list.length <= slotIndex) {
+          list.add(const _PlannedMeal(title: '', source: '', aisleItems: <_AisleItem>[], recipe: null));
         }
+        list[slotIndex] = meal;
       }
 
       // Normalize out the placeholder empties created above.
@@ -418,6 +438,22 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       }
 
       if (!mounted) return;
+
+      if (_writeEpoch != epochAtReadStart) {
+        // Stale snapshot: something was placed, removed, or marked cooked
+        // while this read was in flight. Local state is newer — keep it, and
+        // re-read once the writes that this snapshot missed have landed.
+        debugPrint(
+            'WeeklyPlanner: discarding a plan read that a local write raced past.');
+        setState(() {
+          _planLoading = false;
+          _planLoadError = null;
+        });
+        _reloadWhenWritesSettle = true;
+        _reloadIfWritesSettled();
+        return;
+      }
+
       setState(() {
         _planned
           ..clear()
@@ -437,75 +473,59 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }
   }
 
-  /// PGRST303 ("JWT issued at future") fires when Supabase's PostgREST layer
-  /// thinks our access token was issued in the future. In practice this is
-  /// almost always a *stale* cached token rather than a real problem — a
-  /// forced `refreshSession()` mints a fresh token and the retry succeeds.
-  bool _isJwtClockSkewError(Object e) {
-    if (e is PostgrestException) {
-      return e.code == 'PGRST303' || e.message.toLowerCase().contains('jwt issued at future');
-    }
-    return e.toString().toLowerCase().contains('jwt issued at future');
-  }
-
-  Future<T> _withJwtRetry<T>(Future<T> Function() action) async {
-    try {
-      return await action();
-    } catch (e) {
-      if (!_isJwtClockSkewError(e)) rethrow;
-      debugPrint('WeeklyPlanner: JWT clock-skew error detected, refreshing session and retrying once.');
-      try {
-        await Supabase.instance.client.auth.refreshSession();
-      } catch (refreshError) {
-        debugPrint('WeeklyPlanner: session refresh failed: $refreshError');
-        rethrow;
-      }
-      return await action();
-    }
+  /// Runs the re-read a stale load asked for, but only once every slot write
+  /// is done — otherwise the re-read would race exactly the same way the
+  /// discarded one did. Called from the `finally` of both write paths.
+  void _reloadIfWritesSettled() {
+    if (!_reloadWhenWritesSettle) return;
+    if (_pendingSlotWrites.isNotEmpty) return;
+    _reloadWhenWritesSettle = false;
+    unawaited(_loadPlanFromSupabase());
   }
 
   Future<void> _persistMealSlot({required int dayIndex, required int slotIndex, required _PlannedMeal meal}) async {
     final key = _slotKey(dayIndex, slotIndex);
-    final user = _currentUser();
-    if (user == null) {
+    final userId = _userId();
+    if (userId == null) {
       if (!mounted) return;
       setState(() => _pendingSlotWrites.remove(key));
       return;
     }
 
     try {
-      final db = Supabase.instance.client;
-      final row = _plannedMealToPlanRow(userId: user.id, dayIndex: dayIndex, slotIndex: slotIndex, meal: meal);
-      await _withJwtRetry(() => db.from('user_meal_plans').upsert(row));
+      final row = _plannedMealToPlanRow(userId: userId, dayIndex: dayIndex, slotIndex: slotIndex, meal: meal);
+      await _backend.upsertSlot(row);
     } catch (e) {
       debugPrint('WeeklyPlanner: persistMealSlot failed: $e');
       rethrow;
     } finally {
-      if (!mounted) return;
-      setState(() => _pendingSlotWrites.remove(key));
+      if (mounted) {
+        setState(() => _pendingSlotWrites.remove(key));
+        _reloadIfWritesSettled();
+      }
     }
   }
 
   Future<void> _deleteMealSlot({required int dayIndex, required int slotIndex}) async {
     final key = _slotKey(dayIndex, slotIndex);
-    final user = _currentUser();
-    if (user == null) {
+    final userId = _userId();
+    if (userId == null) {
       if (!mounted) return;
       setState(() => _pendingSlotWrites.remove(key));
       return;
     }
 
     try {
-      final db = Supabase.instance.client;
-      await _withJwtRetry(
-        () => db.from('user_meal_plans').delete().eq('user_id', user.id).eq('day_index', dayIndex).eq('slot_index', slotIndex),
-      );
+      await _backend.deleteSlot(
+          userId: userId, dayIndex: dayIndex, slotIndex: slotIndex);
     } catch (e) {
       debugPrint('WeeklyPlanner: deleteMealSlot failed: $e');
       rethrow;
     } finally {
-      if (!mounted) return;
-      setState(() => _pendingSlotWrites.remove(key));
+      if (mounted) {
+        setState(() => _pendingSlotWrites.remove(key));
+        _reloadIfWritesSettled();
+      }
     }
   }
 
@@ -516,6 +536,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     final key = _slotKey(dayIndex, slotIndex);
 
     setState(() {
+      _writeEpoch++;
       _slotInlineErrors.remove(key);
       _pendingSlotWrites.add(key);
       meals.add(meal);
@@ -546,6 +567,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     final key = _slotKey(dayIndex, slotIndex);
 
     setState(() {
+      _writeEpoch++;
       _slotInlineErrors.remove(key);
       _pendingSlotWrites.add(key);
       meals.removeAt(slotIndex);
@@ -579,6 +601,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     final key = _slotKey(dayIndex, slotIndex);
 
     setState(() {
+      _writeEpoch++;
       _slotInlineErrors.remove(key);
       _pendingSlotWrites.add(key);
       meals[slotIndex] = updated;

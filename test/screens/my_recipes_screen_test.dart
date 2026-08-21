@@ -282,6 +282,33 @@ void main() {
     });
   });
 
+  group('write-driven refresh (stale-read family, 2026-08-22)', () {
+    testWidgets(
+        'a cook recorded while this screen is mounted shows up without a '
+        'remount', (tester) async {
+      // My recipes stays mounted underneath a cook launched from one of its
+      // own rows. The saved shelf was already write-driven through the
+      // service's change stream; the recently-cooked log and the derived
+      // counts were one-shot reads with nothing to invalidate them.
+      final service = _service(FakeSavedRecipesBackend());
+      await tester.pumpWidget(_wrap(service));
+      await tester.pumpAndSettle();
+      expect(find.text('Recently cooked'), findsNothing);
+
+      final screenState = tester.state(find.byType(MyRecipesScreen));
+
+      // The real writer: this is exactly what Cook Mode calls on completion,
+      // and it is what announces the change.
+      await CookSessionStorageService().addRecentlyCooked(testRecipe('Cooked Dish'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Recently cooked'), findsOneWidget);
+      expect(find.text('Cooked Dish'), findsOneWidget);
+      expect(tester.state(find.byType(MyRecipesScreen)), same(screenState),
+          reason: 'refreshed in place, not rebuilt');
+    });
+  });
+
   group('navigation', () {
     testWidgets('back lands on Home (depth-1, no home glyph)', (tester) async {
       await tester.pumpWidget(_wrap(_service(FakeSavedRecipesBackend())));

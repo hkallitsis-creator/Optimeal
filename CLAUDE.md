@@ -45,9 +45,13 @@ request or when a task needs the "why."
   sage rescue strip pinned bottom whose "how?" opens the Waste Ledger
   explainer. All color from `AppDesignTokens`; hero and slim row share one
   `_CreamSurface`, so hierarchy is size/type/glyph only, never a color break.
-  Home refreshes its rescue count via `RouteAware.didPopNext` — **verified
-  2026-08-20 that `context.go('/')` from two-deep does fire it** (Home's
-  State is not disposed), which is how the post-cook count updates.
+  Home refreshes its rescue count from the **write-driven signals** in
+  `lib/services/data_change_signal.dart` (see the entry below), not from
+  navigation. `RouteAware.didPopNext` is still subscribed as a secondary
+  trigger and still works for ordinary back-pops — the 2026-08-20 note that
+  `context.go('/')` from two-deep fires it is true **only when no modal sheet
+  is attached to the page being unwound**; with one (which is every post-cook
+  exit) it fires nothing at all. Do not restore it as the primary refresh.
   **Measured limit**: at 360×640 Home renders cleanly up to textScale 2.4 and
   overflows by 10px at 2.8, 69px at 3.2 (iOS AX4/AX5). Locked by
   `test/integration/saved_recipes_flow_test.dart`; deliberately unfixed —
@@ -85,6 +89,28 @@ request or when a task needs the "why."
   "Rescues come from Fridge Clearer recipes — this one didn't." The
   celebration sheet's signed one-icon/one-line/one-CTA structure was left
   untouched; it never claimed launch-surface gating.
+- **Stale-read invalidation — one mechanism, write-driven (2026-08-22).**
+  `DataChangeSignal` (`lib/services/data_change_signal.dart`) is a broadcast
+  `Stream<void>` announced by whichever service performed a write; mounted
+  readers re-read. Two process-global signals in `AppDataChanges`:
+  `ledger` (fired by `LedgerService.logCompletion` — on both outcomes, since
+  the local weekly store changes even when the remote insert fails — and by a
+  successful `retryPendingWrite`) and `cookLog` (fired by
+  `CookSessionStorageService.saveActiveSession` / `clearActiveSession` /
+  `addRecentlyCooked`). Home subscribes to both; My recipes to `cookLog`.
+  `SavedRecipesService` uses the same class **per-instance**, not a global —
+  it is injected with a fake backend in tests. **Rule: a new cross-screen
+  read gets a subscription to the signal for its store, never a new
+  navigation callback** — navigation callbacks are structurally unreliable
+  here (`RouteObserver` forwards only `didPop`, and Flutter marks an exiting
+  page that still owns a modal sheet as *complete*, not *pop*).
+  The Weekly Planner is the exception, because its reader and writer are the
+  same `State`: it carries a generation guard (`_writeEpoch`) so a load whose
+  epoch moved while it was in flight is discarded and re-read once slot
+  writes settle. Its `user_meal_plans` access sits behind the injectable
+  `WeeklyPlanBackend` (`lib/services/weekly_plan_service.dart`), same pattern
+  as `SavedRecipesBackend`. Full reasoning:
+  `docs/sessions/2026-08-22_stale-read-fix.md`.
 - **Recipe payload jsonb codec** — `lib/models/cook_mode_recipe_codec.dart`
   (`cookModeRecipeToJson` / `cookModeRecipeFromJson`) is the single
   snake_case (de)serializer for anything stored as jsonb:

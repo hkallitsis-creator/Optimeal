@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
+import 'package:optimeal/services/data_change_signal.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
@@ -54,11 +57,25 @@ class _MyRecipesScreenState extends State<MyRecipesScreen> {
   /// resubscribe on every emission and spin forever.
   late final Stream<List<SavedRecipe>> _savedStream;
 
+  /// The saved shelf above is already write-driven (the service's own change
+  /// stream). The recently-cooked log and the derived cook counts are read
+  /// one-shot from the local cook store, which a cook launched from this
+  /// screen writes while this screen is still mounted underneath — so they
+  /// need the same treatment, from the same mechanism.
+  StreamSubscription<void>? _cookLogChangesSub;
+
   @override
   void initState() {
     super.initState();
     _savedStream = _service.watchSavedRecipes();
+    _cookLogChangesSub = AppDataChanges.cookLog.listen(_loadDerived);
     _loadDerived();
+  }
+
+  @override
+  void dispose() {
+    _cookLogChangesSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadDerived() async {

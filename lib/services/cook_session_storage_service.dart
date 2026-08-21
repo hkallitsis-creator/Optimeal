@@ -8,6 +8,7 @@ import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/data_change_signal.dart';
 
 /// Local (on-device) persistence for two related Cook Mode features:
 ///
@@ -71,6 +72,7 @@ class CookSessionStorageService {
       'lastUpdatedAt': DateTime.now().toIso8601String(),
     };
     await prefs.setString(_activeSessionKey, jsonEncode(json));
+    AppDataChanges.cookLog.notify();
   }
 
   /// Returns the saved session, or null if there isn't one, it's malformed,
@@ -129,6 +131,7 @@ class CookSessionStorageService {
   Future<void> clearActiveSession() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_activeSessionKey);
+    AppDataChanges.cookLog.notify();
   }
 
   // ---- Recently Cooked -------------------------------------------------
@@ -161,6 +164,9 @@ class CookSessionStorageService {
         .toList();
 
     await prefs.setString(_recentlyCookedKey, jsonEncode(json));
+    // One notify for both stores this method writes (history above, Recently
+    // Cooked here) — readers re-read the whole local cook log anyway.
+    AppDataChanges.cookLog.notify();
   }
 
   Future<void> _appendToHistory(CookModeRecipePayload recipe, {SharedPreferences? prefs}) async {

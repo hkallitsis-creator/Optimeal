@@ -13,6 +13,61 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Stale-read-after-write: one invalidation mechanism
+
+Full prompt and report: `docs/sessions/2026-08-22_stale-read-fix.md`.
+
+Two device symptoms, one defect family: Home's rescue strip kept the old
+count after a completed cook, and the Weekly Planner didn't show a
+just-placed recipe until a restart. Both writes were landing the whole
+time.
+
+**Root cause A — the refresh trigger, not the refresh.** Home's only
+post-cook trigger was `RouteAware.didPopNext`, and that callback cannot
+fire for the exit the app actually uses: every verdict sheet's CTA runs
+`context.pop()` then `context.go('/')`, and Flutter resolves an exiting
+page that still has a pageless (modal) route attached with `markForComplete`
+rather than `markForPop` — `RouteObserver` forwards only `didPop`, so
+nothing reaches the route underneath. Measured with a probe before any code
+changed: 0 `didPopNext` calls with a sheet involved, 1 without.
+**F1 (69f7e9c) did not regress** and the strip *is* on its path — the exit
+shape changed, not the refresh path.
+
+**Root cause B — a lost read/write race.** The planner starts its one-shot
+`SELECT` in `initState` and consumes a queued
+`WeeklyPlannerAddMealIntent` one frame later; the read, issued before the
+placement's upsert, came back and ran `_planned..clear()..addAll(...)`
+unconditionally, wiping a meal that was already in the database.
+
+**Fix.** The trigger is now the write. New `DataChangeSignal`
+(`lib/services/data_change_signal.dart`) generalises the change-stream
+pattern `SavedRecipesService` already used; `AppDataChanges.ledger` and
+`AppDataChanges.cookLog` are notified by `LedgerService` and
+`CookSessionStorageService` after their writes, and Home and My recipes
+subscribe. `didPopNext` stays as a documented secondary trigger. The planner
+additionally got a generation guard (`_writeEpoch`): a load whose epoch moved
+while it was in flight is discarded and re-read once slot writes settle —
+and `user_meal_plans` access moved behind the injectable
+`WeeklyPlanBackend`, matching `SavedRecipesBackend`, so this is testable at
+all. No new packages.
+
+Also fixed in passing: `LedgerService.getWeeklySummary` shared one try/catch
+between the local weekly figure and the remote lifetime figure, so any
+network failure reported "0 ingredients rescued this week" for rescues
+sitting in local storage. The lifetime read now degrades on its own.
+
+Also fixed as a family member: My recipes' recently-cooked log and derived
+cook counts (one-shot, nothing invalidated them). Reported not fixed: a
+planner-launched cook never marks its slot "Cooked", because the post-cook
+`context.go('/')` completes the awaited `push<bool>` with null — a different
+defect, and where that signal should come from is a product decision.
+
+**198 tests passing** (190 + 8), `flutter analyze` **50 issues** (from 54,
+all info-level). Both symptom tests verified to fail without the fix. Dev
+Supabase was read-only this session: every column the refactored planner
+backend touches confirmed present over PostgREST, no migrations, no
+deploys.
+
 ## 2026-08-21 — Consolidated small-fixes build (6 items)
 
 Full prompt and report: `docs/sessions/2026-08-21_consolidated-small-fixes.md`.

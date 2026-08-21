@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
+import 'package:optimeal/services/data_change_signal.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_sync_coordinator.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
@@ -94,10 +97,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   List<String> _weeklyIngredientsList = const [];
   int _lifetimeIngredientsRescued = 0;
 
+  /// Write-driven invalidation. Home sits mounted underneath every cook, so
+  /// both figures it shows can go stale without Home being rebuilt or
+  /// re-entered — see [didPopNext] for why navigation alone cannot be the
+  /// trigger.
+  StreamSubscription<void>? _ledgerChangesSub;
+  StreamSubscription<void>? _cookLogChangesSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _ledgerChangesSub = AppDataChanges.ledger.listen(_loadWeeklyLedger);
+    _cookLogChangesSub = AppDataChanges.cookLog.listen(_loadActiveSession);
     _loadActiveSession();
     _loadWeeklyLedger();
     _checkDeepLinkIntent();
@@ -112,6 +124,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
   @override
   void dispose() {
+    _ledgerChangesSub?.cancel();
+    _cookLogChangesSub?.cancel();
     routeObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -122,6 +136,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   /// again. Home's own [State] is never disposed by that push/pop — it just
   /// sits underneath — so without this, nothing ever tells it a cook may have
   /// just completed. See device-test-round I1 investigation.
+  ///
+  /// **Secondary trigger only, and it must stay that way.** This does NOT
+  /// fire for the post-cook exit: every verdict sheet leaves via
+  /// `context.pop()` + `context.go('/')`, and a Navigator page that still has
+  /// a modal (pageless) route attached when the page list shrinks is resolved
+  /// as *complete*, not *pop* — [RouteObserver] only forwards `didPop`, so
+  /// nothing reaches Home. That is what made the rescue strip stale
+  /// (2026-08-22). The real refresh is the write-driven
+  /// [AppDataChanges] subscriptions above; this stays because it also covers
+  /// ordinary back-pops at no cost.
   @override
   void didPopNext() {
     _loadActiveSession();

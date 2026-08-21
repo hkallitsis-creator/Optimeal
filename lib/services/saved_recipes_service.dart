@@ -7,6 +7,7 @@ import 'package:optimeal/models/cook_mode_recipe_codec.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
+import 'package:optimeal/services/data_change_signal.dart';
 
 /// How many past cooks the "My recipes" screen shows in its recently-cooked
 /// strip. Read-only over data that already exists — no new table, no new
@@ -167,7 +168,12 @@ class SavedRecipesService {
   /// Deliberately not a Supabase realtime subscription: saved recipes are
   /// single-user data that only ever changes because of something this app
   /// just did, so a local change signal is both sufficient and cheaper.
-  final StreamController<void> _changes = StreamController<void>.broadcast();
+  ///
+  /// Per-INSTANCE, not one of the [AppDataChanges] globals: this service is
+  /// injected with a fake backend in tests, and a global signal would let one
+  /// test's service re-trigger reads on another's. The global signals exist
+  /// for stores whose writers are constructed ad hoc all over the app.
+  final DataChangeSignal _changes = DataChangeSignal('savedRecipes');
 
   /// Stable identity for a recipe with no server id: the title, trimmed,
   /// lowercased, with internal whitespace collapsed. Matches the
@@ -208,7 +214,7 @@ class SavedRecipesService {
     }
     try {
       await _backend.upsert(_rowFor(recipe, userId));
-      _changes.add(null);
+      _changes.notify();
       return true;
     } catch (e, st) {
       debugPrint('SavedRecipesService.save failed: $e\n$st');
@@ -231,7 +237,7 @@ class SavedRecipesService {
     if (userId == null) return false;
     try {
       await _backend.deleteByKey(userId: userId, recipeKey: recipeKey);
-      _changes.add(null);
+      _changes.notify();
       return true;
     } catch (e, st) {
       debugPrint('SavedRecipesService.unsave failed: $e\n$st');
@@ -265,7 +271,7 @@ class SavedRecipesService {
         recipeKey: recipeKeyFor(recipe.title),
         at: DateTime.now().toUtc(),
       );
-      if (touched) _changes.add(null);
+      if (touched) _changes.notify();
       return touched;
     } catch (e, st) {
       debugPrint('SavedRecipesService.onRecipeCooked failed: $e\n$st');
@@ -392,5 +398,5 @@ class SavedRecipesService {
   Future<bool> hasBeenCooked(String recipeKey) async =>
       (await timesCooked(recipeKey)) > 0;
 
-  Future<void> dispose() => _changes.close();
+  Future<void> dispose() => _changes.dispose();
 }
