@@ -29,6 +29,21 @@ abstract class WeeklyPlanBackend {
     required int dayIndex,
     required int slotIndex,
   });
+
+  /// Flips `is_cooked` on exactly one existing slot.
+  ///
+  /// Deliberately an UPDATE, not an upsert: this is called from Cook Mode's
+  /// completion, which knows a `(day, slot)` but holds none of the row's other
+  /// columns. An upsert would have to invent a `title` for the insert branch,
+  /// and could create a planner row for a day the user never planned.
+  /// Matching zero rows is a legitimate outcome (the meal was removed while it
+  /// was being cooked) and is not an error.
+  Future<void> markSlotCooked({
+    required String userId,
+    required int dayIndex,
+    required int slotIndex,
+    required bool cooked,
+  });
 }
 
 class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
@@ -87,6 +102,23 @@ class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
       _withJwtRetry(() => _db
           .from(table)
           .delete()
+          .eq('user_id', userId)
+          .eq('day_index', dayIndex)
+          .eq('slot_index', slotIndex));
+
+  @override
+  Future<void> markSlotCooked({
+    required String userId,
+    required int dayIndex,
+    required int slotIndex,
+    required bool cooked,
+  }) =>
+      _withJwtRetry(() => _db
+          .from(table)
+          .update({
+            'is_cooked': cooked,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
           .eq('user_id', userId)
           .eq('day_index', dayIndex)
           .eq('slot_index', slotIndex));

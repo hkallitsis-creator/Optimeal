@@ -17,10 +17,15 @@ abstract final class AppDesignTokens {
   static const Color textCharcoal = Color(0xFF2C3531);
 
   /// Today's tint on the Weekly Planner — the one day card that is warmer than
-  /// cream. Value is the canonical champagne; the redesign spec named the hue
-  /// ("champagne tint") but not the hex, so it lives here as the single place
-  /// to adjust it.
-  static const Color champagneTint = Color(0xFFF7E7CE);
+  /// cream.
+  ///
+  /// Corrected 2026-08-22 to the signed palette v1.2 value. The 2026-08-22
+  /// redesign invented `0xFFF7E7CE` (canonical champagne) because the spec
+  /// named the hue and not the hex; the signed value is `0xFFF7DBCB`, a
+  /// warmer, pinker champagne that sits closer to the terracotta CTA. Every
+  /// champagne consumer reads this token, so this is the only place it
+  /// changes.
+  static const Color champagneTint = Color(0xFFF7DBCB);
 
   /// A completed cook that earned a Waste Ledger rescue. Hex is from the
   /// Weekly Planner redesign spec, verbatim.
@@ -28,6 +33,9 @@ abstract final class AppDesignTokens {
 
   /// A completed cook that did not count toward the ledger. Deliberately a
   /// neutral, not a red or an amber: not counting is not a failure.
+  ///
+  /// Provisionally signed 2026-08-22 pending a device pass — unlike
+  /// [champagneTint] this value was reviewed and kept as-is.
   static const Color cookedNeutralGray = Color(0xFF8B918E);
 
   // Spacing

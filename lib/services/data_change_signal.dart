@@ -69,4 +69,17 @@ class AppDataChanges {
   /// recorded into Recently Cooked / cook history. Read by Home's resume
   /// banner and by My recipes' recently-cooked log and derived cook counts.
   static final DataChangeSignal cookLog = DataChangeSignal('cookLog');
+
+  /// `user_meal_plans` changed from OUTSIDE the Weekly Planner — today that
+  /// means exactly one writer: a finished cook marking the planner slot it was
+  /// launched from as cooked (`PlannerCookAttributionService`).
+  ///
+  /// This is separate from [cookLog] on purpose, even though the same
+  /// completion fires both. [cookLog] announces the local SharedPreferences
+  /// cook store; this announces a Postgres table. They also fire at different
+  /// moments — `clearActiveSession()` raises [cookLog] at the very top of the
+  /// completion sequence, long before the plan row has been written, so a
+  /// planner re-read driven by [cookLog] alone would read the row back
+  /// uncooked. The planner subscribes to both and coalesces.
+  static final DataChangeSignal mealPlan = DataChangeSignal('mealPlan');
 }

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
+import 'package:optimeal/models/planner_slot_ref.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
@@ -55,6 +56,7 @@ class CookSessionStorageService {
     required int? currentPortions,
     required CookModeSurface? surface,
     required bool isReCook,
+    PlannerSlotRef? plannerSlot,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final json = {
@@ -69,6 +71,12 @@ class CookSessionStorageService {
       },
       'surface': surface?.name,
       'isReCook': isReCook,
+      // Launch context, same category as `surface`: which Weekly Planner row
+      // this cook was started from, so an interrupted planner cook still marks
+      // the right slot when it is resumed. Absent on sessions saved before
+      // CLAUDE.md roadmap item 27 — those resume with no slot and attribute
+      // nothing, which is the safe reading.
+      'plannerSlot': plannerSlot?.toJson(),
       'lastUpdatedAt': DateTime.now().toIso8601String(),
     };
     await prefs.setString(_activeSessionKey, jsonEncode(json));
@@ -118,6 +126,7 @@ class CookSessionStorageService {
         currentPortions: progress['currentPortions'] as int?,
         surface: surface,
         isReCook: json['isReCook'] as bool? ?? false,
+        plannerSlot: PlannerSlotRef.fromJson(json['plannerSlot']),
         lastUpdatedAt: lastUpdatedAt,
       );
     } catch (e) {
@@ -365,6 +374,7 @@ class ActiveCookSession {
     required this.surface,
     required this.isReCook,
     required this.lastUpdatedAt,
+    this.plannerSlot,
   });
 
   final CookModeRecipePayload recipe;
@@ -382,6 +392,13 @@ class ActiveCookSession {
   /// CLAUDE.md Roadmap item 28 existed.
   final CookModeSurface? surface;
   final bool isReCook;
+
+  /// The Weekly Planner slot this session was launched from, if any — carried
+  /// through resume for the same reason [surface] is, so an interrupted
+  /// planner cook still marks the row it belongs to. Null on sessions saved
+  /// before CLAUDE.md roadmap item 27, and on every cook that did not start
+  /// from a planner row.
+  final PlannerSlotRef? plannerSlot;
   final DateTime lastUpdatedAt;
 }
 

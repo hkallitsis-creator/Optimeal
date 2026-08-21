@@ -25,6 +25,12 @@ class FakeWeeklyPlanBackend implements WeeklyPlanBackend {
   int listCalls = 0;
   int upsertCalls = 0;
   int deleteCalls = 0;
+  int markCookedCalls = 0;
+
+  /// Every `(day, slot)` [markSlotCooked] was called with, in order — so a
+  /// test can assert not just which row ended up cooked but that no other row
+  /// was even addressed.
+  final List<({int dayIndex, int slotIndex})> markCookedTargets = [];
 
   final List<Completer<List<Map<String, dynamic>>>> _pendingReads = [];
   final List<List<Map<String, dynamic>>> _snapshots = [];
@@ -80,5 +86,21 @@ class FakeWeeklyPlanBackend implements WeeklyPlanBackend {
     deleteCalls++;
     final i = _indexOf(userId, dayIndex, slotIndex);
     if (i != -1) rows.removeAt(i);
+  }
+
+  /// Mirrors the real UPDATE: touches only an existing row, and matching
+  /// nothing is a silent no-op rather than an insert.
+  @override
+  Future<void> markSlotCooked({
+    required String userId,
+    required int dayIndex,
+    required int slotIndex,
+    required bool cooked,
+  }) async {
+    markCookedCalls++;
+    markCookedTargets.add((dayIndex: dayIndex, slotIndex: slotIndex));
+    final i = _indexOf(userId, dayIndex, slotIndex);
+    if (i == -1) return;
+    rows[i] = {...rows[i], 'is_cooked': cooked};
   }
 }

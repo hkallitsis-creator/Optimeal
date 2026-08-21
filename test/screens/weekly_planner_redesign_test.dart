@@ -4,11 +4,14 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:optimeal/models/cook_mode_recipe_codec.dart';
+import 'package:optimeal/models/planner_slot_ref.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/screens/weekly_planner_screen.dart';
+import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/data_change_signal.dart';
+import 'package:optimeal/services/planner_cook_attribution_service.dart';
 import 'package:optimeal/services/weekly_plan_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
@@ -28,6 +31,11 @@ final DateTime _wednesday = DateTime(2026, 8, 26, 9, 0);
 /// Captures what Cook Mode was launched with, so provenance can be asserted
 /// on the launch itself rather than on a screen that drags in Supabase.
 CookModeLaunchRequest? lastCookLaunch;
+
+/// The router the current test is driving, so a test can pop back out of the
+/// stubbed Cook Mode route — a pushed route covers the planner, and an
+/// offstage screen's widgets are invisible to finders.
+GoRouter? lastRouter;
 
 class _StubScreen extends StatelessWidget {
   const _StubScreen(this.label);
@@ -87,6 +95,7 @@ Widget _wrap(WeeklyPlanBackend backend, {DateTime? now}) {
       ),
     ],
   );
+  lastRouter = router;
   return MaterialApp.router(routerConfig: router);
 }
 
@@ -122,6 +131,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     WeeklyPlannerIntentService.instance.consumePending();
     lastCookLaunch = null;
+    lastRouter = null;
   });
 
   group('the state table', () {
@@ -524,6 +534,217 @@ void main() {
 
       expect(find.text('Add another meal'), findsNothing);
       expect(find.byTooltip('Remove meal'), findsNWidgets(2));
+    });
+  });
+
+  /// CLAUDE.md roadmap item 27, closed 2026-08-22. The launch stamps the row's
+  /// identity; the completion writes it back; the planner's existing signal
+  /// subscription flips the row in place. These tests walk that whole path
+  /// through the real seams — the real screen, the real launch request, the
+  /// real attribution service, the real backend fake — with only the Cook Mode
+  /// screen itself stubbed out (it drags in Supabase, Provider and the whole
+  /// post-cook sheet sequence, none of which this behaviour depends on).
+  group('cooked-state slot attribution', () {
+    /// Stands in for Cook Mode finishing: takes whatever slot the launch
+    /// actually carried and runs the real completion-side write.
+    Future<bool> completeCook(
+      FakeWeeklyPlanBackend backend, {
+      bool isReCook = false,
+    }) =>
+        PlannerCookAttributionService(backend: backend)
+            .markCookedFromCompletion(
+                slot: lastCookLaunch?.plannerSlot, isReCook: isReCook);
+
+    /// Back out of the stubbed Cook Mode route, so the planner is on screen
+    /// again. The planner was mounted the whole time — that is what lets the
+    /// signal reach it — but a covered route is offstage and invisible to
+    /// finders.
+    Future<void> leaveCookMode(WidgetTester tester) async {
+      lastRouter!.pop();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('Cook stamps the row it was pressed on', (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 0, title: 'Monday Dish'));
+
+      await _pumpPlanner(tester, backend);
+      await tester.tap(find.text('Cook'));
+      await tester.pumpAndSettle();
+
+      expect(lastCookLaunch!.plannerSlot,
+          const PlannerSlotRef(dayIndex: 0, slotIndex: 0));
+    });
+
+    testWidgets('the day\'s second meal stamps slot 1, not slot 0',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 0, slotIndex: 0, title: 'First Dish'));
+      backend.rows.add(planRow(dayIndex: 0, slotIndex: 1, title: 'Second Dish'));
+
+      await _pumpPlanner(tester, backend);
+
+      // Both of today's meals are cookable, so there are two Cook buttons —
+      // tap the one belonging to the second row.
+      await tester.tap(find.byType(FilledButton).last);
+      await tester.pumpAndSettle();
+
+      expect(lastCookLaunch!.plannerSlot,
+          const PlannerSlotRef(dayIndex: 0, slotIndex: 1));
+    });
+
+    testWidgets(
+        'end to end: a rescue-eligible planner cook comes back as the gold, '
+        'counted state', (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(
+          dayIndex: 0,
+          title: 'Rescue Dish',
+          origin: RecipeOrigin.fridgeClearer));
+
+      await _pumpPlanner(tester, backend);
+      final screenState = tester.state(find.byType(WeeklyPlannerScreen));
+
+      await tester.tap(find.text('Cook'));
+      await tester.pumpAndSettle();
+      expect(await completeCook(backend), isTrue);
+      await tester.pumpAndSettle();
+      await leaveCookMode(tester);
+
+      expect(backend.rows.single['is_cooked'], isTrue);
+      expect(find.text('Cook'), findsNothing);
+      final check = tester.widget<Icon>(find.byIcon(Icons.check_circle_rounded));
+      expect(check.color, AppDesignTokens.cookedCountedGold);
+      expect(tester.state(find.byType(WeeklyPlannerScreen)), same(screenState),
+          reason: 'flipped in place by the signal, not by a remount');
+    });
+
+    testWidgets(
+        'end to end: a non-rescue planner cook comes back as the neutral, '
+        'didn\'t-count state', (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      // Same write, same path — only the recipe's own origin differs, which is
+      // the whole point: counted-ness is derived, never stored.
+      backend.rows.add(planRow(
+          dayIndex: 0,
+          title: 'Craving Dish',
+          origin: RecipeOrigin.customAiRecipeCreator));
+
+      await _pumpPlanner(tester, backend);
+      await tester.tap(find.text('Cook'));
+      await tester.pumpAndSettle();
+      await completeCook(backend);
+      await tester.pumpAndSettle();
+      await leaveCookMode(tester);
+
+      final check = tester.widget<Icon>(find.byIcon(Icons.check_circle_rounded));
+      expect(check.color, AppDesignTokens.cookedNeutralGray);
+    });
+
+    testWidgets(
+        'the same dish planned on two days: only the launched day flips',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 0, title: 'Zucchini Fritters'));
+      backend.rows.add(planRow(dayIndex: 3, title: 'Zucchini Fritters'));
+
+      await _pumpPlanner(tester, backend);
+      // Only today (Monday) is cookable, so the Cook button belongs to day 0.
+      await tester.tap(find.text('Cook'));
+      await tester.pumpAndSettle();
+      await completeCook(backend);
+      await tester.pumpAndSettle();
+      await leaveCookMode(tester);
+
+      expect(backend.markCookedTargets, [(dayIndex: 0, slotIndex: 0)]);
+      expect(
+          backend.rows
+              .firstWhere((r) => r['day_index'] == 0)['is_cooked'],
+          isTrue);
+      expect(
+          backend.rows
+              .firstWhere((r) => r['day_index'] == 3)['is_cooked'],
+          isFalse);
+      // Thursday still reads as an ordinary planned day.
+      expect(find.byIcon(Icons.check_circle_rounded), findsOneWidget);
+    });
+
+    testWidgets('a cook launched from outside the planner touches no plan row',
+        (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(dayIndex: 0, title: 'Monday Dish'));
+
+      await _pumpPlanner(tester, backend);
+
+      // No planner Cook press: this is a Home / Fridge Clearer / generation
+      // sheet launch, which carries no slot.
+      lastCookLaunch = null;
+      expect(await completeCook(backend), isFalse);
+      await tester.pumpAndSettle();
+
+      expect(backend.markCookedCalls, 0);
+      expect(backend.rows.single['is_cooked'], isFalse);
+      expect(find.text('Cook'), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle_rounded), findsNothing);
+    });
+
+    testWidgets('next week never shows a Cook button to stamp', (tester) async {
+      final backend = FakeWeeklyPlanBackend();
+      backend.rows.add(planRow(
+          dayIndex: kNextWeekOffset, title: 'Next Monday Dish'));
+
+      await _pumpPlanner(tester, backend);
+      await tester.tap(find.text('Next week'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Next Monday Dish'), findsOneWidget);
+      expect(find.byType(FilledButton), findsNothing);
+    });
+  });
+
+  group('the active cook session carries the slot through an interruption',
+      () {
+    test('a planner cook resumes still knowing its row', () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = CookSessionStorageService();
+
+      await storage.saveActiveSession(
+        recipe: testRecipe('Interrupted Dish'),
+        cookStarted: true,
+        cookPaused: true,
+        activeStepIndex: 1,
+        completedSteps: {0},
+        activeRemaining: const Duration(minutes: 3),
+        currentPortions: 2,
+        surface: CookModeSurface.weeklyPlanner,
+        isReCook: false,
+        plannerSlot: const PlannerSlotRef(dayIndex: 4, slotIndex: 1),
+      );
+
+      final resumed = await storage.loadActiveSession();
+      expect(resumed!.plannerSlot,
+          const PlannerSlotRef(dayIndex: 4, slotIndex: 1));
+    });
+
+    test('a session saved without a slot resumes attributing nothing',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = CookSessionStorageService();
+
+      await storage.saveActiveSession(
+        recipe: testRecipe('Home Dish'),
+        cookStarted: true,
+        cookPaused: true,
+        activeStepIndex: 0,
+        completedSteps: const {},
+        activeRemaining: const Duration(minutes: 5),
+        currentPortions: 2,
+        surface: CookModeSurface.fridgeClearer,
+        isReCook: false,
+      );
+
+      final resumed = await storage.loadActiveSession();
+      expect(resumed!.plannerSlot, isNull);
     });
   });
 }

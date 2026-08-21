@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:optimeal/models/cook_mode_recipe_codec.dart';
+import 'package:optimeal/models/planner_slot_ref.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
@@ -171,6 +172,15 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   /// that future with null. Data announces itself instead.
   StreamSubscription<void>? _ledgerSub;
   StreamSubscription<void>? _cookLogSub;
+
+  /// `user_meal_plans` changed from outside this screen — today that means a
+  /// finished cook marking the slot it was launched from as cooked
+  /// (`PlannerCookAttributionService`). It is a third subscription rather than
+  /// a third mechanism: it lands in the same [_onExternalDataChanged] handler
+  /// as the other two, and the same re-read flips the row in place. It has to
+  /// be its own signal because [AppDataChanges.cookLog] fires at the *top* of
+  /// the post-cook sequence, before the plan row has been written.
+  StreamSubscription<void>? _mealPlanSub;
   bool _signalReloadQueued = false;
 
   late final WeeklyPlanBackend _backend =
@@ -192,6 +202,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
     _ledgerSub = AppDataChanges.ledger.listen(_onExternalDataChanged);
     _cookLogSub = AppDataChanges.cookLog.listen(_onExternalDataChanged);
+    _mealPlanSub = AppDataChanges.mealPlan.listen(_onExternalDataChanged);
 
     // Hydrate the plan for the signed-in user.
     unawaited(_loadPlanFromSupabase());
@@ -201,6 +212,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   void dispose() {
     _ledgerSub?.cancel();
     _cookLogSub?.cancel();
+    _mealPlanSub?.cancel();
     WeeklyPlannerIntentService.instance.pendingAddMeal.removeListener(_intentListener);
     super.dispose();
   }
@@ -325,11 +337,24 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   /// **Provenance travels in the payload, untouched.** A Fridge Clearer
   /// recipe cooked from here is still a rescue, because `origin` and
   /// `originEnteredIngredients` ride inside [CookModeRecipePayload] — the
-  /// launch surface decides nothing (see `docs/DECISIONS.md`). Nothing is
-  /// awaited: the post-cook sequence leaves via `context.go('/')`, which
-  /// removes this page and would complete any awaited result with null. See
-  /// the cooked-state note in the class doc.
-  void _cookPlannedMeal(_PlannedMeal meal) {
+  /// launch surface decides nothing (see `docs/DECISIONS.md`).
+  ///
+  /// **Slot identity travels beside it, stamped here and only here.** The
+  /// `(dayIndex, slotIndex)` of the row whose Cook button was pressed goes out
+  /// as a [PlannerSlotRef] on the launch request, and the completed cook marks
+  /// exactly that row cooked (`PlannerCookAttributionService`). This is the
+  /// same architectural move as `RecipeOrigin`: stamp the fact at the one
+  /// moment it is known, carry it, never re-derive it later. It is what makes
+  /// the two cooked states reachable at all — and why the same dish planned on
+  /// two days flips only the day that was launched.
+  ///
+  /// Nothing is awaited: the post-cook sequence leaves via `context.go('/')`,
+  /// which removes this page and would complete any awaited result with null.
+  /// The row comes back cooked through [AppDataChanges.mealPlan] instead.
+  void _cookPlannedMeal(int dayIndex, int slotIndex) {
+    final meals = _mealsFor(dayIndex);
+    if (slotIndex < 0 || slotIndex >= meals.length) return;
+    final meal = meals[slotIndex];
     final recipe = meal.recipe;
     if (recipe == null) {
       debugPrint('WeeklyPlanner: planned meal missing Cook Mode payload: ${meal.title}');
@@ -341,7 +366,12 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
     context.push(
       AppRoutes.onePanCookingRoadmap,
-      extra: CookModeLaunchRequest(recipe: recipe, surface: CookModeSurface.weeklyPlanner),
+      extra: CookModeLaunchRequest(
+        recipe: recipe,
+        surface: CookModeSurface.weeklyPlanner,
+        plannerSlot:
+            PlannerSlotRef(dayIndex: dayIndex, slotIndex: slotIndex),
+      ),
     );
   }
 
@@ -859,7 +889,8 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
                       : () => _retrySlot(absoluteIndex, inlineError.key),
                   onAdd: () => _showAddMealSheet(absoluteIndex),
                   onOpenDay: () => _showDayDetail(absoluteIndex),
-                  onCook: _cookPlannedMeal,
+                  onCook: (slotIndex) =>
+                      _cookPlannedMeal(absoluteIndex, slotIndex),
                 );
               },
             ),
@@ -962,7 +993,11 @@ class _DayCard extends StatelessWidget {
   final VoidCallback? onRetry;
   final VoidCallback onAdd;
   final VoidCallback onOpenDay;
-  final ValueChanged<_PlannedMeal> onCook;
+
+  /// Takes the meal's slot index within the day, not the meal — the slot is
+  /// the identity the completed cook needs to write back (see
+  /// [PlannerSlotRef]), and a `_PlannedMeal` carries no identity of its own.
+  final ValueChanged<int> onCook;
 
   @override
   Widget build(BuildContext context) {
@@ -1029,7 +1064,7 @@ class _DayCard extends StatelessWidget {
                     isToday: isToday,
                     isThisWeek: isThisWeek,
                   ),
-                  onCook: () => onCook(meals[i]),
+                  onCook: () => onCook(i),
                 ),
               ],
               if (isSaving) ...[
@@ -1769,17 +1804,18 @@ class _PlannedMeal {
 
   /// Mirrors the persisted `user_meal_plans.is_cooked` column.
   ///
-  /// **Nothing in the app currently sets this.** The old writer — the Weekly
-  /// Planner awaiting `push<bool>` from Cook Mode — was deleted on
-  /// 2026-08-22 because the post-cook `context.go('/')` removes this page and
-  /// completes that future with null, so it never fired on a real completion.
-  /// Deriving it from the cook log instead needs a way to attribute a
-  /// finished cook to a specific (day, slot), and no such key exists: the
-  /// cook history stores only `{recipe, cookedAt}` deduplicated by title, and
-  /// `waste_ledger_events` writes `recipe_id: null`. Matching by title is
-  /// ambiguous the moment the same dish is planned twice in a week. Rows that
-  /// already carry `is_cooked = true` render correctly; see the session
-  /// record `docs/sessions/2026-08-22_weekly-planner-redesign.md`.
+  /// Written by `PlannerCookAttributionService` when a cook that was launched
+  /// from a planner row finishes (CLAUDE.md roadmap item 27, closed
+  /// 2026-08-22). The cook carries the row's identity out with it as a
+  /// [PlannerSlotRef] — the old writer, this screen awaiting `push<bool>` from
+  /// Cook Mode, could not work, because the post-cook `context.go('/')`
+  /// completes that future with null. Nothing here is inferred from the cook
+  /// log: it stores `{recipe, cookedAt}` deduplicated by title, which is
+  /// ambiguous the moment the same dish is planned on two days.
+  ///
+  /// Whether a cooked meal reads as counted or not-counted is NOT stored — it
+  /// stays derived from the recipe's own `RecipeOrigin`. See
+  /// [plannerMealStateFor].
   final bool cooked;
 
   _PlannedMeal copyWith({String? title, String? source, CookModeRecipePayload? recipe, bool? cooked}) => _PlannedMeal(

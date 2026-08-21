@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
+import 'package:optimeal/models/planner_slot_ref.dart';
 import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/nav.dart';
@@ -17,6 +18,7 @@ import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/services/fridge_clearer_entry_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_verdict.dart';
+import 'package:optimeal/services/planner_cook_attribution_service.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -83,11 +85,19 @@ class CookModeLaunchRequest {
     required this.recipe,
     required this.surface,
     this.isReCook = false,
+    this.plannerSlot,
   });
 
   final CookModeRecipePayload recipe;
   final CookModeSurface? surface;
   final bool isReCook;
+
+  /// The Weekly Planner row this launch came from, or null for every other
+  /// launch point. Stamped once, by the planner, on the row whose Cook button
+  /// was pressed; a finished cook marks exactly that row `is_cooked` and
+  /// nothing else. See [PlannerSlotRef] — this is launch context, so it lives
+  /// here beside [surface] rather than inside [recipe].
+  final PlannerSlotRef? plannerSlot;
 }
 
 /// Payload for launching Cook Mode with a dynamic, generated recipe.
@@ -217,7 +227,8 @@ class OnePanCookingRoadmapScreen extends StatefulWidget {
       this.recipe,
       this.resumeSession,
       this.surface,
-      this.isReCook = false});
+      this.isReCook = false,
+      this.plannerSlot});
 
   /// Optional dynamic recipe passed from other screens (e.g. Fridge Clearer).
   /// When null, Cook Mode falls back to the built-in demo recipe.
@@ -244,6 +255,12 @@ class OnePanCookingRoadmapScreen extends StatefulWidget {
   /// by [resumeSession]'s own value) if [resumeSession] is provided.
   final bool isReCook;
 
+  /// The Weekly Planner slot this launch came from, or null for every other
+  /// launch point. Ignored (superseded by [resumeSession]'s own value) if
+  /// [resumeSession] is provided — so an interrupted planner cook still marks
+  /// the right row when it is resumed. See [PlannerSlotRef].
+  final PlannerSlotRef? plannerSlot;
+
   @override
   State<OnePanCookingRoadmapScreen> createState() =>
       _OnePanCookingRoadmapScreenState();
@@ -266,6 +283,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   final _fridgeClearerEntryService = FridgeClearerEntryService();
   final _sessionStorage = CookSessionStorageService();
   final _confidenceClimbService = ConfidenceClimbService();
+  final _plannerAttribution = PlannerCookAttributionService();
 
   /// The resolved recipe payload backing this screen (either the fresh
   /// [OnePanCookingRoadmapScreen.recipe] or the one inside
@@ -280,6 +298,13 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// never rescue-eligible. See CLAUDE.md Roadmap item 28.
   late final CookModeSurface? _surface;
   late final bool _isReCook;
+
+  /// The Weekly Planner slot this session was launched from, resolved the same
+  /// way [_surface] is (resume wins over the widget's own value). Null for
+  /// every launch that did not come from a planner row — and null is the only
+  /// thing that ever stops [_logCookSessionCompletion] from marking a plan
+  /// row, because nothing here infers a slot. See [PlannerSlotRef].
+  late final PlannerSlotRef? _plannerSlot;
 
   // Cook session state (single source of truth)
   bool _cookStarted = false;
@@ -499,9 +524,11 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       _currentPortions = resume.currentPortions;
       _surface = resume.surface;
       _isReCook = resume.isReCook;
+      _plannerSlot = resume.plannerSlot;
     } else {
       _surface = widget.surface;
       _isReCook = widget.isReCook;
+      _plannerSlot = widget.plannerSlot;
     }
     if (resume == null && payload != null) {
       // A genuine fresh open of Cook Mode with a real recipe (not the demo,
@@ -696,6 +723,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         currentPortions: _currentPortions,
         surface: _surface,
         isReCook: _isReCook,
+        plannerSlot: _plannerSlot,
       );
     } catch (e) {
       debugPrint('Failed to persist Cook Mode session: $e');
@@ -723,6 +751,17 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     if (cooked != null) {
       unawaited(SavedRecipesService.instance.onRecipeCooked(cooked));
     }
+
+    // Weekly Planner attribution (CLAUDE.md roadmap item 27). A no-op unless
+    // this cook was launched from a planner row, in which case exactly that
+    // `(day, slot)` is marked cooked and the planner — which is still mounted
+    // underneath Cook Mode — re-reads on the mealPlan signal and flips the row
+    // in place. Fire and forget, like the touch above: nothing in the
+    // post-cook sequence depends on it, and it must not delay the sheets.
+    unawaited(_plannerAttribution.markCookedFromCompletion(
+      slot: _plannerSlot,
+      isReCook: _isReCook,
+    ));
 
     try {
       // Waste Ledger logging — gated on the RECIPE's provenance, not on
