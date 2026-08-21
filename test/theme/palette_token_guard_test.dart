@@ -104,8 +104,9 @@ void main() {
 
   test('the v1.2 (variant D) values are the signed ones', () {
     // The guard above stops literals from spreading; this one stops the
-    // *values* from being edited back. Every hex here is from the signed
-    // 2026-08-21 spec card, §2.
+    // *values* from being edited back. Every hex here is signed — the palette
+    // from the 2026-08-21 card §2, the two illustration colours from the
+    // loading-card card.
     final tokens = _stripComments(File(_tokensFile).readAsStringSync());
 
     const signed = <String, String>{
@@ -121,6 +122,11 @@ void main() {
       'goldEarnedFill': '0xFFEDA24E',
       'goldEarnedOnLight': '0xFFC77E1F',
       'goldEarnedBadgeTint': '0xFFFBEED8',
+      // Illustration-only, signed with the loading card (2026-08-22). Pinned
+      // here for the same reason as the palette: so they cannot drift, and so
+      // adding them did not mean weakening the guard.
+      'illustrationWoodTan': '0xFFD9A066',
+      'illustrationWoodTanShade': '0xFFC68B4E',
     };
 
     for (final entry in signed.entries) {

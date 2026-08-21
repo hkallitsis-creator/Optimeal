@@ -13,6 +13,63 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Generation loading card ("waiting card")
+
+Full prompt and report: `docs/sessions/2026-08-22_loading-card.md`.
+
+One reusable component, `GenerationLoadingCard`, shown at every AI generation
+point. An ivory card centred on the canvas with a wooden spoon stirring a
+terracotta bowl — diagram-family rules (black perimeter outlines, flat fills),
+the spoon dipping behind the far rim by paint order, three batter pearls
+riding the surface, three pulsing dots below the copy.
+
+**No progress bar, by signed decision.** Generation time is genuinely
+unpredictable, and a bar that stalls at 80% makes a promise the app cannot
+keep. The dots say "alive" and promise nothing. A test asserts no progress
+indicator of either kind exists in the component.
+
+**Two stages, two behaviours.** `findingIdeas` (seconds) shows one static line
+— cycling over a two-second wait flickers. `writingRecipe` (7–10s) cycles every
+2.5s through lines that narrate **real generation work**: reading the
+ingredients, setting the pan order, working out cuts, adding sensory cues,
+scaling amounts. Every one of those is something the pipeline actually does.
+A test enforces the truthfulness rule from the other side, failing on
+"nutrition", "calorie", "allerg", "safe", "cost" and friends — there is no
+nutrition analysis, no cost calculation, and (roadmap item 1) no safety
+validation, so none may be claimed.
+
+**Ingredient-aware lines shipped** where the surface has a real list: the
+Fridge Clearer's stage 2 names two of the user's own ingredients in the first
+cycling line. The Custom creator takes free text and has no structured list, so
+it uses the generic line.
+
+**Wired at all four points**, replacing three ad-hoc spinners: Fridge Clearer
+stage 1 (replacing the CTA bar's spinner + "Chef Harris is thinking…"), stage 2
+(**superseding** 650f52b's inline "Writing the recipe…" on the tapped idea card
+— the card now shows the chosen dish's title so the choice stays visible), and
+the Custom recipe creator (replacing the in-button spinner; the wait takes over
+the whole sheet). The planner-initiated paths are those same two surfaces
+reached from the planner, not a third implementation — asserted by a test.
+
+**Illustration tokens, guard intact.** `illustrationWoodTan` `#D9A066` and
+`illustrationWoodTanShade` `#C68B4E` were added to `AppDesignTokens` under a
+clearly-marked ILLUSTRATION-ONLY section — deliberately outside the semantic
+families, because a wooden spoon must not be readable as gold/earned — and
+**pinned by the palette guard** alongside the twelve v1.2 values. The guard was
+not weakened.
+
+**Onboarding kinship**: slide 1's spoon switched from champagne (a stand-in
+from bca2bd5, when no wood token existed) to the same wood-tan pair, and gained
+the same single shading crescent. The two illustrations now read as kin.
+
+Reduced motion is honoured: `MediaQuery.disableAnimationsOf` stops the
+controller, leaving a composed still illustration and still dots.
+
+`flutter test`: **346 passing** (334 + 12). `flutter analyze`: **44 issues**,
+0 errors, 0 warnings.
+
+---
+
 ## 2026-08-22 — Onboarding redesign (correctness, not restyle)
 
 Full prompt and report: `docs/sessions/2026-08-22_onboarding-redesign.md`.

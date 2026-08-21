@@ -43,11 +43,14 @@ class _SpoonAndBowlPainter extends CustomPainter {
     final bowlFill = Paint()
       ..color = AppDesignTokens.ctaTerracotta
       ..style = PaintingStyle.fill;
-    // "Wood-tan" has no signed token; champagne is the palette's warm neutral
-    // and is already the terracotta family's background wash, so it reads as
-    // wood beside a terracotta bowl without spending another semantic.
+    // Wood tan, shared with the generation loading card's stirring spoon
+    // (2026-08-22). This used champagne when the token did not exist yet; the
+    // two illustrations are meant to read as kin, and now they do.
     final spoonFill = Paint()
-      ..color = AppDesignTokens.champagneTint
+      ..color = AppDesignTokens.illustrationWoodTan
+      ..style = PaintingStyle.fill;
+    final spoonShade = Paint()
+      ..color = AppDesignTokens.illustrationWoodTanShade
       ..style = PaintingStyle.fill;
 
     // ── Bowl: a rounded half-ellipse sitting on a small foot. ──
@@ -90,6 +93,12 @@ class _SpoonAndBowlPainter extends CustomPainter {
     final head = Rect.fromCenter(
         center: Offset.zero, width: size.width * 0.17, height: size.height * 0.30);
     canvas.drawOval(head, spoonFill);
+    canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(head.width * 0.14, head.height * 0.10),
+            width: head.width * 0.62,
+            height: head.height * 0.62),
+        spoonShade);
     canvas.drawOval(head, line);
 
     final handle = Rect.fromLTWH(-size.width * 0.028, head.bottom - 2,

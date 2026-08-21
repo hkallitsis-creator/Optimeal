@@ -10,6 +10,7 @@ import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
+import 'package:optimeal/widgets/generation_loading_card.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -192,6 +193,18 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final subtitle = widget.subtitle ?? 'Type a dish, craving, or diet — I\'ll generate a precise Cook Mode recipe.';
 
+    // The wait takes over the whole sheet rather than sitting inside the CTA
+    // as a spinner. A custom recipe is a full generation — the same 7-10s the
+    // Fridge Clearer's stage 2 takes — so it gets the same card, in the same
+    // mode. No ingredients are passed: this surface takes free text and has no
+    // structured list to name.
+    if (_isGenerating) {
+      return const SizedBox(
+        height: 420,
+        child: GenerationLoadingCard(stage: GenerationStage.writingRecipe),
+      );
+    }
+
     return AnimatedPadding(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
@@ -286,23 +299,9 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
                   foregroundColor: scheme.onTertiary,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                 ),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 160),
-                  child: _isGenerating
-                      ? Row(
-                          key: const ValueKey('loading'),
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: scheme.onTertiary)),
-                            const SizedBox(width: 12),
-                            Text('Generating…', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900)),
-                          ],
-                        )
-                      : Text(
-                          '✨ Generate Recipe',
-                          key: const ValueKey('cta'),
-                          style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900),
-                        ),
+                child: Text(
+                  '✨ Generate Recipe',
+                  style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900),
                 ),
               ),
             ),

@@ -21,6 +21,7 @@ import 'package:optimeal/theme.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/generated_recipe_actions_sheet.dart';
+import 'package:optimeal/widgets/generation_loading_card.dart';
 import 'package:optimeal/widgets/home_glyph_button.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 
@@ -505,17 +506,44 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       ),
       body: SafeArea(
         bottom: false,
-        child: onIdeas
-            ? _buildIdeasBody()
-            : _buildInputBody(effectivePortions),
+        child: _buildBody(effectivePortions, onIdeas),
       ),
-      bottomNavigationBar: onIdeas
+      // The CTA goes away while either stage is in flight: the loading card
+      // occupies the canvas, and a disabled button under it is just something
+      // else to look at.
+      bottomNavigationBar: (onIdeas || _isGenerating)
           ? null
-          : _GenerateCtaBar(
-              isLoading: _isGenerating,
-              onPressed: _isGenerating ? null : _generateIdeas,
-            ),
+          : _GenerateCtaBar(onPressed: _generateIdeas),
     );
+  }
+
+  /// Routes between the three things this screen can be: the input, the menu,
+  /// and the wait.
+  ///
+  /// **The wait wins over both.** Stage 1's card replaces the input; stage 2's
+  /// replaces the menu — see the supersession note on [_buildIdeasBody].
+  Widget _buildBody(int effectivePortions, bool onIdeas) {
+    if (_isGenerating) {
+      final committing = _committingIdeaIndex;
+      final ideas = _ideas;
+      final chosen = (committing != null && ideas != null &&
+              committing < ideas.length)
+          ? ideas[committing]
+          : null;
+
+      return GenerationLoadingCard(
+        stage: chosen != null
+            ? GenerationStage.writingRecipe
+            : GenerationStage.findingIdeas,
+        // Keeps the chosen dish visible while it is being written, so the
+        // user does not lose hold of what they picked.
+        subject: chosen?.title,
+        // Ingredient-aware lines: this surface has the real entered list, so
+        // the first cycling line can name it.
+        ingredients: chosen == null ? null : _sortedIngredients,
+      );
+    }
+    return onIdeas ? _buildIdeasBody() : _buildInputBody(effectivePortions);
   }
 
   // ── Input body: one screen, no page scroll ─────────────────────────────
@@ -734,9 +762,6 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
           _IdeaCard(
             idea: ideas[i],
             clearance: FridgeClearance.forIdea(ideas[i], entered),
-            isCommitting: _committingIdeaIndex == i,
-            // One choice at a time: while a recipe is being built the other
-            // cards go inert rather than queueing a second generation.
             onTap: _isGenerating ? null : () => _commitToIdea(i),
           ),
           const SizedBox(height: 10),
@@ -949,13 +974,14 @@ class _IdeaCard extends StatelessWidget {
   const _IdeaCard({
     required this.idea,
     required this.clearance,
-    required this.isCommitting,
     required this.onTap,
   });
 
   final FridgeIdea idea;
   final FridgeClearance clearance;
-  final bool isCommitting;
+
+  /// Null while a recipe is being written, so a second choice cannot queue a
+  /// second generation behind the first.
   final VoidCallback? onTap;
 
   /// Built from the user's own list, never from model prose. See
@@ -1038,27 +1064,6 @@ class _IdeaCard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (isCommitting) ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    const SizedBox(
-                      height: 16,
-                      width: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2.2,
-                          color: AppDesignTokens.ctaTerracotta),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      // PLACEHOLDER
-                      'Writing the recipe…',
-                      style: AppDesignTokens.caption
-                          .copyWith(fontWeight: FontWeight.w700),
-                    ),
-                  ],
-                ),
-              ],
             ],
           ),
         ),
@@ -1132,9 +1137,13 @@ class _InlineErrorCard extends StatelessWidget {
   }
 }
 
+/// The pinned primary CTA.
+///
+/// **No loading state.** It used to carry a spinner and a "Chef Harris is
+/// thinking…" label; the generation loading card replaced that outright, and
+/// this bar is simply removed from the tree while a stage is in flight.
 class _GenerateCtaBar extends StatelessWidget {
-  const _GenerateCtaBar({required this.isLoading, required this.onPressed});
-  final bool isLoading;
+  const _GenerateCtaBar({required this.onPressed});
   final VoidCallback? onPressed;
 
   @override
@@ -1142,14 +1151,13 @@ class _GenerateCtaBar extends StatelessWidget {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
     final disabled = onPressed == null;
 
-    final bg = (isLoading || disabled)
+    final bg = disabled
         ? AppDesignTokens.surfaceIvory
         : AppDesignTokens.ctaTerracotta;
-    final fg =
-        (isLoading || disabled) ? AppDesignTokens.textCharcoal : Colors.white;
+    final fg = disabled ? AppDesignTokens.textCharcoal : Colors.white;
     final border = BorderSide(
         color: AppDesignTokens.textCharcoal
-            .withValues(alpha: (isLoading || disabled) ? 0.14 : 0));
+            .withValues(alpha: disabled ? 0.14 : 0));
 
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -1176,30 +1184,14 @@ class _GenerateCtaBar extends StatelessWidget {
             side: WidgetStatePropertyAll(border),
             overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (isLoading) ...[
-                const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        color: AppDesignTokens.ctaTerracotta)),
-                const SizedBox(width: 12),
-              ],
-              Flexible(
-                child: Text(
-                  // PLACEHOLDER (both labels)
-                  isLoading
-                      ? 'Chef Harris is thinking…'
-                      : 'Let\'s cook — clear that fridge',
-                  style: AppDesignTokens.subheadline
-                      .copyWith(color: fg, fontWeight: FontWeight.w900),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+          child: Center(
+            child: Text(
+              // PLACEHOLDER
+              'Let\'s cook — clear that fridge',
+              style: AppDesignTokens.subheadline
+                  .copyWith(color: fg, fontWeight: FontWeight.w900),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
       ),

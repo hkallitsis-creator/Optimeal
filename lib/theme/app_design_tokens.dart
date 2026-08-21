@@ -112,6 +112,26 @@ abstract final class AppDesignTokens {
   /// Outside the v1.2 table — provisionally signed, pending a device pass.
   static const Color cookedNeutralGray = Color(0xFF8B918E);
 
+  // ──────────────────────────── Illustration only ──────────────────────────
+  //
+  // Colours that exist ONLY inside drawn illustrations (the generation loading
+  // card's spoon, onboarding's spoon-and-bowl). They are deliberately OUTSIDE
+  // the semantic families: a wooden spoon has to look like wood, and the
+  // nearest semantic — gold — means "earned", which a stirring spoon must
+  // never claim.
+  //
+  // **Never use these for UI chrome.** No fills, no text, no borders, no
+  // chips. If a control needs a colour, it needs a semantic token, and if no
+  // semantic fits, that is a question for Harris rather than a reason to reach
+  // in here.
+
+  /// Wooden spoon body.
+  static const Color illustrationWoodTan = Color(0xFFD9A066);
+
+  /// The single shading crescent on the spoon head. The only modelling in the
+  /// diagram family, which is otherwise strictly flat.
+  static const Color illustrationWoodTanShade = Color(0xFFC68B4E);
+
   // ───────────────────── Non-palette system colours ────────────────────────
   //
   // Material error roles and the (currently unreachable) dark scheme. These

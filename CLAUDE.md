@@ -58,6 +58,30 @@ request or when a task needs the "why."
   it is a sales CTA, and gold never goes on a CTA. Remaining audited-but-unfixed
   semantic drift is listed in
   `docs/sessions/2026-08-22_palette-v12-swap.md`.
+- **One loading card for every AI generation (2026-08-22).**
+  `GenerationLoadingCard` (`lib/widgets/generation_loading_card.dart`),
+  parameterized by `GenerationStage`. **`findingIdeas`** = one static line
+  (cycling over a 2s wait flickers); **`writingRecipe`** = lines cycling every
+  2.5s. **No progress bar, signed** — generation time is unpredictable and a
+  stalling bar is worse than none; the pulsing dots promise nothing. Mounted at
+  all four generation points: Fridge Clearer stage 1, Fridge Clearer stage 2
+  (which **superseded** the inline "Writing the recipe…" on the idea card — the
+  card now carries the chosen dish's title), the Custom recipe creator, and the
+  planner-initiated paths, which are those same surfaces reached from the
+  planner rather than a third implementation. **Every remaining
+  `CircularProgressIndicator` in `lib/` is a save or a load, never a
+  generation** — pinned by a test with an explicit allow-list.
+  **Cycling lines are claims about real behaviour and must stay true**: only
+  work the pipeline does (ingredient use, sequencing, cuts, sensory cues,
+  portion scaling). A test fails on "nutrition", "calorie", "allerg", "safe",
+  "cost" — there is no such work, and roadmap item 1 means safety especially
+  must not be claimed. Ingredient-aware lines are live where the surface has a
+  real list (Fridge Clearer stage 2); the Custom creator takes free text and
+  uses the generic line. Reduced motion is honoured.
+  **`illustrationWoodTan` / `illustrationWoodTanShade`** live in a marked
+  ILLUSTRATION-ONLY section of `AppDesignTokens` — outside the semantic
+  families on purpose (a wooden spoon must not read as gold/earned), **never
+  for UI chrome**, and pinned by the palette guard like everything else.
 - **Onboarding — four slides, both exits complete, no paywall (2026-08-22).**
   Structure kept (PageView, ivory card per slide, dots, one terracotta CTA,
   Skip top-right hidden on slide 4); content, visuals and routing replaced.
