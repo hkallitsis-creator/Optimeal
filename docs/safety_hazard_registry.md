@@ -11,9 +11,10 @@ rules above are yours, not Claude's. Until it is signed, treat every rule in
 this document as unverified, and the safety validator's deterministic layer
 does not get built from it."*
 
-**Status: ⚠ TRANSCRIBED, AWAITING HARRIS'S VERIFICATION.** Two of the flags
-below are about **safety temperatures and a time limit**, and they are the
-reason this file is not yet cleared to build the deterministic layer from.
+**Status: VERIFIED by Chef Harris, 2026-08-22.** Both open questions — the H3
+temperatures and the H6 time limit — were put to him against the paper and
+confirmed to stand exactly as printed. **Nothing in this document is pending.**
+The deterministic layer of the safety validator may be built from it.
 
 ## How to read this file
 
@@ -28,10 +29,16 @@ correction" box. On the returned sheet:
 
 Per the sheet's own instruction — *"tick KEEP, or strike the whole entry, or
 reword it in the correction space"* — a ticked KEEP with an empty correction
-box means the drafted rule is adopted as written. That reading is
-straightforward for H1, H2, H4, H5, H7–H11. It is **not** straightforward for
-H3 and H6, which carry drafted numbers the checklist claims were corrected:
-see [FLAG-5] and [FLAG-6].
+box means the drafted rule is adopted as written.
+
+That was straightforward for H1, H2, H4, H5, H7–H11. It was **not**
+straightforward for H3 and H6, whose drafted numbers the page-6 checklist
+claims were corrected while their correction boxes were left blank. Rather than
+assume, both were put to Harris directly on 2026-08-22. **His answer: "all 4
+stand" (H3) and "2 hours stand" (H6).** So the empty box does mean "reviewed,
+correct as drafted" throughout, and the checklist tick meant "I did the
+checking", not "I rewrote something". Both entries are now confirmed values,
+not inherited drafts.
 
 ---
 
@@ -69,23 +76,29 @@ see [FLAG-5] and [FLAG-6].
 
 ### H3 — Temperature floor: no core temperature below the instantaneous minimum without a stated hold time
 
-- **KEEP** ✓ · **correction box empty** ⚠ **[FLAG-5]**
+- **KEEP** ✓ · correction box empty · **temperatures CONFIRMED by Harris
+  2026-08-22: "all 4 stand"**
 - **Status on the paper:** *"rule already PERMANENT (17 Aug decision). The
   temperatures below are Claude's drafts and are the part needing your
   correction."*
 - **Rule:** Any stated core temperature below the instantaneous minimum for
   that protein, with no hold time stated, is flagged.
-- **DRAFT minimums as printed** — *these are the values in question:*
+- **Signed minimums** — printed as drafts, confirmed unchanged by Harris on
+  2026-08-22. **These are the values the deterministic layer is built from:**
 
-  | Protein class | Drafted minimum |
+  | Protein class | Signed minimum |
   |---|---|
-  | Poultry | 74 °C |
-  | Minced meat and sausage | 71 °C |
-  | Pork, whole-muscle | 63 °C **plus 3 min rest** |
-  | Fish | 63 °C |
+  | Poultry | **74 °C** |
+  | Minced meat and sausage | **71 °C** |
+  | Pork, whole-muscle | **63 °C plus 3 min rest** |
+  | Fish | **63 °C** |
 
   The printed line ends *"Correct, replace, or strike any value."* No value was
-  struck, replaced or written.
+  struck, replaced or written, and Harris confirmed on 2026-08-22 that this was
+  deliberate: **"all 4 stand"**.
+
+  Note the pork entry is the one with two parts: 63 °C **and** a 3-minute rest.
+  A stated 63 °C with no rest is not the signed condition.
 - **Detection:** Deterministic — parse stated temperatures in steps against the
   signed minimum for the identified protein class.
 - **On flag:** Correction directive naming the protein and the signed minimum;
@@ -118,11 +131,12 @@ see [FLAG-5] and [FLAG-6].
 
 ### H6 — No holding perishable food in the danger zone
 
-- **KEEP** ✓ · **correction box empty** ⚠ **[FLAG-6]**
+- **KEEP** ✓ · correction box empty · **figure CONFIRMED by Harris 2026-08-22:
+  "2 hours stand"**
 - **Rule:** No step instructs holding cooked or perishable food at room
-  temperature beyond **roughly 2 hours (printed as "DRAFT figure - correct
-  it")**, and never overnight on the counter. Cooling for storage happens fast
-  and moves to the fridge.
+  temperature beyond **2 hours** — printed as a draft figure, confirmed
+  unchanged — and never overnight on the counter. Cooling for storage happens
+  fast and moves to the fridge.
 - **Detection:** Deterministic trigger — rest/hold/leave language with a stated
   duration beyond the signed limit on perishable ingredients. Model backstop
   for unstated-duration phrasings such as "leave out until the evening".
@@ -267,8 +281,8 @@ Review checklist — **all eight ticked**:
 
 - ✓ Struck every hazard I would not stand behind professionally.
 - ✓ Reworded every kept rule into my own language where the draft is not how I would say it.
-- ✓ Corrected or replaced every draft temperature in H3. These were Claude's drafts. ⚠ **[FLAG-5]**
-- ✓ Corrected the draft 2-hour figure in H6. ⚠ **[FLAG-6]**
+- ✓ Corrected or replaced every draft temperature in H3. These were Claude's drafts. *(No change written; Harris confirmed 2026-08-22 that all four stand.)*
+- ✓ Corrected the draft 2-hour figure in H6. *(No change written; Harris confirmed 2026-08-22 that 2 hours stands.)*
 - ✓ Confirmed each detection line matches how the mistake actually shows up in a home kitchen.
 - ✓ Wrote or scheduled the signed wording for user-facing text (H2 cooked-through line, H8 caution).
 - ✓ Added any hazard common in home kitchens that is missing (blank entries). — Notes, handwritten: *"Not any, simply what I thought"*

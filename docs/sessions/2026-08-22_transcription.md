@@ -262,12 +262,57 @@ written.
 
 ---
 
-## Step 4 — STOP
+## Step 4 — STOP, then Harris's answers
 
-Stopped here as instructed. No validator work started. Both transcriptions
-carry a `⚠ TRANSCRIBED, AWAITING HARRIS'S VERIFICATION` status line and inline
-⚠ markers at each flagged row. Nothing has been recorded as VERIFIED in
-`docs/DECISIONS.md` — that happens on the second commit, after Harris answers.
+Stopped after presenting the flag list. No validator work started.
+
+### Harris's reply, verbatim (2026-08-22)
+
+```
+1. risotto   2. yes   3.it say  even faster  4. package instructions but always try as well   5. all 4 stand     6. 2 hours stand
+```
+
+### What was applied
+
+| Flag | Answer | Applied as |
+|---|---|---|
+| 1 | "risotto" | "16–20 min." is **Risotto rice**'s own correction. Risotto's time becomes **16–20**; band unchanged at B5 (16–25 min contains it). White rice keeps its own annotation and its printed 18. |
+| 2 | "yes" | The stray tick confirms **Fresh pasta**. Row stands as printed. |
+| 3 | "it say even faster" | Reading confirmed. **No number given** — see below. |
+| 4 | "package instructions but always try as well" | Recorded verbatim as the ruling for `dried_pasta`, `white_rice_absorption`, `brown_rice_absorption`: printed **minutes are advisory**, printed **band stands**. |
+| 5 | "all 4 stand" | H3 minimums confirmed **signed**: poultry 74 °C, minced/sausage 71 °C, pork whole-muscle 63 °C + 3 min rest, fish 63 °C. |
+| 6 | "2 hours stand" | H6 danger-zone limit confirmed **signed** at 2 hours. |
+
+### One flag came back half-answered, and is still open
+
+**FLAG-3 asked two things** — confirm the word, and give red lentils a number
+or a band. Harris confirmed the word ("it say even faster") and did not give a
+figure.
+
+So the row is in a known-wrong state rather than an uncertain one: the printed
+18 min / B5 is confirmed too slow, and there is no replacement. **No number was
+invented.** `docs/cooking_times_table.md` marks the red-lentils time and band
+⚠ **pending** and states that the printed values must not be treated as
+authoritative for that row. Everything else in both documents is settled.
+
+### Answers 5 and 6 settled more than two numbers
+
+They also settled how to read the whole registry. Both entries had the same
+contradiction — a ticked "I corrected this" checklist item over an empty
+correction box — and the answer in both cases was that the drafted value was
+reviewed and found right. That means the empty box is an affirmative "as
+drafted" throughout the sheet, and the checklist tick meant "I did the
+checking", not "I rewrote something". Without asking, the alternative reading
+(the correction was intended and forgotten) would have been equally available,
+and acting on it would have meant either inventing safety temperatures or
+declaring the registry unusable.
+
+### Recorded as VERIFIED
+
+`docs/DECISIONS.md` now carries both documents as verified: the registry
+outright, unblocking the safety validator's deterministic layer; the
+cooking-times table with the single named red-lentils exception, unblocking the
+compatibility validator provided that row is handled explicitly.
 
 ## Files committed
 

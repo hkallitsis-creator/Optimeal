@@ -13,9 +13,16 @@ that is pre-printed boilerplate on every page and is superseded by the
 signature block, exactly as the sheet's own closing line says: *"Signing this
 sheet means the values above are yours, not Claude's."*
 
-**Status: ⚠ TRANSCRIBED, AWAITING HARRIS'S VERIFICATION.** Four items are
-flagged below and in the session record. Until they are resolved this file must
-not be used to build the compatibility validator.
+**Status: VERIFIED by Chef Harris, 2026-08-22.** All four transcription flags
+were put to him against the paper and answered; his answers are applied below
+and recorded verbatim in `docs/sessions/2026-08-22_transcription.md`.
+
+**One value remains open and is marked ⚠ in the table**: red lentils. Harris
+confirmed the annotation reads "even faster" but did not give a replacement
+number, so that single row has a confirmed correction with no quantity. Every
+other row on the sheet is settled. The compatibility validator can be built
+from this file provided it handles that one row explicitly — see the note under
+Starches and grains.
 
 ## How to read this file
 
@@ -209,23 +216,37 @@ Pages 4–5. **This is the only section with written corrections.**
 | key | Item | Reference | Time | Band | Harris's mark |
 |---|---|---|---|---|---|
 | `dried_pasta` | Dried pasta | – | 9 | B3 | *"package instructions + trying"* |
-| `fresh_pasta` | Fresh pasta | – | 3 | B2 | ✓ ⚠ **[FLAG-2]** — tick sits between this row and the next |
-| `white_rice_absorption` | White rice | absorption | 18 | B5 | *"package instructions or experience"* ⚠ **[FLAG-1]** |
-| `risotto_rice_stirred` | Risotto rice | stirred | 20 | B5 | *"16–20 min."* ⚠ **[FLAG-1]** — may belong to White rice above |
+| `fresh_pasta` | Fresh pasta | – | 3 | B2 | ✓ — confirmed 2026-08-22 |
+| `white_rice_absorption` | White rice | absorption | 18 | B5 | *"package instructions or experience"* |
+| `risotto_rice_stirred` | Risotto rice | stirred | **16–20** | B5 | *"16–20 min."* — confirmed 2026-08-22 as Risotto's own correction |
 | `brown_rice_absorption` | Brown rice | absorption | 35 | B6 | *"always try / don't trust time"* |
 | `couscous_steeped` | Couscous | steeped | 5 | B2 | ✓ |
 | `bulgur_absorption` | Bulgur | absorption | 12 | B4 | ✓ |
-| `red_lentils_simmer` | Red lentils | simmer | 18 | B5 | *"even faster"* ⚠ **[FLAG-3]** — no replacement value given |
+| `red_lentils_simmer` | Red lentils | simmer | ⚠ **pending** *(printed 18)* | ⚠ **pending** *(printed B5)* | *"even faster"* — wording confirmed 2026-08-22, **no number given** |
 | `green_puy_lentils_simmer` | Green, Puy lentils | simmer | 30 | B6 | ✓ |
 | `quinoa_absorption` | Quinoa | absorption | 15 | B4 | ✓ |
 | `gnocchi_fresh_boil` | Gnocchi, fresh | boil | 3 | B2 | ✓ |
 
-**What the starch annotations mean for the validator.** Three of them
-("package instructions + trying", "package instructions or experience",
-"always try / don't trust time") are not numeric corrections — they say the
-printed number is an estimate and the package or the cook's own taste
-overrides it. That is a *behaviour* instruction, not a value, and the next
-build needs a ruling on how it is encoded (see [FLAG-4]).
+**Harris's ruling on the three non-numeric annotations** (2026-08-22, verbatim):
+
+> "package instructions but always try as well"
+
+So for `dried_pasta`, `white_rice_absorption` and `brown_rice_absorption` the
+printed minutes are **advisory, not authoritative**: the package governs, and
+the cook tastes regardless. The printed **band still stands** — a B6 brown rice
+still needs its own head start, and the compatibility check needs that — it is
+the *minutes* that carry no authority on these three rows.
+
+How that becomes validator behaviour — whether a stated duration on these rows
+is simply never flagged, and whether the recipe must carry a check-the-package
+or taste-it instruction — is a build decision, not a transcription one.
+
+**⚠ The one row still open: red lentils.** Harris confirmed the annotation reads
+"even faster" but gave no replacement figure. "Faster than 18 minutes" could
+land in B4, B3 or B2, and the difference matters for staggering. **The printed
+18 min / B5 must not be treated as authoritative for this row**, and no
+substitute has been invented here. Either get a number, or have the validator
+skip the timing check for red lentils until one exists.
 
 ## 7. How the validator uses this
 

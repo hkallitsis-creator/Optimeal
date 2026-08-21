@@ -7,6 +7,63 @@ Read on request, not auto-loaded.
 
 ---
 
+## The cooking-times table and the safety hazard registry are VERIFIED (22 August 2026)
+
+**Binding rule:** `docs/cooking_times_table.md` and
+`docs/safety_hazard_registry.md` are the transcriptions of record, and the
+scans in `docs/scans/` are the authority behind them. Where a transcription and
+a scan disagree, the scan wins and the transcription is the bug.
+
+Both were signed on paper by Chef Harris — cooking times **17.08.2026**,
+registry **21.08.26** — transcribed on 2026-08-22, and the six transcription
+flags were then answered by him against the paper. His answers are recorded
+verbatim in `docs/sessions/2026-08-22_transcription.md`.
+
+**Registry: fully verified. This unblocks the safety validator's deterministic
+layer.**
+
+The two questions that mattered were the same shape: H3's four temperatures and
+H6's 2-hour limit were each printed as drafts *needing* correction, each had a
+**ticked** checklist item claiming correction, and each had an **empty**
+correction box. Harris's answers — *"all 4 stand"* and *"2 hours stand"* —
+settle both, and settle the reading of the whole sheet: a ticked KEEP with an
+empty box means "reviewed, correct as drafted", and the checklist tick meant "I
+did the checking", not "I rewrote something".
+
+**The signed minimums** (H3): poultry **74 °C**; minced meat and sausage
+**71 °C**; pork whole-muscle **63 °C plus a 3-minute rest**; fish **63 °C**.
+The pork entry has two parts — 63 °C *without* the rest is not the signed
+condition. **The danger-zone limit** (H6): **2 hours**.
+
+Eleven active rules, all KEEP, none struck. The someday list (shellfish, raw
+flour and dough, raw sprouts) stays **INACTIVE** and out of validator v1.
+
+**Cooking times: verified with exactly one row still open. This unblocks the
+compatibility validator, with a named exception.**
+
+Harris confirmed: "16–20 min." is **Risotto rice**'s own correction, not White
+rice's; the stray tick belongs to **Fresh pasta**; the three non-numeric
+annotations mean *"package instructions but always try as well"*, so on
+`dried_pasta`, `white_rice_absorption` and `brown_rice_absorption` the printed
+**minutes are advisory and the printed band still stands** (a B6 brown rice
+still needs its own head start — it is the minutes that carry no authority).
+
+**The open row is red lentils.** Harris confirmed the annotation reads "even
+faster" but gave no replacement figure, so the printed 18 min / B5 is known to
+be wrong and nothing has been substituted for it. **No number was invented.**
+The validator must either carry a figure once one exists, or skip the timing
+check for that row. This is the only pending value in either document.
+
+**Two things the paper says that the validator design did not expect**, both
+resolved in favour of the paper: size scaling is expressed as **time
+multipliers** (× 0.4 / × 1 / × 2.5 / × 5) rather than band shifts, and the two
+are not equivalent (× 0.4 on a 12 min B4 gives 4.8 min, a two-band drop); and
+the sheet carries **74 ingredient rows** where the design anticipated "~26
+declared keys", so the closed key list is either 74 long or a coarser
+vocabulary these rows resolve into. That choice is still open.
+
+---
+
 ## Fridge Clearer generation is two-stage; regenerate is removed (22 August 2026)
 
 **Binding rule:** pressing "Let's cook" makes ONE small call that returns three

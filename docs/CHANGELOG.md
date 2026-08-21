@@ -40,19 +40,30 @@ entry (H12, Fermentation Processes, handwritten, H13 left empty); and the
 three-item someday list (shellfish, raw flour/dough, raw sprouts) recorded
 **INACTIVE** and explicitly out of validator v1.
 
-**Six flags raised; both documents are ⚠ AWAITING VERIFICATION and neither is
-recorded as VERIFIED in `docs/DECISIONS.md` yet.** The two that matter most are
-the same shape: H3's four draft temperatures (poultry 74 °C, minced 71 °C, pork
-whole-muscle 63 °C + 3 min rest, fish 63 °C) and H6's 2-hour danger-zone limit
-are both printed as drafts needing correction, both have a **ticked** checklist
-item saying they were corrected, and both have an **empty** correction box. The
-values were transcribed as printed and flagged rather than assumed, because
-they are the numbers the deterministic safety layer would be built from.
+**Six flags were raised, put to Harris against the paper, and answered the same
+day. Both documents are now recorded VERIFIED in `docs/DECISIONS.md`.**
 
-The other four flags are on the starches table: which row "16–20 min." belongs
-to, which row a between-rows tick confirms, "even faster" on red lentils with no
-replacement number, and how three "trust the package, not the clock"
-annotations should be encoded at all.
+The two that mattered were the same shape: H3's four draft temperatures and
+H6's 2-hour danger-zone limit were each printed as drafts *needing* correction,
+each had a **ticked** checklist item claiming correction, and each had an
+**empty** correction box. They were transcribed as printed and flagged rather
+than assumed, because they are the numbers the deterministic safety layer gets
+built from. Harris's answers — *"all 4 stand"* and *"2 hours stand"* — confirm
+them as signed values: **poultry 74 °C, minced/sausage 71 °C, pork whole-muscle
+63 °C + 3 min rest, fish 63 °C**, and **2 hours**. They also settle how to read
+the whole sheet: an empty correction box under a ticked KEEP is an affirmative
+"as drafted", and the checklist tick meant "I did the checking".
+
+Of the four starches flags: "16–20 min." belongs to **Risotto rice**; the stray
+tick confirms **Fresh pasta**; the three non-numeric annotations mean *"package
+instructions but always try as well"*, so on dried pasta, white rice and brown
+rice the printed **minutes are advisory while the printed band stands**.
+
+**One value is still open, deliberately**: red lentils. Harris confirmed the
+annotation reads "even faster" but gave no replacement figure, so the printed
+18 min / B5 is known wrong with nothing substituted. No number was invented; the
+row is marked ⚠ pending and the compatibility validator must handle it
+explicitly.
 
 Two mismatches with the brief are worth recording: the paper specifies size
 scaling as **time multipliers** (× 0.4 / × 1 / × 2.5 / × 5), not band shifts,
