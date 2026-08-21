@@ -24,7 +24,7 @@ class ConfidenceTierUpSheet extends StatelessWidget {
   static Future<bool?> show(BuildContext context, {required KitchenConfidence targetTier}) {
     return AppBottomSheet.show<bool>(
       context: context,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       builder: (ctx) => SafeArea(child: ConfidenceTierUpSheet(targetTier: targetTier)),
     );
   }
@@ -36,7 +36,7 @@ class ConfidenceTierUpSheet extends StatelessWidget {
     final tierName = ConfidenceClimbService.tierDisplayName(targetTier);
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(

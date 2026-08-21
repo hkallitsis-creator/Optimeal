@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'package:optimeal/theme/app_design_tokens.dart';
+
 /// Brand constants used across the app.
 class AppBrand {
   static const String appName = 'OptiMeal';
@@ -85,92 +87,108 @@ extension TextStyleExtensions on TextStyle {
 // COLORS
 // =============================================================================
 
-/// Modern, neutral color palette for light mode
-/// Uses soft grays and blues instead of purple for a contemporary look
+/// Material-3 colour ROLES for light mode.
+///
+/// **Not a palette.** Since the palette v1.2 sweep (2026-08-22) every value
+/// here is a binding onto [AppDesignTokens], which is the app's sole colour
+/// source. This class exists only because `ColorScheme` needs role names; it
+/// defines no colour of its own, and a `0xFF` literal must never come back
+/// into it — the palette guard test fails the build if one does.
+///
+/// Where a role's old value had drifted from the palette, the binding below
+/// names the token it was folded into. Those decisions are listed in
+/// `docs/sessions/2026-08-22_palette-v12-swap.md`.
 class LightModeColors {
-  // Palette (OptiMeal)
-  // Canvas Background: Muted Sage (Home Dashboard) (#C5D3C1)
-  // Cards & Bottom Sheets: Pure White (#FFFFFF)
-  // Titles / Header / Selected States: Deep Forest (#284236)
-  // Primary Actions (CTA): Warm Terracotta/Copper (#D96B43)
-  // Subtext: Dark Slate (#4A5568)
-  static const lightBackground = Color(0xFFC5D3C1);
-  /// Default surface for cards, sheets, and panels.
-  /// Requested: Warm Cream (#FBF9F4)
-  static const lightSurface = Color(0xFFFBF9F4);
+  /// Canvas.
+  static const lightBackground = AppDesignTokens.backgroundSage;
+
+  /// Default surface for cards, sheets and panels.
+  static const lightSurface = AppDesignTokens.surfaceIvory;
 
   /// Backwards-compatible alias (older call-sites reference this).
   static const lightWarmCreamSurface = lightSurface;
 
-  /// Subtle warm tint for inputs / chips.
-  /// Requested: #F2EFE9
-  static const lightWarmCreamTint = Color(0xFFF2EFE9);
-  static const lightOnSurface = Color(0xFF284236);
-  static const lightOutline = Color(0xFF284236);
+  /// Subtle warm tint for inputs / chips. Was `0xFFF2EFE9`, a near-neutral
+  /// cream that predates the palette having a name for this; v1.2 calls it the
+  /// neutral pill tint.
+  static const lightWarmCreamTint = AppDesignTokens.neutralPillTint;
+
+  /// Was `0xFF284236` — a deep forest that had drifted a shade lighter than
+  /// the token. Folded into the token.
+  static const lightOnSurface = AppDesignTokens.deepForest;
+  static const lightOutline = AppDesignTokens.deepForest;
 
   // Primary is used for all primary buttons / CTAs across the app.
-  // Requested: Terracotta Orange (#D94A1E)
-  static const lightPrimary = Color(0xFFD94A1E);
-  static const lightOnPrimary = Color(0xFFFFFFFF);
-  static const lightPrimaryContainer = Color(0xFFDCE8E1);
-  static const lightOnPrimaryContainer = Color(0xFF284236);
+  static const lightPrimary = AppDesignTokens.ctaTerracotta;
+  static const lightOnPrimary = Colors.white;
 
-  // Secondary is a muted structural tone
-  static const lightSecondary = Color(0xFF284236);
-  static const lightOnSecondary = Color(0xFFFFFFFF);
+  /// Was `0xFFDCE8E1`, a pale sage container. v1.2's sage panel is the nearest
+  /// semantic.
+  static const lightPrimaryContainer = AppDesignTokens.sageTeachingPanel;
+  static const lightOnPrimaryContainer = AppDesignTokens.deepForest;
 
-  // Tertiary maps to the main CTA / action accent
-  /// Primary action / CTA.
-  /// Requested: Terracotta Orange (#D94A1E)
-  static const lightTertiary = Color(0xFFD94A1E);
-  static const lightOnTertiary = Color(0xFFFFFFFF);
+  // Secondary is a muted structural tone.
+  static const lightSecondary = AppDesignTokens.deepForest;
+  static const lightOnSecondary = Colors.white;
 
-  // Error colors
-  static const lightError = Color(0xFFBA1A1A);
-  static const lightOnError = Color(0xFFFFFFFF);
-  static const lightErrorContainer = Color(0xFFFFDAD6);
-  static const lightOnErrorContainer = Color(0xFF410002);
+  // Tertiary maps to the main CTA / action accent.
+  static const lightTertiary = AppDesignTokens.ctaTerracotta;
+  static const lightOnTertiary = Colors.white;
 
-  // Variants (still within palette)
-  static const lightSurfaceVariant = Color(0xFFF3F6F4);
-  static const lightOnSurfaceVariant = Color(0xFF4A5568);
+  // Error roles — Material system colours, not brand palette. See the
+  // non-palette section of AppDesignTokens.
+  static const lightError = AppDesignTokens.systemError;
+  static const lightOnError = AppDesignTokens.systemOnError;
+  static const lightErrorContainer = AppDesignTokens.systemErrorContainer;
+  static const lightOnErrorContainer = AppDesignTokens.systemOnErrorContainer;
 
-  // Shadow/inverse
-  static const lightShadow = Color(0xFF000000);
-  static const lightInversePrimary = Color(0xFFFFFFFF);
+  /// Was `0xFFF3F6F4`, a cool near-white. v1.2's quiet row surface is the
+  /// nearest semantic and is warm, matching the rest of the palette.
+  static const lightSurfaceVariant = AppDesignTokens.quietRowSurface;
+
+  /// Was `0xFF4A5568` ("Dark Slate") — a leftover from the pre-OptiMeal
+  /// template palette. v1.2 has no slate; body text is charcoal.
+  static const lightOnSurfaceVariant = AppDesignTokens.textCharcoal;
+
+  // Shadow/inverse.
+  static const lightShadow = Colors.black;
+  static const lightInversePrimary = Colors.white;
 }
 
-/// Dark mode colors with good contrast
+/// Material-3 colour roles for dark mode.
+///
+/// **Unreachable today** — `main.dart` pins `themeMode: ThemeMode.light`. Kept
+/// wired so the dark `ThemeData` still compiles. Palette v1.2 is a light-only
+/// palette and says nothing about these; they bind to the non-palette dark
+/// block in [AppDesignTokens] rather than being given invented brand meanings.
 class DarkModeColors {
-  // For this rebrand we keep dark mode aligned with the same warm palette,
-  // but with slightly deeper surfaces for comfort.
-  static const darkBackground = Color(0xFF0F1714);
-  static const darkSurface = Color(0xFF121C18);
-  static const darkOnSurface = Color(0xFFEAF2ED);
-  static const darkOutline = Color(0xFFEAF2ED);
+  static const darkBackground = AppDesignTokens.darkBackground;
+  static const darkSurface = AppDesignTokens.darkSurface;
+  static const darkOnSurface = AppDesignTokens.darkOnSurface;
+  static const darkOutline = AppDesignTokens.darkOnSurface;
 
-  static const darkPrimary = Color(0xFFBFD3C9);
-  static const darkOnPrimary = Color(0xFF0F1714);
-  static const darkPrimaryContainer = Color(0xFF22352C);
-  static const darkOnPrimaryContainer = Color(0xFFEAF2ED);
+  static const darkPrimary = AppDesignTokens.darkPrimary;
+  static const darkOnPrimary = AppDesignTokens.darkBackground;
+  static const darkPrimaryContainer = AppDesignTokens.darkPrimaryContainer;
+  static const darkOnPrimaryContainer = AppDesignTokens.darkOnSurface;
 
-  static const darkSecondary = Color(0xFFBFD3C9);
-  static const darkOnSecondary = Color(0xFF0F1714);
+  static const darkSecondary = AppDesignTokens.darkPrimary;
+  static const darkOnSecondary = AppDesignTokens.darkBackground;
 
-  static const darkTertiary = Color(0xFFD94A1E);
-  static const darkOnTertiary = Color(0xFFFFFFFF);
+  /// The one brand colour dark mode borrows: the CTA reads the same in both.
+  static const darkTertiary = AppDesignTokens.ctaTerracotta;
+  static const darkOnTertiary = Colors.white;
 
-  // Error colors
-  static const darkError = Color(0xFFFFB4AB);
-  static const darkOnError = Color(0xFF690005);
-  static const darkErrorContainer = Color(0xFF93000A);
-  static const darkOnErrorContainer = Color(0xFFFFDAD6);
+  static const darkError = AppDesignTokens.darkError;
+  static const darkOnError = AppDesignTokens.darkOnError;
+  static const darkErrorContainer = AppDesignTokens.darkErrorContainer;
+  static const darkOnErrorContainer = AppDesignTokens.systemErrorContainer;
 
-  static const darkSurfaceVariant = Color(0xFF18231F);
-  static const darkOnSurfaceVariant = Color(0xFFB7C3BC);
+  static const darkSurfaceVariant = AppDesignTokens.darkSurfaceVariant;
+  static const darkOnSurfaceVariant = AppDesignTokens.darkOnSurfaceVariant;
 
-  static const darkShadow = Color(0xFF000000);
-  static const darkInversePrimary = Color(0xFFEAF2ED);
+  static const darkShadow = Colors.black;
+  static const darkInversePrimary = AppDesignTokens.darkOnSurface;
 }
 
 class AppSizing {

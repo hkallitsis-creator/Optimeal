@@ -7,6 +7,55 @@ Read on request, not auto-loaded.
 
 ---
 
+## Palette v1.2 (variant D) is the sole token set, enforced by a guard test (22 August 2026)
+
+**Binding rule:** `lib/theme/app_design_tokens.dart` is the **only** file in
+`lib/` allowed to define a colour. Every widget references a named semantic
+token; `LightModeColors` / `DarkModeColors` in `lib/theme.dart` are Material-3
+*role bindings* over those tokens and define nothing of their own.
+`test/theme/palette_token_guard_test.dart` walks `lib/`, strips comments, and
+fails the build if a `0x…` colour literal appears anywhere else — plus it pins
+the twelve signed v1.2 hex values, so the palette cannot be edited back by
+accident either.
+
+**Why a test and not a convention.** The codebase reached 2026-08-22 with *two*
+disagreeing palettes. `AppDesignTokens` and `LightModeColors` had drifted apart
+one hardcoded value at a time — the same semantic held `#D94A1E` in one place
+and `#D96B43` in another, deep forest was `#1E3A2B` here and `#284236` there —
+and nothing ever failed while it happened. A third mini-set had appeared as
+statics on `ProfileScreen`. Colour drift is invisible to the compiler and to
+every existing test; a source scan is the only thing that catches it, and a
+grep is only as good as the last person who remembered to run it.
+
+**The three semantic families, and what they cost when spent wrongly.**
+
+- **Terracotta = act now.** Split into a fill (`ctaTerracotta`) and a darker
+  text/glyph weight (`terracottaOnLight`), because the fill fails small-text
+  contrast on ivory.
+- **Sage = Chef Harris teaching.** `sageTeachingPanel` on cards, and only on
+  panels. Sage on the canvas (`backgroundSage`, `sageStripOnCanvas`) is
+  decorative and carries no teaching meaning. The two sage-on-light tokens are
+  kept **separate despite sharing a value**, so the open device question — does
+  the strip separate from the deepened canvas — can be answered by moving one
+  without dragging teaching panels with it.
+- **Gold = earned.** Counted-verdict badges, rescue milestones, tier-ups, the
+  share accent. Never on CTAs, teaching panels, or large container fills:
+  glyphs, badges, thin borders and small text only. Same fill-vs-text split as
+  terracotta (`goldEarnedFill` / `goldEarnedOnLight`).
+
+**The Home rescue strip stays sage, deliberately.** It reports a running total,
+which is not an earned moment. This is the clearest test of the gold rule: it
+is the most obviously "reward-shaped" surface in the app and it still does not
+get gold.
+
+**Non-palette colours are quarantined, not renamed.** Material error roles and
+the (unreachable) dark scheme live in a marked section of the tokens file so
+that file stays the single place a colour is defined, without pretending they
+have brand semantics. v1.2 is a light-only palette and says nothing about dark
+mode; inventing dark equivalents would have been guessing.
+
+---
+
 ## Planner weeks are anchored to a Monday, computed at read time (22 August 2026)
 
 **Binding rule:** every `user_meal_plans` row stores `week_start` — the

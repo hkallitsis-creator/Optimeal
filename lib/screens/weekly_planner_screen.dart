@@ -315,7 +315,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       builder: (ctx) => SafeArea(
         child: _AddMealSheet(
           dayLabel: _days[dayIndex % kDaysPerWeek],
@@ -442,7 +442,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
-        backgroundColor: AppDesignTokens.surfaceCream,
+        backgroundColor: AppDesignTokens.surfaceIvory,
         builder: (ctx) => const SafeArea(child: CustomAiRecipeCreatorSheet()),
       );
       if (!mounted || payload == null) return;
@@ -473,7 +473,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       builder: (ctx) => SafeArea(
         child: _DayDetailSheet(
           dayLabel: _daysLong[dayIndex % kDaysPerWeek],
@@ -864,7 +864,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           icon: Container(
             padding: const EdgeInsets.all(AppDesignTokens.spaceXS),
             decoration: BoxDecoration(
-              color: AppDesignTokens.surfaceCream.withValues(alpha: 0.92),
+              color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
               border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
             ),
@@ -916,7 +916,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
                     TextButton(
                       onPressed: _loadPlanFromSupabase,
                       style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
-                      child: const Text('Retry', style: TextStyle(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900)),
+                      child: const Text('Retry', style: TextStyle(color: AppDesignTokens.terracottaOnLight, fontWeight: FontWeight.w900)),
                     ),
                   ],
                 ),
@@ -993,7 +993,7 @@ class _WeekTogglePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? AppDesignTokens.surfaceCream : Colors.transparent,
+      color: selected ? AppDesignTokens.surfaceIvory : Colors.transparent,
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         onTap: onTap,
@@ -1064,7 +1064,7 @@ class _DayCard extends StatelessWidget {
     final allCooked = meals.every((m) => m.cooked);
     final Color fill = isToday && !allCooked
         ? AppDesignTokens.champagneTint
-        : AppDesignTokens.surfaceCream;
+        : AppDesignTokens.surfaceIvory;
 
     return Material(
       color: fill,
@@ -1096,7 +1096,7 @@ class _DayCard extends StatelessWidget {
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.6,
                   color: isToday
-                      ? AppDesignTokens.ctaTerracotta
+                      ? AppDesignTokens.terracottaOnLight
                       : AppDesignTokens.textCharcoal.withValues(alpha: 0.62),
                 ),
               ),
@@ -1182,7 +1182,7 @@ class _EmptyDayCard extends StatelessWidget {
                           fontWeight: FontWeight.w900,
                           letterSpacing: 0.6,
                           color: isToday
-                              ? AppDesignTokens.ctaTerracotta
+                              ? AppDesignTokens.terracottaOnLight
                               : AppDesignTokens.deepForest.withValues(alpha: 0.62),
                         ),
                       ),
@@ -1201,7 +1201,7 @@ class _EmptyDayCard extends StatelessWidget {
                 Text(
                   '+',
                   style: AppDesignTokens.headline.copyWith(
-                    color: AppDesignTokens.ctaTerracotta,
+                    color: AppDesignTokens.terracottaOnLight,
                     fontWeight: FontWeight.w900,
                     height: 1,
                   ),
@@ -1299,7 +1299,7 @@ class _MealRowTrailing extends StatelessWidget {
         );
       case PlannerMealState.cookedCounted:
         return const Icon(Icons.check_circle_rounded,
-            color: AppDesignTokens.cookedCountedGold);
+            color: AppDesignTokens.goldEarnedOnLight);
       case PlannerMealState.cookedNotCounted:
         return const Icon(Icons.check_circle_rounded,
             color: AppDesignTokens.cookedNeutralGray);
@@ -1330,7 +1330,7 @@ class _InlineSlotError extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(child: Text(message, style: AppDesignTokens.caption.copyWith(color: scheme.error, fontWeight: FontWeight.w900))),
             const SizedBox(width: 8),
-            const Text('Retry', style: TextStyle(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900)),
+            const Text('Retry', style: TextStyle(color: AppDesignTokens.terracottaOnLight, fontWeight: FontWeight.w900)),
           ],
         ),
       ),
@@ -1451,7 +1451,7 @@ class _DayDetailSheet extends StatelessWidget {
                         // SIGNED-CONTENT PLACEHOLDER
                         'Add another meal',
                         style: AppDesignTokens.body.copyWith(
-                            color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900),
+                            color: AppDesignTokens.terracottaOnLight, fontWeight: FontWeight.w900),
                       ),
                     ],
                   ),
@@ -1478,7 +1478,7 @@ class _DayDetailMealRow extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
         border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10)),
       ),
@@ -1731,7 +1731,7 @@ class _SavedRecipesPickerPane extends StatelessWidget {
                   itemBuilder: (context, i) {
                     final item = saved[i];
                     return Material(
-                      color: AppDesignTokens.surfaceCream,
+                      color: AppDesignTokens.surfaceIvory,
                       borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
                       child: InkWell(
                         onTap: () => onPick(item.recipe),
@@ -1784,7 +1784,7 @@ class _SheetOptionTile extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
       child: InkWell(
         onTap: onTap,
@@ -1796,7 +1796,7 @@ class _SheetOptionTile extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(AppDesignTokens.spaceSM),
           decoration: BoxDecoration(
-            color: AppDesignTokens.surfaceCream,
+            color: AppDesignTokens.surfaceIvory,
             borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
             border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
             boxShadow: AppDesignTokens.cardShadow,

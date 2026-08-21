@@ -77,7 +77,7 @@ class _WhatYouLearnedSheetState extends State<WhatYouLearnedSheet> {
     }
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(
@@ -199,7 +199,7 @@ class _ConfidenceQuestionCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
       ),

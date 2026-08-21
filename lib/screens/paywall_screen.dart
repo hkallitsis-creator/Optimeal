@@ -216,7 +216,7 @@ class _PaywallHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12), width: 1),
         boxShadow: [
@@ -253,7 +253,7 @@ class _FeaturesCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12), width: 1),
       ),
@@ -361,7 +361,7 @@ class _PricingCard extends StatelessWidget {
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.all(AppDesignTokens.spaceMD),
           decoration: BoxDecoration(
-            color: AppDesignTokens.surfaceCream,
+            color: AppDesignTokens.surfaceIvory,
             borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
             border: Border.all(color: borderColor, width: selected ? 1.6 : 1.0),
             boxShadow: [

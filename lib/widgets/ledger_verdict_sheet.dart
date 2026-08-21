@@ -47,7 +47,7 @@ class LedgerVerdictSheet extends StatelessWidget {
     final payload = recipe;
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(

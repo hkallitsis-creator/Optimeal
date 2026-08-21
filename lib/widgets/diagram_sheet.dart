@@ -42,7 +42,7 @@ class DiagramPill extends StatelessWidget {
     if (entry == null) return;
     AppBottomSheet.show<void>(
       context: context,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(child: _DiagramDetailSheet(painter: entry.painter, title: entry.title)),
     );
@@ -89,7 +89,7 @@ class _DiagramDetailSheet extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(

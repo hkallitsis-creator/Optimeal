@@ -228,7 +228,9 @@ void main() {
 
       expect(find.text('Nothing planned'), findsNWidgets(7));
       final plus = tester.widget<Text>(find.text('+').first);
-      expect(plus.style?.color, AppDesignTokens.ctaTerracotta);
+      // terracottaOnLight, not the CTA fill: palette v1.2 splits terracotta
+      // into a fill and a darker text/glyph weight, and this plus is text.
+      expect(plus.style?.color, AppDesignTokens.terracottaOnLight);
       // Text, not a button: Cook is the only terracotta button on the screen.
       expect(find.byType(FilledButton), findsNothing);
     });
@@ -271,13 +273,13 @@ void main() {
       await _pumpPlanner(tester, backend);
 
       expect(_cardFillUnder(tester, 'Mon'), AppDesignTokens.champagneTint);
-      expect(_cardFillUnder(tester, 'Thu'), AppDesignTokens.surfaceCream);
+      expect(_cardFillUnder(tester, 'Thu'), AppDesignTokens.surfaceIvory);
 
       expect(find.text('Cook'), findsOneWidget);
       expect(find.byType(FilledButton), findsOneWidget);
 
       final weekday = tester.widget<Text>(find.text('Mon'));
-      expect(weekday.style?.color, AppDesignTokens.ctaTerracotta);
+      expect(weekday.style?.color, AppDesignTokens.terracottaOnLight);
     });
 
     testWidgets('a cooked rescue gets the gold check, a cooked non-rescue gray',
@@ -301,7 +303,7 @@ void main() {
           .toList();
       expect(checks, hasLength(2));
       expect(checks.map((c) => c.color).toSet(), {
-        AppDesignTokens.cookedCountedGold,
+        AppDesignTokens.goldEarnedOnLight,
         AppDesignTokens.cookedNeutralGray,
       });
     });
@@ -365,7 +367,7 @@ void main() {
       expect(find.byIcon(Icons.check_circle_rounded), findsNothing);
       expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
       // Not tinted: today only exists in this week.
-      expect(_cardFillUnder(tester, 'Mon'), AppDesignTokens.surfaceCream);
+      expect(_cardFillUnder(tester, 'Mon'), AppDesignTokens.surfaceIvory);
     });
 
     testWidgets('there is no way to reach a past week', (tester) async {
@@ -475,7 +477,7 @@ void main() {
       expect(backend.listCalls, greaterThan(1));
       expect(find.text('Cook'), findsNothing);
       final check = tester.widget<Icon>(find.byIcon(Icons.check_circle_rounded));
-      expect(check.color, AppDesignTokens.cookedCountedGold);
+      expect(check.color, AppDesignTokens.goldEarnedOnLight);
       expect(tester.state(find.byType(WeeklyPlannerScreen)), same(screenState),
           reason: 'refreshed in place, not rebuilt');
     });
@@ -637,7 +639,7 @@ void main() {
       expect(backend.rows.single['is_cooked'], isTrue);
       expect(find.text('Cook'), findsNothing);
       final check = tester.widget<Icon>(find.byIcon(Icons.check_circle_rounded));
-      expect(check.color, AppDesignTokens.cookedCountedGold);
+      expect(check.color, AppDesignTokens.goldEarnedOnLight);
       expect(tester.state(find.byType(WeeklyPlannerScreen)), same(screenState),
           reason: 'flipped in place by the signal, not by a remount');
     });

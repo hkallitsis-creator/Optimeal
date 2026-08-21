@@ -141,7 +141,7 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
                         context: context,
                         isScrollControlled: false,
                         showDragHandle: true,
-                        backgroundColor: AppDesignTokens.surfaceCream,
+                        backgroundColor: AppDesignTokens.surfaceIvory,
                         builder: (ctx) => const SafeArea(child: WeekdayPickerSheet(title: '📅 Plan for which day?')),
                       );
                       if (dayIndex == null || !context.mounted) return;

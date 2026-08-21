@@ -21,7 +21,7 @@ class UpgradePromptSheet extends StatelessWidget {
   static Future<void> show(BuildContext context, {required String title, required String message, String ctaLabel = 'Upgrade to Pro'}) {
     return AppBottomSheet.show(
       context: context,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       builder: (ctx) => SafeArea(child: UpgradePromptSheet(title: title, message: message, ctaLabel: ctaLabel)),
     );
   }
@@ -32,7 +32,7 @@ class UpgradePromptSheet extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(

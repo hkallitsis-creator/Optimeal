@@ -32,13 +32,13 @@ class BrandedAvatarGlyph extends StatelessWidget {
           shape: BoxShape.circle,
           gradient: gradient,
           boxShadow: AppDesignTokens.cardShadow,
-          border: Border.all(color: AppDesignTokens.surfaceCream.withValues(alpha: 0.9), width: 1.2),
+          border: Border.all(color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.9), width: 1.2),
         ),
         child: Center(
           child: Icon(
             Icons.restaurant_rounded,
             size: size * 0.58,
-            color: AppDesignTokens.surfaceCream,
+            color: AppDesignTokens.surfaceIvory,
           ),
         ),
       ),

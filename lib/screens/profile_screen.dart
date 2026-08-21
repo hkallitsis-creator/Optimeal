@@ -13,8 +13,10 @@ import 'package:optimeal/widgets/curriculum_drawer_content.dart';
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
-  static const Color deepForest = Color(0xFF1E3A2B);
-  static const Color terracotta = Color(0xFFD96B43);
+  // Colours come from AppDesignTokens — this screen used to carry its own
+  // pair of statics, an exact duplicate of `deepForest` and a terracotta
+  // (`0xFFD96B43`) that had drifted from the CTA. Folded into the palette by
+  // the v1.2 sweep, 2026-08-22.
   static const double cardRadius = 16.0;
   static const List<BoxShadow> cardShadow = AppDesignTokens.cardShadow;
 
@@ -404,7 +406,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           context: context,
                           isScrollControlled: true,
                           showDragHandle: true,
-                          backgroundColor: AppDesignTokens.surfaceCream,
+                          backgroundColor: AppDesignTokens.surfaceIvory,
                           builder: (_) => const _SecureAccountSheet(),
                         );
                         if (!mounted) return;
@@ -490,7 +492,7 @@ class _AnonymousAccountPromptCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.lock_outline_rounded, color: ProfileScreen.deepForest),
+              Icon(Icons.lock_outline_rounded, color: AppDesignTokens.deepForest),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -517,7 +519,7 @@ class _AnonymousAccountPromptCard extends StatelessWidget {
                 style: theme.textTheme.labelLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w900),
               ),
               style: FilledButton.styleFrom(
-                backgroundColor: ProfileScreen.deepForest,
+                backgroundColor: AppDesignTokens.deepForest,
                 foregroundColor: Colors.white,
                 splashFactory: NoSplash.splashFactory,
                 overlayColor: Colors.transparent,
@@ -550,7 +552,7 @@ class _SecuredAccountStatusCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.verified_rounded, color: ProfileScreen.deepForest),
+          Icon(Icons.verified_rounded, color: AppDesignTokens.deepForest),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -722,7 +724,7 @@ class _SecureAccountSheetState extends State<_SecureAccountSheet> {
                 child: FilledButton(
                   onPressed: _saving ? null : _submit,
                   style: FilledButton.styleFrom(
-                    backgroundColor: ProfileScreen.deepForest,
+                    backgroundColor: AppDesignTokens.deepForest,
                     foregroundColor: Colors.white,
                     splashFactory: NoSplash.splashFactory,
                     overlayColor: Colors.transparent,
@@ -813,7 +815,7 @@ class DietOptionTile extends StatelessWidget {
           decoration: BoxDecoration(
             color: scheme.surface,
             borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-            border: Border.all(color: selected ? ProfileScreen.deepForest.withValues(alpha: 0.45) : scheme.outline.withValues(alpha: 0.14)),
+            border: Border.all(color: selected ? AppDesignTokens.deepForest.withValues(alpha: 0.45) : scheme.outline.withValues(alpha: 0.14)),
             boxShadow: ProfileScreen.cardShadow,
           ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -821,7 +823,7 @@ class DietOptionTile extends StatelessWidget {
             children: [
               Icon(
                 selected ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
-                color: selected ? ProfileScreen.deepForest : scheme.onSurfaceVariant,
+                color: selected ? AppDesignTokens.deepForest : scheme.onSurfaceVariant,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -878,7 +880,7 @@ class ConfidenceOptionRow extends StatelessWidget {
           decoration: BoxDecoration(
             color: scheme.surface,
             borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-            border: Border.all(color: selected ? ProfileScreen.terracotta.withValues(alpha: 0.55) : scheme.outline.withValues(alpha: 0.14)),
+            border: Border.all(color: selected ? AppDesignTokens.ctaTerracotta.withValues(alpha: 0.55) : scheme.outline.withValues(alpha: 0.14)),
             boxShadow: ProfileScreen.cardShadow,
           ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -889,7 +891,7 @@ class ConfidenceOptionRow extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 2),
                 child: Icon(
                   selected ? Icons.check_circle_rounded : Icons.circle_outlined,
-                  color: selected ? ProfileScreen.terracotta : scheme.onSurfaceVariant,
+                  color: selected ? AppDesignTokens.ctaTerracotta : scheme.onSurfaceVariant,
                   size: 20,
                 ),
               ),

@@ -545,7 +545,16 @@ class _RescueStrip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
       decoration: BoxDecoration(
-        color: AppDesignTokens.backgroundSage,
+        // `sageStripOnCanvas`, not `backgroundSage`: this strip sits directly
+        // on the canvas and has to separate from it. It used to fill with the
+        // canvas token itself and lean entirely on its border, which worked
+        // only because the two were the same colour by accident. Palette v1.2
+        // gives the strip its own lighter sage — see the token, and the open
+        // device item on whether the separation is now enough.
+        //
+        // It stays SAGE and does not become gold: a running rescue total is
+        // not an earned moment.
+        color: AppDesignTokens.sageStripOnCanvas,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(
             color: AppDesignTokens.deepForest.withValues(alpha: 0.28)),
@@ -606,7 +615,7 @@ class _CreamSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
       child: InkWell(
         onTap: onTap,
@@ -974,7 +983,7 @@ class _ProfileAvatarButtonState extends State<_ProfileAvatarButton> {
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOut,
       child: Material(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: InkWell(

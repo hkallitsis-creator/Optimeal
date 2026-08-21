@@ -24,7 +24,7 @@ class CulinaryMatrixCard extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: borderColor),
         boxShadow: AppDesignTokens.cardShadow,

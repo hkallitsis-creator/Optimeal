@@ -103,7 +103,7 @@ class _MyRecipesScreenState extends State<MyRecipesScreen> {
     final dayIndex = await AppBottomSheet.show<int>(
       context: context,
       showDragHandle: true,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       builder: (ctx) => const SafeArea(
         // SIGNED-CONTENT PLACEHOLDER
         child: WeekdayPickerSheet(title: 'Plan for which day?'),
@@ -136,7 +136,7 @@ class _MyRecipesScreenState extends State<MyRecipesScreen> {
           icon: Container(
             padding: const EdgeInsets.all(AppDesignTokens.spaceXS),
             decoration: BoxDecoration(
-              color: AppDesignTokens.surfaceCream.withValues(alpha: 0.92),
+              color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
               border: Border.all(
                   color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
@@ -252,7 +252,7 @@ class _SavedRecipeCard extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
       child: InkWell(
         onTap: onTap,
@@ -409,7 +409,7 @@ class _SavedEmptyInline extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream.withValues(alpha: 0.55),
+        color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(
             color: AppDesignTokens.deepForest.withValues(alpha: 0.14)),
@@ -465,7 +465,7 @@ class _MyRecipesEmptyState extends StatelessWidget {
               height: 96,
               width: 96,
               decoration: BoxDecoration(
-                color: AppDesignTokens.surfaceCream.withValues(alpha: 0.70),
+                color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.70),
                 shape: BoxShape.circle,
                 border: Border.all(
                     color: AppDesignTokens.deepForest.withValues(alpha: 0.14)),

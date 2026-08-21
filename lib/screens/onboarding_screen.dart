@@ -252,7 +252,7 @@ class _OnboardingSlide extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 520),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: AppDesignTokens.surfaceCream,
+              color: AppDesignTokens.surfaceIvory,
               borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
               border: Border.all(color: cs.outline.withValues(alpha: 0.12), width: 1),
               boxShadow: [

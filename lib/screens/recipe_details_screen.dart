@@ -530,7 +530,7 @@ class _RecipeBody extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: AppDesignTokens.surfaceCream,
+                        color: AppDesignTokens.surfaceIvory,
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
                             color: AppDesignTokens.textCharcoal

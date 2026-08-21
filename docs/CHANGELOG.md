@@ -13,6 +13,54 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Palette v1.2 (variant D) token swap, app-wide
+
+Full prompt and report: `docs/sessions/2026-08-22_palette-v12-swap.md`. Unit A
+of the signed Cook Mode/Palette spec card (2026-08-21). Token-level only — no
+layout, no functional change.
+
+**Values swapped** to the signed v1.2 column: canvas sage `#C5D3C1` → `#B3C29A`,
+card surface cream `#FBF9F4` → ivory `#F8F3E9`, CTA terracotta `#D94A1E` →
+`#C05C35`. **New tokens**: `terracottaOnLight` `#A44E2B`, `neutralPillTint`
+`#EFE8D8`, `sageTeachingPanel` `#DDE6C6`, `sageStripOnCanvas` `#DDE6C6`,
+`quietRowSurface` `#FDFBF5`, and the gold family — `goldEarnedFill` `#EDA24E`,
+`goldEarnedOnLight` `#C77E1F`, `goldEarnedBadgeTint` `#FBEED8`. `champagneTint`
+`#F7DBCB` was already correct from the planner-corrections build.
+**Renames**: `surfaceCream` → `surfaceIvory` (84 call sites),
+`cookedCountedGold` → `goldEarnedOnLight`. `cookedNeutralGray` `#8B918E` stays.
+
+**Consolidated from three colour sets to one.** `AppDesignTokens` is now the
+only file in `lib/` that defines a colour. `LightModeColors`/`DarkModeColors`
+became Material-3 role *bindings* over it — 42 literals removed — and
+`ProfileScreen`'s two private statics (an exact duplicate of `deepForest`, and
+a terracotta `#D96B43` that had drifted from the CTA) were folded into the
+palette. `post_cook_share_card`'s gradient literal became `deepForestShade`.
+**Zero stray colour literals remain in `lib/`**, proven by a comment-stripping
+source scan.
+
+**Guard test** (`test/theme/palette_token_guard_test.dart`, 3 tests): walks
+`lib/`, fails on any colour literal outside the tokens file, and pins all
+twelve signed v1.2 hex values so the palette cannot be edited back either. The
+signed diagram-palette exemption turned out to have nothing to exempt —
+`technique_diagrams.dart` already draws entirely from tokens.
+
+**Two semantic assignments landed, not just values.** The Home rescue strip
+filled with `backgroundSage` — the canvas token itself — and leaned entirely on
+its border; it now uses `sageStripOnCanvas`, which is the semantic that token
+exists for, and stays sage rather than becoming gold. Eight terracotta *text*
+sites moved to `terracottaOnLight`, which is the contrast rule the v1.2 table
+states.
+
+**Semantic-rule violations found and reported, not redesigned** — most notably
+the post-cook celebration sheet and share card, both earned moments currently
+rendered in terracotta rather than gold, and the technique diagrams using the
+act-now colour to mark "wrong". Full list in the session record.
+
+`flutter test`: **266 passing** (263 + 3). `flutter analyze`: **46 issues**,
+0 errors, 0 warnings — unchanged.
+
+---
+
 ## 2026-08-22 — Weekly Planner corrections (palette, slot attribution, week anchoring)
 
 Full prompt and report: `docs/sessions/2026-08-22_planner-corrections.md`.

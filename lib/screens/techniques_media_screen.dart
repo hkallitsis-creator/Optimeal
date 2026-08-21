@@ -61,7 +61,7 @@ class _TechniquesMediaScreenState extends State<TechniquesMediaScreen> {
           icon: Container(
             padding: const EdgeInsets.all(AppDesignTokens.spaceXS),
             decoration: BoxDecoration(
-              color: AppDesignTokens.surfaceCream.withValues(alpha: 0.92),
+              color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
               border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
             ),
@@ -173,8 +173,8 @@ class _CategoryChipsRow extends StatelessWidget {
           final label = _categoryLabel(category);
           final bool selected = category == selectedCategory;
 
-          final Color bg = selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
-          final Color fg = selected ? AppDesignTokens.surfaceCream : AppDesignTokens.textCharcoal;
+          final Color bg = selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceIvory;
+          final Color fg = selected ? AppDesignTokens.surfaceIvory : AppDesignTokens.textCharcoal;
           final Color border = AppDesignTokens.textCharcoal.withValues(alpha: selected ? 0 : 0.16);
 
           return GestureDetector(
@@ -243,7 +243,7 @@ class TechniqueLessonCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: AppDesignTokens.surfaceCream,
+          color: AppDesignTokens.surfaceIvory,
           borderRadius: BorderRadius.circular(radius),
           border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10), width: 1),
           boxShadow: AppDesignTokens.cardShadow,
@@ -346,7 +346,7 @@ class _TechniqueThumbnail extends StatelessWidget {
               color: AppDesignTokens.textCharcoal.withValues(alpha: 0.22),
               borderRadius: BorderRadius.circular(999),
             ),
-            child: Icon(badgeIcon, size: 30, color: AppDesignTokens.surfaceCream),
+            child: Icon(badgeIcon, size: 30, color: AppDesignTokens.surfaceIvory),
           ),
         ),
         if (showDuration)
@@ -365,7 +365,7 @@ class _TechniqueThumbnail extends StatelessWidget {
               child: Text(
                 durationLabel,
                 style: AppDesignTokens.caption.copyWith(
-                  color: AppDesignTokens.surfaceCream,
+                  color: AppDesignTokens.surfaceIvory,
                   fontWeight: FontWeight.w700,
                   fontSize: 11,
                   height: 1.0,

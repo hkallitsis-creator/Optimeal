@@ -96,7 +96,7 @@ class _PostCookShareCardSheetState extends State<PostCookShareCardSheet> {
     }
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(
@@ -200,7 +200,7 @@ class _RecapCard extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [AppDesignTokens.deepForest, Color(0xFF14261B)],
+          colors: [AppDesignTokens.deepForest, AppDesignTokens.deepForestShade],
         ),
         borderRadius: BorderRadius.circular(28),
         boxShadow: AppDesignTokens.cardShadow,
@@ -216,7 +216,7 @@ class _RecapCard extends StatelessWidget {
               Text(
                 'OPTIMEAL',
                 style: TextStyle(
-                  color: AppDesignTokens.surfaceCream.withValues(alpha: 0.85),
+                  color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.85),
                   fontWeight: FontWeight.w900,
                   fontSize: 13,
                   letterSpacing: 2,
@@ -228,7 +228,7 @@ class _RecapCard extends StatelessWidget {
           Text(
             headline,
             style: const TextStyle(
-              color: AppDesignTokens.surfaceCream,
+              color: AppDesignTokens.surfaceIvory,
               fontWeight: FontWeight.w900,
               fontSize: 22,
               height: 1.25,
@@ -250,13 +250,13 @@ class _RecapCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.lightbulb_outline_rounded, color: AppDesignTokens.surfaceCream.withValues(alpha: 0.85), size: 18),
+                Icon(Icons.lightbulb_outline_rounded, color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.85), size: 18),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     techniques.take(2).join(' · '),
                     style: TextStyle(
-                      color: AppDesignTokens.surfaceCream.withValues(alpha: 0.9),
+                      color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.9),
                       fontWeight: FontWeight.w700,
                       fontSize: 13,
                       height: 1.3,
@@ -270,7 +270,7 @@ class _RecapCard extends StatelessWidget {
           Text(
             'Zero-waste cooking, one recipe at a time.',
             style: TextStyle(
-              color: AppDesignTokens.surfaceCream.withValues(alpha: 0.6),
+              color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.6),
               fontWeight: FontWeight.w600,
               fontSize: 11.5,
             ),
@@ -291,14 +291,14 @@ class _RecapChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream.withValues(alpha: 0.14),
+        color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppDesignTokens.surfaceCream.withValues(alpha: 0.22)),
+        border: Border.all(color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.22)),
       ),
       child: Text(
         label,
         style: TextStyle(
-          color: AppDesignTokens.surfaceCream.withValues(alpha: 0.95),
+          color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.95),
           fontWeight: FontWeight.w700,
           fontSize: 12,
         ),

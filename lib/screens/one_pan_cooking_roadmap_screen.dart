@@ -910,7 +910,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
           context: context,
           isScrollControlled: true,
           showDragHandle: true,
-          backgroundColor: AppDesignTokens.surfaceCream,
+          backgroundColor: AppDesignTokens.surfaceIvory,
           shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
           builder: (ctx) => SafeArea(
@@ -953,7 +953,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
-        backgroundColor: AppDesignTokens.surfaceCream,
+        backgroundColor: AppDesignTokens.surfaceIvory,
         shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(
@@ -995,7 +995,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
           context: context,
           isScrollControlled: true,
           showDragHandle: true,
-          backgroundColor: AppDesignTokens.surfaceCream,
+          backgroundColor: AppDesignTokens.surfaceIvory,
           shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
           builder: (ctx) => SafeArea(
@@ -1017,7 +1017,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             context: context,
             isScrollControlled: true,
             showDragHandle: true,
-            backgroundColor: AppDesignTokens.surfaceCream,
+            backgroundColor: AppDesignTokens.surfaceIvory,
             shape: const RoundedRectangleBorder(
                 borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
             builder: (ctx) => SafeArea(
@@ -1056,7 +1056,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       context: context,
       isScrollControlled: false,
       showDragHandle: true,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => const SafeArea(child: _FinishAndPlateConfirmSheet()),
@@ -1265,7 +1265,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         isScrollControlled: true,
         useRootNavigator: true,
         showDragHandle: true,
-        backgroundColor: AppDesignTokens.surfaceCream,
+        backgroundColor: AppDesignTokens.surfaceIvory,
         shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (sheetContext) => _ChefSosSheet(
@@ -2027,7 +2027,7 @@ class _IngredientChecklistRow extends StatelessWidget {
   void _showCutDefinition(BuildContext context, String cut) {
     AppBottomSheet.show<void>(
       context: context,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(child: _CutDefinitionSheet(cut: cut)),
@@ -2158,7 +2158,7 @@ class _CutDefinitionSheet extends StatelessWidget {
         'No definition available for this cut yet.';
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(
@@ -2244,7 +2244,7 @@ class _SensoryCueCard extends StatelessWidget {
   void _showRemedies(BuildContext context, SensoryCue cue) {
     AppBottomSheet.show<void>(
       context: context,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(child: _SensoryCueDetailSheet(cue: cue)),
@@ -2304,7 +2304,7 @@ class _SensoryCueCard extends StatelessWidget {
                           'Not there yet, or gone too far?',
                           style: theme.textTheme.labelSmall?.copyWith(
                               fontWeight: FontWeight.w800,
-                              color: AppDesignTokens.ctaTerracotta),
+                              color: AppDesignTokens.terracottaOnLight),
                         ),
                         const SizedBox(width: 3),
                         const Icon(Icons.info_outline_rounded,
@@ -2371,7 +2371,7 @@ class _SensoryCueDetailSheet extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(
@@ -3007,7 +3007,7 @@ class _FinishAndPlateConfirmSheet extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     return Material(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
         child: Column(
@@ -3189,7 +3189,7 @@ class _BulletLine extends StatelessWidget {
   void _showCutDefinition(BuildContext context, String cut) {
     AppBottomSheet.show<void>(
       context: context,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(child: _CutDefinitionSheet(cut: cut)),

@@ -300,7 +300,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       context: context,
       isScrollControlled: false,
       showDragHandle: true,
-      backgroundColor: AppDesignTokens.surfaceCream,
+      backgroundColor: AppDesignTokens.surfaceIvory,
       builder: (ctx) => const SafeArea(
           child: WeekdayPickerSheet(title: '📅 Plan for which day?')),
     );
@@ -657,7 +657,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       icon: Container(
         padding: const EdgeInsets.all(AppDesignTokens.spaceXS),
         decoration: BoxDecoration(
-          color: AppDesignTokens.surfaceCream.withValues(alpha: 0.92),
+          color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.92),
           borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
           border: Border.all(
               color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
@@ -741,7 +741,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
                             hintText:
                                 'Type an ingredient (e.g., spinach, chicken)…',
                             filled: true,
-                            fillColor: AppDesignTokens.surfaceCream,
+                            fillColor: AppDesignTokens.surfaceIvory,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(
                                   AppDesignTokens.radiusButton),
@@ -925,7 +925,7 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       elevation: 0,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
@@ -967,7 +967,7 @@ class _TapChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg =
-        selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
+        selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceIvory;
     final fg = selected ? Colors.white : AppDesignTokens.textCharcoal;
 
     return ConstrainedBox(
@@ -1048,7 +1048,7 @@ class _PillOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg =
-        selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
+        selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceIvory;
     final fg = selected ? Colors.white : AppDesignTokens.textCharcoal;
 
     return ConstrainedBox(
@@ -1172,7 +1172,7 @@ class GeneratedRecipeCard extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(
             color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
@@ -1282,7 +1282,7 @@ class GeneratedRecipeCard extends StatelessWidget {
                     child: OutlinedButton(
                       onPressed: showPlanForDay ? onPlanForDay : onTryAnother,
                       style: OutlinedButton.styleFrom(
-                        backgroundColor: AppDesignTokens.surfaceCream,
+                        backgroundColor: AppDesignTokens.surfaceIvory,
                         foregroundColor: AppDesignTokens.textCharcoal,
                         side: BorderSide(
                             color: AppDesignTokens.textCharcoal
@@ -1342,7 +1342,7 @@ class _ScienceNotesDisclosure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: AppDesignTokens.surfaceCream,
+      color: AppDesignTokens.surfaceIvory,
       elevation: 0,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard)),
@@ -1447,7 +1447,7 @@ class _InlineGeneratingCardState extends State<_InlineGeneratingCard> {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(
             color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
@@ -1491,7 +1491,7 @@ class _InlineErrorCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(
             color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
@@ -1518,7 +1518,7 @@ class _InlineErrorCard extends StatelessWidget {
                     child: OutlinedButton(
                       onPressed: onRetry,
                       style: OutlinedButton.styleFrom(
-                        backgroundColor: AppDesignTokens.surfaceCream,
+                        backgroundColor: AppDesignTokens.surfaceIvory,
                         foregroundColor: AppDesignTokens.textCharcoal,
                         side: BorderSide(
                             color: AppDesignTokens.textCharcoal
@@ -1557,7 +1557,7 @@ class _GenerateCtaBar extends StatelessWidget {
     final disabled = onPressed == null;
 
     final bg = (isLoading || disabled)
-        ? AppDesignTokens.surfaceCream
+        ? AppDesignTokens.surfaceIvory
         : AppDesignTokens.ctaTerracotta;
     final fg =
         (isLoading || disabled) ? AppDesignTokens.textCharcoal : Colors.white;
@@ -1572,7 +1572,7 @@ class _GenerateCtaBar extends StatelessWidget {
           AppDesignTokens.spaceSM,
           AppDesignTokens.spaceSM + bottom),
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         border: Border(
             top: BorderSide(
                 color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12))),

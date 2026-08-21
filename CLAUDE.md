@@ -38,6 +38,23 @@ request or when a task needs the "why."
   `AppRoutes.culinaryMasterclass` is an orphan (was one before this change
   too). `AppRoutes.paywall` is exempt — reached from onboarding and
   `UpgradePromptSheet`, not only through a depth-1 screen.
+- **Palette v1.2 (variant D) is the sole colour source (2026-08-22).**
+  `lib/theme/app_design_tokens.dart` is the ONLY file in `lib/` allowed to
+  define a colour; `LightModeColors`/`DarkModeColors` in `lib/theme.dart` are
+  Material-3 role *bindings* over it and define nothing of their own.
+  `test/theme/palette_token_guard_test.dart` fails the build on any colour
+  literal elsewhere in `lib/` and pins the twelve signed v1.2 hexes. Three
+  semantic families: **terracotta = act now** (`ctaTerracotta` fills /
+  `terracottaOnLight` text — the fill fails small-text contrast on ivory),
+  **sage = Harris teaching** (`sageTeachingPanel` on cards only; canvas sage is
+  decorative), **gold = earned only** (`goldEarnedFill` / `goldEarnedOnLight` /
+  `goldEarnedBadgeTint` — never CTAs, teaching panels, or large fills; the Home
+  rescue strip stays sage because a running total is not an earned moment).
+  Renamed in this sweep: `surfaceCream` → `surfaceIvory`, `cookedCountedGold` →
+  `goldEarnedOnLight`. Known open: several earned-moment surfaces (post-cook
+  celebration, share card) still render terracotta rather than gold — audited
+  and listed in `docs/sessions/2026-08-22_palette-v12-swap.md`, deliberately
+  not redesigned in a token swap.
 - **Home is a one-screen, no-scroll hub (2026-08-20).**
   `HomeDashboardScreen` is six top-anchored zones with exactly one `Spacer`
   absorbing surplus: greeting + avatar → Fridge Clearer hero → custom recipe
@@ -97,7 +114,7 @@ request or when a task needs the "why."
   `_openPlannedMeal`'s `await context.push<bool>` cooked-marking mechanism.
   Day/row states are `PlannerMealState` — Empty, Planned, `cookable`
   (today only, the screen's only terracotta button, "Cook"), `cookedCounted`
-  (gold `AppDesignTokens.cookedCountedGold`) and `cookedNotCounted` (neutral
+  (gold `AppDesignTokens.goldEarnedOnLight`) and `cookedNotCounted` (neutral
   gray). The rules live in the pure top-level `plannerMealStateFor(...)`, not
   in a widget. **Counted-ness is NOT a ledger lookup**: it is
   `recipe.origin.isRescueEligible`, the same signed rule
@@ -106,8 +123,8 @@ request or when a task needs the "why."
   A day's second meal is added, and any meal removed, from the **day-detail
   sheet** (tap a filled day) so filled rows stay clean; empty days open the
   signed three-source add sheet directly. Colours come from
-  `AppDesignTokens` only (`champagneTint`, `cookedCountedGold`,
-  `cookedNeutralGray` were added for this).
+  `AppDesignTokens` only (`champagneTint`, `goldEarnedOnLight` — renamed from
+  `cookedCountedGold` by the palette v1.2 sweep — and `cookedNeutralGray`).
   **Week toggle — this week ↔ next week, no past. Anchored 2026-08-22.**
   Every row carries `week_start` (the Monday of its week, migration
   `20260822120000`, dev only) and `day_index` is 0–6 within it. Both visible

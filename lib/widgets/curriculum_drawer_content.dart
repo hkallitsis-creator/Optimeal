@@ -186,7 +186,7 @@ class FormattedDrawerBody extends StatelessWidget {
 
     final baseStyle = theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant, height: 1.45, fontWeight: FontWeight.w600) ??
         const TextStyle();
-    final highlightStyle = baseStyle.copyWith(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900);
+    final highlightStyle = baseStyle.copyWith(color: AppDesignTokens.terracottaOnLight, fontWeight: FontWeight.w900);
 
     if (sections.isEmpty) {
       return Text(rawText, style: baseStyle);

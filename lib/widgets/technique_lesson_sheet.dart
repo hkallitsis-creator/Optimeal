@@ -74,7 +74,7 @@ class TechniqueLessonSheet extends StatelessWidget {
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           child: DecoratedBox(
-            decoration: const BoxDecoration(color: AppDesignTokens.surfaceCream),
+            decoration: const BoxDecoration(color: AppDesignTokens.surfaceIvory),
             child: ListView(
               controller: scrollController,
               padding: EdgeInsets.zero,
@@ -187,7 +187,7 @@ class _LessonHeaderState extends State<_LessonHeader> {
                         width: i == _page ? 16 : 6,
                         height: 6,
                         decoration: BoxDecoration(
-                          color: AppDesignTokens.surfaceCream.withValues(alpha: i == _page ? 0.95 : 0.5),
+                          color: AppDesignTokens.surfaceIvory.withValues(alpha: i == _page ? 0.95 : 0.5),
                           borderRadius: BorderRadius.circular(99),
                         ),
                       ),
@@ -259,7 +259,7 @@ class _PlaceholderBackground extends StatelessWidget {
       child: Center(
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: AppDesignTokens.surfaceCream.withValues(alpha: 0.6),
+            color: AppDesignTokens.surfaceIvory.withValues(alpha: 0.6),
             shape: BoxShape.circle,
           ),
           child: Padding(
@@ -334,7 +334,7 @@ class _CategoryPill extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Text(
           category,
-          style: AppDesignTokens.caption.copyWith(color: AppDesignTokens.surfaceCream),
+          style: AppDesignTokens.caption.copyWith(color: AppDesignTokens.surfaceIvory),
         ),
       ),
     );
@@ -351,7 +351,7 @@ class _BreakdownRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
+        color: AppDesignTokens.surfaceIvory,
         borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
         border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10)),
       ),
@@ -368,7 +368,7 @@ class _BreakdownRow extends StatelessWidget {
               child: Text(
                 '${index + 1}',
                 style: AppDesignTokens.caption.copyWith(
-                  color: AppDesignTokens.surfaceCream,
+                  color: AppDesignTokens.surfaceIvory,
                   fontWeight: FontWeight.w700,
                 ),
               ),
