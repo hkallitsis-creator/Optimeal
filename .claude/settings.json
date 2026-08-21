@@ -8,12 +8,16 @@
       "Bash(dart:*)",
       "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)",
       "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
-      "Bash(grep:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)"
+      "Bash(grep:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)",
+      "Bash(supabase db push --linked:*)",
+      "Bash(supabase migration:*)",
+      "Bash(supabase db diff:*)"
     ],
     "deny": [
-      "Bash(supabase db push:*)",
       "Bash(supabase functions deploy:*)",
-      "Bash(supabase migration:*)"
+      "Bash(supabase link:*)",
+      "Bash(supabase unlink:*)",
+      "Bash(supabase projects:*)"
     ]
   }
 }
