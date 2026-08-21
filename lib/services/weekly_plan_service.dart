@@ -57,9 +57,26 @@ class SupabaseWeeklyPlanBackend implements WeeklyPlanBackend {
     return rows.map((r) => Map<String, dynamic>.from(r)).toList(growable: false);
   }
 
+  /// The table's real slot identity — a UNIQUE on
+  /// `(user_id, day_index, slot_index)`, separate from its `id` primary key.
+  ///
+  /// **This must be passed explicitly.** PostgREST resolves
+  /// `merge-duplicates` against the PRIMARY KEY unless told otherwise, and
+  /// the rows this app sends carry no `id` (the column defaults to a fresh
+  /// uuid), so there is never a primary-key conflict to merge on — the write
+  /// falls through to the unique constraint and fails `23505`. Verified
+  /// against live dev on 2026-08-22: without the conflict target, re-writing
+  /// an occupied slot returns
+  /// `duplicate key value violates unique constraint
+  /// "user_meal_plans_user_id_day_index_slot_index_key"`; with it, 200 and
+  /// the row updates in place. Every overwrite of an existing slot (marking
+  /// it cooked, replacing its meal) failed silently into the planner's
+  /// "Couldn't save. Tap to retry." until this was added.
+  static const String slotConflictTarget = 'user_id,day_index,slot_index';
+
   @override
-  Future<void> upsertSlot(Map<String, dynamic> row) =>
-      _withJwtRetry(() => _db.from(table).upsert(row));
+  Future<void> upsertSlot(Map<String, dynamic> row) => _withJwtRetry(
+      () => _db.from(table).upsert(row, onConflict: slotConflictTarget));
 
   @override
   Future<void> deleteSlot({

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:optimeal/models/cook_mode_recipe_codec.dart';
 import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/nav.dart';
+import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/screens/weekly_planner_screen.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
@@ -37,6 +38,14 @@ Widget _wrap(SavedRecipesService service) {
       GoRoute(
           path: AppRoutes.fridgeClearerPicker,
           builder: (c, s) => const _StubScreen('fridge picker')),
+      GoRoute(
+        path: AppRoutes.recipe,
+        builder: (c, s) {
+          final extra = s.extra;
+          return _StubScreen(
+              'details:${extra is CookModeRecipePayload ? extra.title : 'none'}');
+        },
+      ),
     ],
   );
   return MaterialApp.router(routerConfig: router);
@@ -48,10 +57,13 @@ SavedRecipesService _service(FakeSavedRecipesBackend backend) =>
       sessionStorage: CookSessionStorageService(),
     );
 
-/// Opens the planner's add-meal sheet from the first empty slot.
+/// Opens the planner's add-meal sheet by tapping the first empty day card.
+///
+/// Post-redesign (2026-08-22) there are no "Slot 1 / Slot 2" cards to tap:
+/// an empty day IS the affordance. The sheet it opens is unchanged.
 Future<void> _openAddSheet(WidgetTester tester) async {
   await tester.pumpAndSettle();
-  await tester.tap(find.text('+ Add Meal').first);
+  await tester.tap(find.text('Nothing planned').first);
   await tester.pumpAndSettle();
 }
 
@@ -170,9 +182,16 @@ void main() {
       await tester.tap(find.text('Place Me'));
       await tester.pumpAndSettle();
 
-      // Sheet gone, meal in the day, marked as coming from the shelf.
+      // Sheet gone, meal in the day.
       expect(find.text('My recipes'), findsNothing);
       expect(find.text('Place Me'), findsOneWidget);
+
+      // "From saved" is a routing marker, not provenance, so post-redesign it
+      // lives in the day's detail rather than on the week list — the week row
+      // carries the meal name and real provenance only.
+      expect(find.byType(FromSavedChip), findsNothing);
+      await tester.tap(find.text('Place Me'));
+      await tester.pumpAndSettle();
       expect(find.byType(FromSavedChip), findsOneWidget);
     });
 
@@ -189,9 +208,16 @@ void main() {
       await tester.tap(find.text('Rescue Dish'));
       await tester.pumpAndSettle();
 
-      // Both: the leaf comes from the recipe's own provenance, the chip from
-      // how it got into this day.
+      // The leaf comes from the recipe's own provenance and rides the week
+      // list itself; the "from saved" chip describes how it got into this day
+      // and lives one level in, in the day's detail.
       expect(find.byType(ProvenanceLeafBadge), findsOneWidget);
+
+      await tester.tap(find.text('Rescue Dish'));
+      await tester.pumpAndSettle();
+      // Two: the week row is still mounted behind the sheet, and the sheet's
+      // own row carries the badge as well.
+      expect(find.byType(ProvenanceLeafBadge), findsNWidgets(2));
       expect(find.byType(FromSavedChip), findsOneWidget);
     });
   });
@@ -238,12 +264,15 @@ void main() {
       await tester.tap(find.text('Rescue Dish'));
       await tester.pumpAndSettle();
 
-      // The row is tappable into Cook Mode, which is only true when a real
-      // CookModeRecipePayload came through — a title-only placement renders
-      // the "missing Cook Mode steps" path instead.
+      // Open the day's detail and follow the meal through to recipe details:
+      // the stub route reports the payload's title, and would report 'none'
+      // if only a title string had been placed.
       await tester.tap(find.text('Rescue Dish'));
       await tester.pumpAndSettle();
-      expect(find.text('This meal is missing Cook Mode steps.'), findsNothing);
+      await tester.tap(find.text('Rescue Dish').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('details:Rescue Dish'), findsOneWidget);
     });
   });
 }

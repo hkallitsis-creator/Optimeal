@@ -4,22 +4,102 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:optimeal/models/cook_mode_recipe_codec.dart';
-import 'package:optimeal/models/recipe_model.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/custom_ai_recipe_creator_sheet.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/data_change_signal.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/services/weekly_plan_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/widgets/recipe_provenance_badges.dart';
 
+/// How the plan's 14 stored day slots split into two weeks.
+///
+/// `user_meal_plans` has no week column — only `day_index` — so "next week"
+/// is carried as an offset into the same integer: Mon–Sun of this week are
+/// 0–6, Mon–Sun of next week are 7–13. Verified against live dev on
+/// 2026-08-22: `day_index` has no CHECK constraint and accepts 7 and 13, and
+/// any reader that still filters to 0–6 simply ignores next week's rows
+/// rather than mis-reading them.
+///
+/// **Known gap, not solvable without a migration:** nothing anchors either
+/// week to a calendar date, so neither week rolls over — next week never
+/// becomes this week on its own. That was already true of the single-week
+/// model (day 0 has always meant "Monday, whichever Monday you are looking
+/// at"); the toggle makes it visible. Fixing it needs a `week_start` column.
+const int kDaysPerWeek = 7;
+const int kThisWeekOffset = 0;
+const int kNextWeekOffset = 7;
+
+/// The most meals one day can hold.
+const int kMaxMealsPerDay = 2;
+
+/// How one planned meal row renders. Derived, never stored.
+enum PlannerMealState {
+  /// A meal that is simply scheduled: cream row, chevron.
+  planned,
+
+  /// Today's uncooked meal — the only row that gets a terracotta button.
+  cookable,
+
+  /// Cooked, and the recipe's own provenance earned a Waste Ledger rescue.
+  cookedCounted,
+
+  /// Cooked, but not rescue-eligible. Not a failure — a neutral check.
+  cookedNotCounted,
+}
+
+/// The single state table for a planned meal row.
+///
+/// Pure and top-level so the rules are testable without pumping a screen.
+/// Two things decide everything:
+///
+/// - **Cooked** comes from the persisted `user_meal_plans.is_cooked` flag.
+/// - **Counted** is NOT a ledger lookup. Whether a cook counts is a property
+///   of the recipe (`RecipeOrigin.isRescueEligible`) — the same rule
+///   `selectLedgerVerdict` applies — so it is derivable from the planned meal
+///   alone, with no join to `waste_ledger_events` (which carries no recipe
+///   reference at all: Cook Mode writes `recipe_id: null`).
+///
+/// Next week never shows a Cook button or a check: it is not today, and
+/// nothing in it can have been cooked yet.
+PlannerMealState plannerMealStateFor({
+  required bool cooked,
+  required bool rescueEligible,
+  required bool isToday,
+  required bool isThisWeek,
+}) {
+  if (!isThisWeek) return PlannerMealState.planned;
+  if (cooked) {
+    return rescueEligible
+        ? PlannerMealState.cookedCounted
+        : PlannerMealState.cookedNotCounted;
+  }
+  return isToday ? PlannerMealState.cookable : PlannerMealState.planned;
+}
+
+/// The Weekly Planner — all seven days of one week as a single vertical list.
+///
+/// Redesigned 2026-08-22. What died with the previous build: the day-chip
+/// strip, the one-day-at-a-time detail body it drove, and the "Slot 1 / Slot
+/// 2" cards. A day is now one card holding its 0–2 meals as rows, and the
+/// whole week is on screen at once.
+///
+/// Day/row states are Empty, Planned, Today (the screen's only terracotta
+/// button), Cooked-counted (gold check) and Cooked-didn't-count (gray check);
+/// see [plannerMealStateFor], which is where the rules actually live. The
+/// week toggle moves between this week and next week only — there is no way
+/// back into the past, by design.
+///
+/// The three-source add sheet below is signed and unchanged by this redesign.
 class WeeklyPlannerScreen extends StatefulWidget {
   const WeeklyPlannerScreen({
     super.key,
     this.savedRecipesService,
     this.backend,
+    this.now,
   });
 
   /// Injectable for tests. Defaults to the shared singleton, which is what
@@ -29,31 +109,52 @@ class WeeklyPlannerScreen extends StatefulWidget {
   /// Injectable for tests. Defaults to the real `user_meal_plans` transport.
   final WeeklyPlanBackend? backend;
 
+  /// Injectable "today" so the Today state can be tested on a fixed weekday
+  /// instead of whichever day the suite happens to run on.
+  final DateTime? now;
+
   @override
   State<WeeklyPlannerScreen> createState() => _WeeklyPlannerScreenState();
 }
 
 class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   static const _days = <String>['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  static const _daysLong = <String>['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  static const _daysLong = <String>[
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday'
+  ];
 
-  int _selectedDayIndex = 0;
+  /// [kThisWeekOffset] or [kNextWeekOffset]. There is deliberately no third
+  /// value: no past navigation.
+  int _weekOffset = kThisWeekOffset;
 
   bool _planLoading = true;
   String? _planLoadError;
 
-  /// Inline, per-slot error strings keyed by "dayIndex-slotIndex".
+  /// The loader is a first-paint affordance only. Once the week has been on
+  /// screen, a background re-read (a change signal, a stale-read retry) must
+  /// not flash "Loading your saved week…" over a list the user is looking at.
+  bool _hasLoadedOnce = false;
+
+  /// Inline, per-slot error strings keyed by "dayIndex-slotIndex", where
+  /// dayIndex is the ABSOLUTE 0–13 index, not the position in the visible
+  /// week.
   final Map<String, String> _slotInlineErrors = <String, String>{};
 
   /// Tracks which slots currently have an in-flight optimistic write.
   final Set<String> _pendingSlotWrites = <String>{};
 
-  /// Each day can hold 1–2 meal slots.
+  /// Keyed by absolute day index (0–13) — see [kNextWeekOffset].
   final Map<int, List<_PlannedMeal>> _planned = <int, List<_PlannedMeal>>{};
 
-  /// Bumped by every local mutation (add, remove, mark-cooked). A load that
-  /// started before the bump is stale by the time it returns and must not be
-  /// applied — see [_loadPlanFromSupabase].
+  /// Bumped by every local mutation (add, remove). A load that started before
+  /// the bump is stale by the time it returns and must not be applied — see
+  /// [_loadPlanFromSupabase].
   int _writeEpoch = 0;
 
   /// Set when a load was discarded as stale. The next moment no slot write is
@@ -63,8 +164,24 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
   late final VoidCallback _intentListener;
 
+  /// Write-driven invalidation, the same mechanism Home uses (see
+  /// `lib/services/data_change_signal.dart`). This screen stays mounted
+  /// underneath Cook Mode, and the old "await the pushed route's bool result"
+  /// approach could not survive the post-cook `context.go('/')` — it completed
+  /// that future with null. Data announces itself instead.
+  StreamSubscription<void>? _ledgerSub;
+  StreamSubscription<void>? _cookLogSub;
+  bool _signalReloadQueued = false;
+
   late final WeeklyPlanBackend _backend =
       widget.backend ?? SupabaseWeeklyPlanBackend();
+
+  DateTime get _now => widget.now ?? DateTime.now();
+
+  /// Monday-based index of today, 0–6.
+  int get _todayIndex => _now.weekday - DateTime.monday;
+
+  bool get _isThisWeek => _weekOffset == kThisWeekOffset;
 
   @override
   void initState() {
@@ -73,16 +190,33 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     WeeklyPlannerIntentService.instance.pendingAddMeal.addListener(_intentListener);
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumePendingPlannerIntent());
 
-    // Hydrate the weekly plan for the signed-in user.
-    // (Minimal returning-user loading state: we keep the scaffold structure, but
-    // show a lightweight inline loader or retry card in the list body.)
+    _ledgerSub = AppDataChanges.ledger.listen(_onExternalDataChanged);
+    _cookLogSub = AppDataChanges.cookLog.listen(_onExternalDataChanged);
+
+    // Hydrate the plan for the signed-in user.
     unawaited(_loadPlanFromSupabase());
   }
 
   @override
   void dispose() {
+    _ledgerSub?.cancel();
+    _cookLogSub?.cancel();
     WeeklyPlannerIntentService.instance.pendingAddMeal.removeListener(_intentListener);
     super.dispose();
+  }
+
+  /// A completed cook fires both signals; coalesce them into one re-read
+  /// rather than hitting the network twice for one event. Signals raised in
+  /// separate event-loop turns still cost two reads, which is fine — the
+  /// point is correctness, and the read is idempotent.
+  void _onExternalDataChanged() {
+    if (!mounted || _signalReloadQueued) return;
+    _signalReloadQueued = true;
+    scheduleMicrotask(() {
+      _signalReloadQueued = false;
+      if (!mounted) return;
+      unawaited(_loadPlanFromSupabase());
+    });
   }
 
   void _consumePendingPlannerIntent() {
@@ -93,13 +227,17 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   }
 
   void _addMealToDayFromIntent(WeeklyPlannerAddMealIntent intent) {
-    final dayIndex = intent.dayIndex.clamp(0, 6);
-    setState(() => _selectedDayIndex = dayIndex);
+    // Intents come from WeekdayPickerSheet, which offers Mon–Sun of THIS
+    // week only — so the absolute index is the raw one. Snap the view back to
+    // this week, or the meal would land somewhere the user cannot see.
+    final dayIndex = intent.dayIndex.clamp(0, kDaysPerWeek - 1);
+    setState(() => _weekOffset = kThisWeekOffset);
 
-    final meals = _planned[dayIndex] ??= <_PlannedMeal>[];
-    if (meals.length >= 2) {
+    if (!_dayHasRoom(dayIndex)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${_days[dayIndex]} already has 2 meals.'), behavior: SnackBarBehavior.floating),
+        SnackBar(
+            content: Text('${_days[dayIndex]} already has $kMaxMealsPerDay meals.'),
+            behavior: SnackBarBehavior.floating),
       );
       return;
     }
@@ -107,7 +245,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     final meal = _PlannedMeal(
       title: intent.recipe.title,
       source: intent.source,
-      aisleItems: _aisleItemsFromIngredients(intent.recipe.ingredients, structured: intent.recipe.structuredIngredients),
       recipe: intent.recipe,
     );
     _optimisticallyAddMeal(dayIndex: dayIndex, meal: meal);
@@ -117,14 +254,18 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     );
   }
 
-  List<_PlannedMeal> _mealsForSelectedDay() => _planned[_selectedDayIndex] ??= <_PlannedMeal>[];
+  List<_PlannedMeal> _mealsFor(int dayIndex) =>
+      _planned[dayIndex] ?? const <_PlannedMeal>[];
 
-  bool get _dayHasRoom => _mealsForSelectedDay().length < 2;
+  bool _dayHasRoom(int dayIndex) => _mealsFor(dayIndex).length < kMaxMealsPerDay;
 
   /// The single add sheet. Three sources, and My recipes is a **pane swap
   /// inside this same sheet** (back arrow returns to the source list) — never
   /// a second sheet on top. Sheets do not stack anywhere in this app.
-  Future<void> _showAddMealSheet() async {
+  ///
+  /// Signed and unchanged by the 2026-08-22 redesign: only what opens it
+  /// moved (an empty day card, or the day-detail sheet's "add another").
+  Future<void> _showAddMealSheet(int dayIndex) async {
     final picked = await AppBottomSheet.show<CookModeRecipePayload>(
       context: context,
       showDragHandle: true,
@@ -132,41 +273,39 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       backgroundColor: AppDesignTokens.surfaceCream,
       builder: (ctx) => SafeArea(
         child: _AddMealSheet(
-          dayLabel: _days[_selectedDayIndex],
+          dayLabel: _days[dayIndex % kDaysPerWeek],
           savedRecipesService: widget.savedRecipesService,
           onClearFridge: () => _postFrame(() async {
             context.pop();
-            await _pickMealFromFridgeClearer();
+            await _pickMealFromFridgeClearer(dayIndex);
           }),
           onCustomCraving: () => _postFrame(() async {
             context.pop();
-            await _customAiCravingForDay();
+            await _customAiCravingForDay(dayIndex);
           }),
         ),
       ),
     );
 
     if (picked == null || !mounted) return;
-    _addSavedRecipeToDay(picked);
+    _addSavedRecipeToDay(dayIndex, picked);
   }
 
-  /// Places a recipe chosen from the My recipes pane into the selected day.
+  /// Places a recipe chosen from the My recipes pane into [dayIndex].
   ///
   /// The full [CookModeRecipePayload] goes in — including `origin` and
   /// `originEnteredIngredients` — so a Fridge Clearer recipe planned this way
   /// still counts as a rescue when it is cooked. The payload codec persists
   /// both fields into `user_meal_plans.recipe_payload`; nothing here derives
   /// provenance from the source label.
-  void _addSavedRecipeToDay(CookModeRecipePayload recipe) {
-    if (!_dayHasRoom) return;
+  void _addSavedRecipeToDay(int dayIndex, CookModeRecipePayload recipe) {
+    if (!_dayHasRoom(dayIndex)) return;
     final meal = _PlannedMeal(
       title: recipe.title,
       source: kFromSavedMealSource,
-      aisleItems: _aisleItemsFromIngredients(recipe.ingredients,
-          structured: recipe.structuredIngredients),
       recipe: recipe,
     );
-    _addMeal(meal);
+    _optimisticallyAddMeal(dayIndex: dayIndex, meal: meal);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text('Added “${meal.title}”.'),
@@ -181,73 +320,33 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     });
   }
 
-  void _addMeal(_PlannedMeal meal) {
-    if (!_dayHasRoom) return;
-    _optimisticallyAddMeal(dayIndex: _selectedDayIndex, meal: meal);
-  }
-
-  /// Opens a planned meal in Cook Mode and waits for a completion signal.
-  /// Cook Mode's back button pops `true` once a cook has genuinely finished
-  /// (all steps done or Finish & Plate), `false`/`null` otherwise (backed out
-  /// mid-cook). On a true completion, the originating slot is marked
-  /// "Cooked" — it stays visible, nothing is removed.
-  Future<void> _openPlannedMeal(int dayIndex, int slotIndex, _PlannedMeal meal) async {
+  /// Launches Cook Mode for a planned meal.
+  ///
+  /// **Provenance travels in the payload, untouched.** A Fridge Clearer
+  /// recipe cooked from here is still a rescue, because `origin` and
+  /// `originEnteredIngredients` ride inside [CookModeRecipePayload] — the
+  /// launch surface decides nothing (see `docs/DECISIONS.md`). Nothing is
+  /// awaited: the post-cook sequence leaves via `context.go('/')`, which
+  /// removes this page and would complete any awaited result with null. See
+  /// the cooked-state note in the class doc.
+  void _cookPlannedMeal(_PlannedMeal meal) {
     final recipe = meal.recipe;
     if (recipe == null) {
       debugPrint('WeeklyPlanner: planned meal missing Cook Mode payload: ${meal.title}');
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('This meal is missing Cook Mode steps.'), behavior: SnackBarBehavior.floating),
       );
       return;
     }
 
-    if (!mounted) return;
-    final completed = await context.push<bool>(
+    context.push(
       AppRoutes.onePanCookingRoadmap,
       extra: CookModeLaunchRequest(recipe: recipe, surface: CookModeSurface.weeklyPlanner),
     );
-    if (!mounted) return;
-    if (completed == true) {
-      _markMealCooked(dayIndex: dayIndex, slotIndex: slotIndex);
-    }
   }
 
-  List<_AisleItem> _aisleItemsFromIngredients(List<String> ingredients, {List<RecipeIngredient>? structured}) {
-    const fallback = [_AisleItem(aisle: _Aisle.pantry, item: 'Salt'), _AisleItem(aisle: _Aisle.pantry, item: 'Pepper')];
-
-    if (structured != null && structured.isNotEmpty) {
-      final out = structured
-          .map((ing) => _AisleItem(aisle: _inferAisle(ing.name), item: ing.name))
-          .toList(growable: false);
-      return out.isEmpty ? fallback : out;
-    }
-
-    final out = <_AisleItem>[];
-    for (final raw in ingredients) {
-      final s = raw.trim();
-      if (s.isEmpty) continue;
-      out.add(_AisleItem(aisle: _inferAisle(s), item: s));
-    }
-    return out.isEmpty ? fallback : out;
-  }
-
-  _Aisle _inferAisle(String ingredient) {
-    final v = ingredient.toLowerCase();
-    if (v.contains('chicken') || v.contains('beef') || v.contains('pork') || v.contains('tofu') || v.contains('fish') || v.contains('salmon') || v.contains('saus') || v.contains('meat')) {
-      return _Aisle.meat;
-    }
-    if (v.contains('milk') || v.contains('cheese') || v.contains('yogurt') || v.contains('cream') || v.contains('butter') || v.contains('egg')) {
-      return _Aisle.dairy;
-    }
-    if (v.contains('lettuce') || v.contains('spinach') || v.contains('zucchini') || v.contains('onion') || v.contains('garlic') || v.contains('tomato') || v.contains('pepper') || v.contains('carrot') || v.contains('potato') || v.contains('lemon') || v.contains('broccoli') || v.contains('mushroom')) {
-      return _Aisle.produce;
-    }
-    return _Aisle.pantry;
-  }
-
-  Future<void> _pickMealFromFridgeClearer() async {
-    if (!_dayHasRoom) return;
+  Future<void> _pickMealFromFridgeClearer(int dayIndex) async {
+    if (!_dayHasRoom(dayIndex)) return;
 
     try {
       final result = await context.push<Object?>(AppRoutes.fridgeClearerPicker);
@@ -258,10 +357,9 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       final meal = _PlannedMeal(
         title: result.title,
         source: 'Clear Fridge Leftovers',
-        aisleItems: _aisleItemsFromIngredients(result.ingredients, structured: result.structuredIngredients),
         recipe: result,
       );
-      _addMeal(meal);
+      _optimisticallyAddMeal(dayIndex: dayIndex, meal: meal);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added “${meal.title}”.'), behavior: SnackBarBehavior.floating),
       );
@@ -270,8 +368,8 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }
   }
 
-  Future<void> _customAiCravingForDay() async {
-    if (!_dayHasRoom) return;
+  Future<void> _customAiCravingForDay(int dayIndex) async {
+    if (!_dayHasRoom(dayIndex)) return;
 
     try {
       final payload = await AppBottomSheet.show<CookModeRecipePayload>(
@@ -286,10 +384,9 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       final meal = _PlannedMeal(
         title: payload.title,
         source: 'Custom AI Craving',
-        aisleItems: _aisleItemsFromIngredients(payload.ingredients, structured: payload.structuredIngredients),
         recipe: payload,
       );
-      _addMeal(meal);
+      _optimisticallyAddMeal(dayIndex: dayIndex, meal: meal);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added “${meal.title}”.'), behavior: SnackBarBehavior.floating),
       );
@@ -298,10 +395,41 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }
   }
 
-  void _removeMeal(int slotIndex) {
-    final meals = _mealsForSelectedDay();
-    if (slotIndex < 0 || slotIndex >= meals.length) return;
-    _optimisticallyRemoveMeal(dayIndex: _selectedDayIndex, slotIndex: slotIndex);
+  /// The day's detail — a sheet, not a screen. Reached by tapping a planned
+  /// row, and the only place a day's SECOND meal is added or a meal removed,
+  /// so a filled row stays clean (no inline "+", no inline "x").
+  ///
+  /// Every action closes this sheet first and then acts, which is how the
+  /// add sheet's own Fridge Clearer / Custom Craving options already behave:
+  /// sheets never stack in this app.
+  Future<void> _showDayDetail(int dayIndex) async {
+    await AppBottomSheet.show<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: AppDesignTokens.surfaceCream,
+      builder: (ctx) => SafeArea(
+        child: _DayDetailSheet(
+          dayLabel: _daysLong[dayIndex % kDaysPerWeek],
+          meals: _mealsFor(dayIndex),
+          canAddAnother: _dayHasRoom(dayIndex),
+          onOpenRecipe: (recipe) => _postFrame(() async {
+            context.pop();
+            if (!mounted) return;
+            context.push(AppRoutes.recipe, extra: recipe);
+          }),
+          onRemove: (slotIndex) => _postFrame(() async {
+            context.pop();
+            if (!mounted) return;
+            _optimisticallyRemoveMeal(dayIndex: dayIndex, slotIndex: slotIndex);
+          }),
+          onAddAnother: () => _postFrame(() async {
+            context.pop();
+            await _showAddMealSheet(dayIndex);
+          }),
+        ),
+      ),
+    );
   }
 
   String _slotKey(int dayIndex, int slotIndex) => '$dayIndex-$slotIndex';
@@ -313,20 +441,18 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   String? _userId() => _backend.currentUserId;
 
   Map<String, dynamic> _plannedMealToPlanRow({required String userId, required int dayIndex, required int slotIndex, required _PlannedMeal meal}) => {
-    // Expected schema (adjust server-side as needed):
-    // user_id (uuid), day_index (int), slot_index (int), title (text), source (text),
-    // aisle_items (jsonb), recipe_payload (jsonb), is_cooked (boolean), updated_at (timestamptz)
     'user_id': userId,
     'day_index': dayIndex,
     'slot_index': slotIndex,
     'title': meal.title,
     'source': meal.source,
-    'aisle_items': meal.aisleItems
-        .map((e) => {'aisle': e.aisle.name, 'item': e.item, 'qty': e.qty})
-        .toList(growable: false),
     'recipe_payload': meal.recipe == null ? null : cookModeRecipeToJson(meal.recipe!),
     'is_cooked': meal.cooked,
     'updated_at': DateTime.now().toUtc().toIso8601String(),
+    // `aisle_items` is deliberately not written any more: the ingredient
+    // pills it fed were cut with the slot cards, and the shopping list that
+    // originally needed aisles was cut in August. Existing rows keep theirs —
+    // an upsert only sets the columns it sends.
   };
 
   _PlannedMeal? _plannedMealFromPlanRow(Map row) {
@@ -335,26 +461,11 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       final source = (row['source'] ?? '').toString().trim();
       if (title.isEmpty) return null;
 
-      final aisleItems = <_AisleItem>[];
-      final itemsRaw = row['aisle_items'] ?? row['aisleItems'];
-      if (itemsRaw is List) {
-        for (final it in itemsRaw) {
-          if (it is! Map) continue;
-          final aisleRaw = (it['aisle'] ?? '').toString().trim();
-          final aisle = _Aisle.values.cast<_Aisle?>().firstWhere((a) => a?.name == aisleRaw, orElse: () => null);
-          final item = (it['item'] ?? '').toString().trim();
-          if (aisle == null || item.isEmpty) continue;
-          final qty = it['qty']?.toString();
-          aisleItems.add(_AisleItem(aisle: aisle, item: item, qty: qty));
-        }
-      }
-
       final recipe = cookModeRecipeFromJson(row['recipe_payload'] ?? row['recipePayload']);
       final cooked = (row['is_cooked'] ?? row['isCooked']) == true;
       return _PlannedMeal(
         title: title,
         source: source.isEmpty ? 'Planned meal' : source,
-        aisleItems: aisleItems.isEmpty ? _aisleItemsFromIngredients(const ['Salt', 'Pepper']) : aisleItems,
         recipe: recipe,
         cooked: cooked,
       );
@@ -393,10 +504,12 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }
 
     if (!mounted) return;
-    setState(() {
-      _planLoading = true;
-      _planLoadError = null;
-    });
+    if (!_hasLoadedOnce) {
+      setState(() {
+        _planLoading = true;
+        _planLoadError = null;
+      });
+    }
 
     final epochAtReadStart = _writeEpoch;
 
@@ -408,8 +521,9 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
         final dayIndex = int.tryParse('${r['day_index'] ?? r['dayIndex'] ?? ''}'.trim());
         final slotIndex = int.tryParse('${r['slot_index'] ?? r['slotIndex'] ?? ''}'.trim());
         if (dayIndex == null || slotIndex == null) continue;
-        if (dayIndex < 0 || dayIndex > 6) continue;
-        if (slotIndex < 0 || slotIndex > 1) continue;
+        // 0–13: both weeks. See kNextWeekOffset.
+        if (dayIndex < 0 || dayIndex >= kNextWeekOffset + kDaysPerWeek) continue;
+        if (slotIndex < 0 || slotIndex >= kMaxMealsPerDay) continue;
 
         final meal = _plannedMealFromPlanRow(r);
         if (meal == null) continue;
@@ -417,7 +531,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
         final list = next[dayIndex] ??= <_PlannedMeal>[];
         // Keep slots ordered by slot_index.
         while (list.length <= slotIndex) {
-          list.add(const _PlannedMeal(title: '', source: '', aisleItems: <_AisleItem>[], recipe: null));
+          list.add(const _PlannedMeal(title: '', source: '', recipe: null));
         }
         list[slotIndex] = meal;
       }
@@ -440,13 +554,14 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
       if (!mounted) return;
 
       if (_writeEpoch != epochAtReadStart) {
-        // Stale snapshot: something was placed, removed, or marked cooked
-        // while this read was in flight. Local state is newer — keep it, and
-        // re-read once the writes that this snapshot missed have landed.
+        // Stale snapshot: something was placed or removed while this read was
+        // in flight. Local state is newer — keep it, and re-read once the
+        // writes that this snapshot missed have landed.
         debugPrint(
             'WeeklyPlanner: discarding a plan read that a local write raced past.');
         setState(() {
           _planLoading = false;
+          _hasLoadedOnce = true;
           _planLoadError = null;
         });
         _reloadWhenWritesSettle = true;
@@ -459,6 +574,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
           ..clear()
           ..addAll(next);
         _planLoading = false;
+        _hasLoadedOnce = true;
         _planLoadError = null;
         _slotInlineErrors.clear();
         _pendingSlotWrites.clear();
@@ -531,7 +647,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
 
   void _optimisticallyAddMeal({required int dayIndex, required _PlannedMeal meal}) {
     final meals = _planned[dayIndex] ??= <_PlannedMeal>[];
-    if (meals.length >= 2) return;
+    if (meals.length >= kMaxMealsPerDay) return;
     final slotIndex = meals.length;
     final key = _slotKey(dayIndex, slotIndex);
 
@@ -588,42 +704,6 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
     }());
   }
 
-  /// Marks the meal at [dayIndex]/[slotIndex] as cooked — optimistic update,
-  /// persisted in the background, reverted (with the same inline-error/retry
-  /// pattern as add/remove) if the save fails. Never removes the slot.
-  void _markMealCooked({required int dayIndex, required int slotIndex}) {
-    final meals = _planned[dayIndex] ??= <_PlannedMeal>[];
-    if (slotIndex < 0 || slotIndex >= meals.length) return;
-    if (meals[slotIndex].cooked) return; // Already marked — nothing to do.
-
-    final previous = meals[slotIndex];
-    final updated = previous.copyWith(cooked: true);
-    final key = _slotKey(dayIndex, slotIndex);
-
-    setState(() {
-      _writeEpoch++;
-      _slotInlineErrors.remove(key);
-      _pendingSlotWrites.add(key);
-      meals[slotIndex] = updated;
-    });
-
-    unawaited(() async {
-      try {
-        await _persistMealSlot(dayIndex: dayIndex, slotIndex: slotIndex, meal: updated);
-      } catch (e) {
-        if (!mounted) return;
-        setState(() {
-          _pendingSlotWrites.remove(key);
-          final list = _planned[dayIndex];
-          if (list != null && list.length > slotIndex) {
-            list[slotIndex] = previous;
-          }
-          _slotInlineErrors[key] = 'Couldn\'t mark as cooked. Tap to retry.';
-        });
-      }
-    }());
-  }
-
   void _retrySlot(int dayIndex, int slotIndex) {
     final key = _slotKey(dayIndex, slotIndex);
     if (_pendingSlotWrites.contains(key)) return;
@@ -645,11 +725,9 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
             _pendingSlotWrites.remove(key);
             _slotInlineErrors[key] = 'Couldn\'t save. Tap to retry.';
           });
-          return;
         }
       }());
     } else {
-      // Nothing in this slot locally anymore: ensure Supabase row is deleted.
       setState(() {
         _slotInlineErrors.remove(key);
         _pendingSlotWrites.add(key);
@@ -663,18 +741,31 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
             _pendingSlotWrites.remove(key);
             _slotInlineErrors[key] = 'Couldn\'t remove. Tap to retry.';
           });
-          return;
         }
       }());
     }
   }
 
+  /// The first inline error anywhere in [dayIndex]'s slots, with the slot it
+  /// belongs to — the day card shows one line, not one per slot.
+  MapEntry<int, String>? _dayInlineError(int dayIndex) {
+    for (var slot = 0; slot < kMaxMealsPerDay; slot++) {
+      final message = _slotInlineErrors[_slotKey(dayIndex, slot)];
+      if (message != null) return MapEntry(slot, message);
+    }
+    return null;
+  }
+
+  bool _dayIsSaving(int dayIndex) {
+    for (var slot = 0; slot < kMaxMealsPerDay; slot++) {
+      if (_pendingSlotWrites.contains(_slotKey(dayIndex, slot))) return true;
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    final mealsToday = _mealsForSelectedDay();
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       backgroundColor: AppDesignTokens.backgroundSage,
@@ -683,6 +774,7 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
+        // Depth-1: back button only, and back lands on Home.
         leading: IconButton(
           onPressed: () => context.go(AppRoutes.home),
           tooltip: 'Home',
@@ -696,86 +788,80 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
             child: const Icon(Icons.arrow_back, color: AppDesignTokens.textCharcoal),
           ),
         ),
-        title: Text('Weekly Planner', style: AppDesignTokens.headline),
+        // SIGNED-CONTENT PLACEHOLDER
+        title: const Text('Weekly Planner', style: AppDesignTokens.headline),
       ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, 12, AppDesignTokens.spaceSM, 10),
-            child: _SevenDayBar(
-              selectedIndex: _selectedDayIndex,
-              labels: _days,
-              onSelect: (i) => setState(() => _selectedDayIndex = i),
+            padding: const EdgeInsets.fromLTRB(
+                AppDesignTokens.spaceSM, 4, AppDesignTokens.spaceSM, 12),
+            child: _WeekToggle(
+              isThisWeek: _isThisWeek,
+              onChanged: (thisWeek) => setState(() =>
+                  _weekOffset = thisWeek ? kThisWeekOffset : kNextWeekOffset),
             ),
           ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, AppDesignTokens.spaceXS, AppDesignTokens.spaceSM, AppDesignTokens.spaceMD),
-              children: [
-                _SectionHeader(
-                  title: '${_days[_selectedDayIndex]} meals',
-                  subtitle: 'Add 1–2 slots. Keep it simple and balanced.',
-                  trailing: _dayHasRoom
-                      ? TextButton.icon(
-                          onPressed: _showAddMealSheet,
-                          icon: const Icon(Icons.add_rounded, color: AppDesignTokens.ctaTerracotta),
-                          label: const Text('Add meal', style: TextStyle(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900)),
-                          style: ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
-                        )
-                      : null,
-                ),
-                const SizedBox(height: 10),
-
-                if (_planLoading)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Row(
-                      children: [
-                        const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: AppDesignTokens.ctaTerracotta)),
-                        const SizedBox(width: 12),
-                        Expanded(child: Text('Loading your saved week…', style: AppDesignTokens.body.copyWith(fontWeight: FontWeight.w700))),
-                      ],
-                    ),
-                  )
-                else if (_planLoadError != null)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(AppDesignTokens.spaceSM),
-                    decoration: BoxDecoration(
-                      color: scheme.errorContainer.withValues(alpha: 0.35),
-                      borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-                      border: Border.all(color: scheme.error.withValues(alpha: 0.20)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.wifi_off_rounded, color: scheme.error),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text(_planLoadError!, style: AppDesignTokens.body.copyWith(color: scheme.onErrorContainer, fontWeight: FontWeight.w800))),
-                        const SizedBox(width: 10),
-                        TextButton(
-                          onPressed: _loadPlanFromSupabase,
-                          style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
-                          child: const Text('Retry', style: TextStyle(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900)),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                for (var slot = 0; slot < 2; slot++) ...[
-                  _MealSlotCard(
-                    slotIndex: slot,
-                    meal: slot < mealsToday.length ? mealsToday[slot] : null,
-                    canAdd: _dayHasRoom && slot == mealsToday.length,
-                    onAdd: _showAddMealSheet,
-                    onRemove: () => _removeMeal(slot),
-                    onTapMeal: slot < mealsToday.length ? () => _openPlannedMeal(_selectedDayIndex, slot, mealsToday[slot]) : null,
-                    inlineError: _slotInlineErrors[_slotKey(_selectedDayIndex, slot)],
-                    isSaving: _pendingSlotWrites.contains(_slotKey(_selectedDayIndex, slot)),
-                    onRetry: () => _retrySlot(_selectedDayIndex, slot),
-                  ),
-                  const SizedBox(height: 12),
+          if (_planLoading)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, 0, AppDesignTokens.spaceSM, 10),
+              child: Row(
+                children: [
+                  const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: AppDesignTokens.ctaTerracotta)),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Loading your saved week…', style: AppDesignTokens.body.copyWith(fontWeight: FontWeight.w700))),
                 ],
-              ],
+              ),
+            )
+          else if (_planLoadError != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, 0, AppDesignTokens.spaceSM, 10),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppDesignTokens.spaceSM),
+                decoration: BoxDecoration(
+                  color: scheme.errorContainer.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
+                  border: Border.all(color: scheme.error.withValues(alpha: 0.20)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.wifi_off_rounded, color: scheme.error),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(_planLoadError!, style: AppDesignTokens.body.copyWith(color: scheme.onErrorContainer, fontWeight: FontWeight.w800))),
+                    const SizedBox(width: 10),
+                    TextButton(
+                      onPressed: _loadPlanFromSupabase,
+                      style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+                      child: const Text('Retry', style: TextStyle(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, 0, AppDesignTokens.spaceSM, AppDesignTokens.spaceMD),
+              itemCount: kDaysPerWeek,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, i) {
+                final absoluteIndex = _weekOffset + i;
+                final inlineError = _dayInlineError(absoluteIndex);
+                return _DayCard(
+                  dayLabel: _days[i],
+                  meals: _mealsFor(absoluteIndex),
+                  isToday: _isThisWeek && i == _todayIndex,
+                  isThisWeek: _isThisWeek,
+                  isSaving: _dayIsSaving(absoluteIndex),
+                  inlineError: inlineError?.value,
+                  onRetry: inlineError == null
+                      ? null
+                      : () => _retrySlot(absoluteIndex, inlineError.key),
+                  onAdd: () => _showAddMealSheet(absoluteIndex),
+                  onOpenDay: () => _showDayDetail(absoluteIndex),
+                  onCook: _cookPlannedMeal,
+                );
+              },
             ),
           ),
         ],
@@ -784,95 +870,66 @@ class _WeeklyPlannerScreenState extends State<WeeklyPlannerScreen> {
   }
 }
 
-class _SevenDayBar extends StatelessWidget {
-  const _SevenDayBar({required this.selectedIndex, required this.labels, required this.onSelect});
+/// This week ↔ next week. Two states, no third: there is deliberately no way
+/// to navigate into the past.
+class _WeekToggle extends StatelessWidget {
+  const _WeekToggle({required this.isThisWeek, required this.onChanged});
 
-  final int selectedIndex;
-  final List<String> labels;
-  final ValueChanged<int> onSelect;
+  final bool isThisWeek;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
     return Container(
-      padding: const EdgeInsets.all(AppDesignTokens.spaceXS),
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
-        borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-        border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
-        boxShadow: AppDesignTokens.cardShadow,
+        color: AppDesignTokens.deepForest.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppDesignTokens.deepForest.withValues(alpha: 0.14)),
       ),
       child: Row(
-        children: List.generate(labels.length, (i) {
-          final isSelected = i == selectedIndex;
-          return Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 3),
-              child: _DayPill(
-                label: labels[i],
-                selected: isSelected,
-                onTap: () => onSelect(i),
-              ),
-            ),
-          );
-        }),
+        children: [
+          // SIGNED-CONTENT PLACEHOLDER
+          Expanded(child: _WeekTogglePill(label: 'This week', selected: isThisWeek, onTap: () => onChanged(true))),
+          // SIGNED-CONTENT PLACEHOLDER
+          Expanded(child: _WeekTogglePill(label: 'Next week', selected: !isThisWeek, onTap: () => onChanged(false))),
+        ],
       ),
     );
   }
 }
 
-class _DayPill extends StatefulWidget {
-  const _DayPill({required this.label, required this.selected, required this.onTap});
+class _WeekTogglePill extends StatelessWidget {
+  const _WeekTogglePill({required this.label, required this.selected, required this.onTap});
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
 
   @override
-  State<_DayPill> createState() => _DayPillState();
-}
-
-class _DayPillState extends State<_DayPill> {
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final bg = widget.selected ? AppDesignTokens.ctaTerracotta : AppDesignTokens.surfaceCream;
-    final fg = widget.selected ? Colors.white : AppDesignTokens.textCharcoal;
-
-    return AnimatedScale(
-      scale: _pressed ? 0.98 : 1,
-      duration: const Duration(milliseconds: 120),
-      curve: Curves.easeOut,
-      child: Material(
-        color: bg,
+    return Material(
+      color: selected ? AppDesignTokens.surfaceCream : Colors.transparent,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(999),
-        child: InkWell(
-          onTap: widget.onTap,
-          onHighlightChanged: (v) => setState(() => _pressed = v),
-          splashFactory: NoSplash.splashFactory,
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-          hoverColor: Colors.transparent,
-          borderRadius: BorderRadius.circular(999),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: (widget.selected ? AppDesignTokens.ctaTerracotta : scheme.outline).withValues(alpha: 0.18),
-              ),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              widget.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppDesignTokens.caption.copyWith(color: fg, fontWeight: FontWeight.w900),
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppDesignTokens.body.copyWith(
+              fontWeight: FontWeight.w900,
+              color: selected
+                  ? AppDesignTokens.deepForest
+                  : AppDesignTokens.deepForest.withValues(alpha: 0.62),
             ),
           ),
         ),
@@ -881,291 +938,509 @@ class _DayPillState extends State<_DayPill> {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, required this.subtitle, this.trailing});
+/// One day of the week: empty, or a card holding its 1–2 meal rows.
+class _DayCard extends StatelessWidget {
+  const _DayCard({
+    required this.dayLabel,
+    required this.meals,
+    required this.isToday,
+    required this.isThisWeek,
+    required this.isSaving,
+    required this.inlineError,
+    required this.onRetry,
+    required this.onAdd,
+    required this.onOpenDay,
+    required this.onCook,
+  });
 
-  final String title;
-  final String subtitle;
-  final Widget? trailing;
+  final String dayLabel;
+  final List<_PlannedMeal> meals;
+  final bool isToday;
+  final bool isThisWeek;
+  final bool isSaving;
+  final String? inlineError;
+  final VoidCallback? onRetry;
+  final VoidCallback onAdd;
+  final VoidCallback onOpenDay;
+  final ValueChanged<_PlannedMeal> onCook;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
+    if (meals.isEmpty) {
+      return _EmptyDayCard(dayLabel: dayLabel, isToday: isToday, onTap: onAdd);
+    }
+
+    // Today gets the champagne tint — the one warm card on the screen. A day
+    // whose meals are all cooked steps back down to a faded cream, since
+    // there is nothing left to do in it.
+    final allCooked = meals.every((m) => m.cooked);
+    final Color fill = isToday && !allCooked
+        ? AppDesignTokens.champagneTint
+        : AppDesignTokens.surfaceCream;
+
+    return Material(
+      color: fill,
+      borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
+      child: InkWell(
+        onTap: onOpenDay,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
+            border: Border.all(
+              color: isToday && !allCooked
+                  ? AppDesignTokens.ctaTerracotta.withValues(alpha: 0.30)
+                  : AppDesignTokens.textCharcoal.withValues(alpha: 0.10),
+            ),
+            boxShadow: AppDesignTokens.cardShadow,
+          ),
+          padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, 12, AppDesignTokens.spaceSM, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: AppDesignTokens.headline),
-              const SizedBox(height: 6),
-              Text(subtitle, style: AppDesignTokens.body.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75), height: 1.35)),
+              Text(
+                dayLabel,
+                style: AppDesignTokens.caption.copyWith(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.6,
+                  color: isToday
+                      ? AppDesignTokens.ctaTerracotta
+                      : AppDesignTokens.textCharcoal.withValues(alpha: 0.62),
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (var i = 0; i < meals.length; i++) ...[
+                if (i > 0)
+                  Divider(
+                    height: 20,
+                    thickness: 1,
+                    color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10),
+                  ),
+                _PlannedMealRow(
+                  meal: meals[i],
+                  state: plannerMealStateFor(
+                    cooked: meals[i].cooked,
+                    rescueEligible:
+                        meals[i].recipe?.origin?.isRescueEligible ?? false,
+                    isToday: isToday,
+                    isThisWeek: isThisWeek,
+                  ),
+                  onCook: () => onCook(meals[i]),
+                ),
+              ],
+              if (isSaving) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppDesignTokens.ctaTerracotta)),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text('Saving…', style: AppDesignTokens.caption.copyWith(fontWeight: FontWeight.w800))),
+                  ],
+                ),
+              ],
+              if (!isSaving && inlineError != null) ...[
+                const SizedBox(height: 10),
+                _InlineSlotError(message: inlineError!, onRetry: onRetry),
+              ],
             ],
           ),
         ),
-        if (trailing != null) ...[
-          const SizedBox(width: 12),
-          trailing!,
-        ],
-      ],
+      ),
     );
   }
 }
 
-class _MealSlotCard extends StatelessWidget {
-  const _MealSlotCard({required this.slotIndex, required this.meal, required this.canAdd, required this.onAdd, required this.onRemove, this.onTapMeal, required this.inlineError, required this.isSaving, required this.onRetry});
+/// A day with nothing planned: dashed sage outline, one quiet line, and a
+/// terracotta-TEXT plus — text, not a button, so the only terracotta button
+/// on this screen stays "Cook".
+class _EmptyDayCard extends StatelessWidget {
+  const _EmptyDayCard({required this.dayLabel, required this.isToday, required this.onTap});
 
-  final int slotIndex;
-  final _PlannedMeal? meal;
-  final bool canAdd;
-  final VoidCallback onAdd;
-  final VoidCallback onRemove;
-  final VoidCallback? onTapMeal;
-  final String? inlineError;
-  final bool isSaving;
-  final VoidCallback onRetry;
+  final String dayLabel;
+  final bool isToday;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        child: CustomPaint(
+          painter: _DashedRoundedBorderPainter(
+            color: AppDesignTokens.deepForest.withValues(alpha: 0.34),
+            radius: AppDesignTokens.radiusCard,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, 14, AppDesignTokens.spaceSM, 14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        dayLabel,
+                        style: AppDesignTokens.caption.copyWith(
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.6,
+                          color: isToday
+                              ? AppDesignTokens.ctaTerracotta
+                              : AppDesignTokens.deepForest.withValues(alpha: 0.62),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        // SIGNED-CONTENT PLACEHOLDER
+                        'Nothing planned',
+                        style: AppDesignTokens.body.copyWith(
+                          color: AppDesignTokens.deepForest.withValues(alpha: 0.72),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '+',
+                  style: AppDesignTokens.headline.copyWith(
+                    color: AppDesignTokens.ctaTerracotta,
+                    fontWeight: FontWeight.w900,
+                    height: 1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One meal inside a day card. Everything that differs between states lives
+/// in the trailing slot: a chevron, a Cook button, or a check.
+class _PlannedMealRow extends StatelessWidget {
+  const _PlannedMealRow({required this.meal, required this.state, required this.onCook});
+
+  final _PlannedMeal meal;
+  final PlannerMealState state;
+  final VoidCallback onCook;
+
+  bool get _isCooked =>
+      state == PlannerMealState.cookedCounted ||
+      state == PlannerMealState.cookedNotCounted;
 
   /// Provenance carried by the placed recipe itself. Survives the
   /// `recipe_payload` jsonb round trip, so a planner-cooked Fridge Clearer
   /// recipe still counts as a rescue — and this badge still shows — after a
   /// reload.
-  bool get _isFridgeRescue => meal?.recipe?.origin?.isRescueEligible ?? false;
-
-  /// How the meal got into this day, not where the recipe came from.
-  bool get _isFromSaved => meal?.source == kFromSavedMealSource;
+  bool get _isFridgeRescue => meal.recipe?.origin?.isRescueEligible ?? false;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final shadow = AppDesignTokens.cardShadow;
+    final title = Text(
+      meal.title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: AppDesignTokens.subheadline.copyWith(
+        height: 1.15,
+        color: _isCooked
+            ? AppDesignTokens.textCharcoal.withValues(alpha: 0.58)
+            : AppDesignTokens.textCharcoal,
+      ),
+    );
 
-    if (meal == null) {
-      return Container(
-        decoration: BoxDecoration(
-          color: AppDesignTokens.surfaceCream,
-          borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-          border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
-          boxShadow: shadow,
+    return Row(
+      children: [
+        Expanded(
+          child: Row(
+            children: [
+              Flexible(child: title),
+              if (_isFridgeRescue) ...[
+                const SizedBox(width: 8),
+                Opacity(
+                  opacity: _isCooked ? 0.6 : 1,
+                  child: const ProvenanceLeafBadge(compact: true),
+                ),
+              ],
+            ],
+          ),
         ),
-        padding: const EdgeInsets.all(AppDesignTokens.spaceSM),
+        const SizedBox(width: 10),
+        _MealRowTrailing(state: state, onCook: onCook),
+      ],
+    );
+  }
+}
+
+class _MealRowTrailing extends StatelessWidget {
+  const _MealRowTrailing({required this.state, required this.onCook});
+
+  final PlannerMealState state;
+  final VoidCallback onCook;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (state) {
+      case PlannerMealState.planned:
+        return Icon(Icons.chevron_right_rounded,
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.55));
+      case PlannerMealState.cookable:
+        return FilledButton(
+          onPressed: onCook,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppDesignTokens.ctaTerracotta,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
+          ),
+          // SIGNED-CONTENT PLACEHOLDER
+          child: const Text('Cook',
+              style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white)),
+        );
+      case PlannerMealState.cookedCounted:
+        return const Icon(Icons.check_circle_rounded,
+            color: AppDesignTokens.cookedCountedGold);
+      case PlannerMealState.cookedNotCounted:
+        return const Icon(Icons.check_circle_rounded,
+            color: AppDesignTokens.cookedNeutralGray);
+    }
+  }
+}
+
+class _InlineSlotError extends StatelessWidget {
+  const _InlineSlotError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onRetry,
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
         child: Row(
           children: [
-            Container(
-              height: 44,
-              width: 44,
-              decoration: BoxDecoration(
-                color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton),
-                border: Border.all(color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.18)),
-              ),
-              child: const Icon(Icons.add_rounded, color: AppDesignTokens.ctaTerracotta),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Slot ${slotIndex + 1}', style: AppDesignTokens.subheadline),
-                  const SizedBox(height: 4),
-                  Text('Tap to add a meal', style: AppDesignTokens.body.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75))),
-                ],
-              ),
-            ),
-            FilledButton(
-              onPressed: canAdd ? onAdd : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: AppDesignTokens.ctaTerracotta,
-                foregroundColor: Colors.white,
-                // Slot 2 can be present but not addable yet (when Slot 1 is empty).
-                // Keep its empty-state CTA styling visually identical to Slot 1.
-                disabledBackgroundColor: slotIndex == 1 ? AppDesignTokens.ctaTerracotta : scheme.outline.withValues(alpha: 0.20),
-                disabledForegroundColor: slotIndex == 1 ? Colors.white : null,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
-                padding: const EdgeInsets.symmetric(horizontal: AppDesignTokens.spaceSM, vertical: 12),
-              ),
-              child: Text('+ Add Meal', style: AppDesignTokens.subheadline.copyWith(color: Colors.white, fontWeight: FontWeight.w800)),
-            ),
+            Icon(Icons.error_outline_rounded, size: 18, color: scheme.error.withValues(alpha: 0.9)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message, style: AppDesignTokens.caption.copyWith(color: scheme.error, fontWeight: FontWeight.w900))),
+            const SizedBox(width: 8),
+            const Text('Retry', style: TextStyle(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900)),
           ],
         ),
-      );
-    }
-
-    // NOTE (bug fix): the "x" remove button used to live *inside* the same
-    // InkWell that opens Cook Mode (onTapMeal). Nesting a tappable IconButton
-    // inside an ancestor InkWell puts both recognizers in the same gesture
-    // arena and the outer InkWell can end up swallowing the tap before it
-    // ever reaches the IconButton's onPressed — which matched exactly what
-    // was observed (onRemove never firing, no debugPrint output at all).
-    // Fix: the InkWell now wraps ONLY the tappable content region (leading
-    // icon + text), and the close IconButton is a sibling outside that
-    // InkWell's subtree, so its taps are never contested.
-    return Container(
-      decoration: BoxDecoration(
-        color: AppDesignTokens.surfaceCream,
-        borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-        border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
-        boxShadow: shadow,
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Row(
+    );
+  }
+}
+
+/// Dashed rounded outline for the empty-day card. Flutter has no dashed
+/// border, and pulling in a package for one outline is not worth it.
+class _DashedRoundedBorderPainter extends CustomPainter {
+  const _DashedRoundedBorderPainter({required this.color, required this.radius});
+
+  final Color color;
+  final double radius;
+
+  static const double _dash = 6;
+  static const double _gap = 5;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+          Offset.zero & size, Radius.circular(radius)));
+
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final end = (distance + _dash).clamp(0.0, metric.length);
+        canvas.drawPath(metric.extractPath(distance, end), paint);
+        distance = end + _gap;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedRoundedBorderPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.radius != radius;
+}
+
+/// The day's detail — one sheet, reached by tapping a day card that has
+/// meals in it.
+///
+/// This is where a day's second meal is added and where a meal is removed,
+/// which is why neither affordance clutters the week list. Every action pops
+/// this sheet first and then acts: sheets never stack in this app.
+class _DayDetailSheet extends StatelessWidget {
+  const _DayDetailSheet({
+    required this.dayLabel,
+    required this.meals,
+    required this.canAddAnother,
+    required this.onOpenRecipe,
+    required this.onRemove,
+    required this.onAddAnother,
+  });
+
+  final String dayLabel;
+  final List<_PlannedMeal> meals;
+  final bool canAddAnother;
+  final ValueChanged<CookModeRecipePayload> onOpenRecipe;
+  final ValueChanged<int> onRemove;
+  final VoidCallback onAddAnother;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceSM, AppDesignTokens.spaceXS, AppDesignTokens.spaceSM, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Material(
+          Row(
+            children: [
+              Expanded(child: Text(dayLabel, style: AppDesignTokens.headline)),
+              // Sheet rule: drag-down, barrier tap, AND an explicit X.
+              IconButton(
+                onPressed: () => context.pop(),
+                tooltip: 'Close',
+                icon: Icon(Icons.close_rounded, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
+                style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (var i = 0; i < meals.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _DayDetailMealRow(
+              meal: meals[i],
+              onOpen: () {
+                final recipe = meals[i].recipe;
+                if (recipe != null) onOpenRecipe(recipe);
+              },
+              onRemove: () => onRemove(i),
+            ),
+          ],
+          if (canAddAnother) ...[
+            const SizedBox(height: 12),
+            Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: onTapMeal,
+                onTap: onAddAnother,
+                borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
                 splashFactory: NoSplash.splashFactory,
                 splashColor: Colors.transparent,
                 highlightColor: Colors.transparent,
                 hoverColor: Colors.transparent,
                 child: Padding(
-                  padding: const EdgeInsets.all(AppDesignTokens.spaceSM),
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        height: 44,
-                        width: 44,
-                        decoration: BoxDecoration(
-                          color: meal!.cooked
-                              ? const Color(0xFF3F7D53).withValues(alpha: 0.14)
-                              : AppDesignTokens.ctaTerracotta.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton),
-                          border: Border.all(
-                            color: meal!.cooked
-                                ? const Color(0xFF3F7D53).withValues(alpha: 0.22)
-                                : AppDesignTokens.ctaTerracotta.withValues(alpha: 0.18),
-                          ),
-                        ),
-                        child: Icon(
-                          meal!.cooked ? Icons.check_rounded : Icons.restaurant_rounded,
-                          color: meal!.cooked ? const Color(0xFF3F7D53) : AppDesignTokens.ctaTerracotta,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: Text(meal!.title, style: AppDesignTokens.subheadline.copyWith(height: 1.1))),
-                                if (meal!.cooked) ...[
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF3F7D53).withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(color: const Color(0xFF3F7D53).withValues(alpha: 0.22)),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.check_rounded, size: 12, color: Color(0xFF3F7D53)),
-                                        const SizedBox(width: 4),
-                                        Text('Cooked', style: AppDesignTokens.caption.copyWith(color: const Color(0xFF3F7D53), fontWeight: FontWeight.w900)),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              meal!.source,
-                              style: AppDesignTokens.caption.copyWith(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.70), fontWeight: FontWeight.w700),
-                            ),
-                            // The leaf badge reads the placed recipe's OWN
-                            // provenance, which survives the recipe_payload
-                            // jsonb round trip — never the source label. The
-                            // "from saved" chip is the opposite: it describes
-                            // how the meal got into this day, not where the
-                            // recipe came from. A saved Fridge Clearer recipe
-                            // shows both.
-                            if (_isFridgeRescue || _isFromSaved) ...[
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 6,
-                                children: [
-                                  if (_isFridgeRescue) const ProvenanceLeafBadge(),
-                                  if (_isFromSaved) const FromSavedChip(),
-                                ],
-                              ),
-                            ],
-                            if (isSaving) ...[
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  const SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppDesignTokens.ctaTerracotta)),
-                                  const SizedBox(width: 10),
-                                  Expanded(child: Text('Saving…', style: AppDesignTokens.caption.copyWith(fontWeight: FontWeight.w800, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.70)))),
-                                ],
-                              ),
-                            ],
-                            if (!isSaving && inlineError != null) ...[
-                              const SizedBox(height: 8),
-                              Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: onRetry,
-                                  splashFactory: NoSplash.splashFactory,
-                                  splashColor: Colors.transparent,
-                                  highlightColor: Colors.transparent,
-                                  hoverColor: Colors.transparent,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 2),
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.error_outline_rounded, size: 18, color: scheme.error.withValues(alpha: 0.9)),
-                                        const SizedBox(width: 8),
-                                        Expanded(child: Text(inlineError!, style: AppDesignTokens.caption.copyWith(color: scheme.error, fontWeight: FontWeight.w900))),
-                                        const SizedBox(width: 8),
-                                        const Text('Retry', style: TextStyle(color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900)),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: meal!.aisleItems.take(4).map((e) {
-                                final label = e.qty == null || e.qty!.trim().isEmpty ? e.item : '${e.item} · ${e.qty}';
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                  decoration: BoxDecoration(
-                                    color: AppDesignTokens.surfaceCream.withValues(alpha: 0.75),
-                                    borderRadius: BorderRadius.circular(999),
-                                    border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
-                                  ),
-                                  child: Text(label, style: AppDesignTokens.caption.copyWith(fontWeight: FontWeight.w800)),
-                                );
-                              }).toList(growable: false),
-                            ),
-                          ],
-                        ),
+                      const Icon(Icons.add_rounded, color: AppDesignTokens.ctaTerracotta),
+                      const SizedBox(width: 10),
+                      Text(
+                        // SIGNED-CONTENT PLACEHOLDER
+                        'Add another meal',
+                        style: AppDesignTokens.body.copyWith(
+                            color: AppDesignTokens.ctaTerracotta, fontWeight: FontWeight.w900),
                       ),
                     ],
                   ),
                 ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: AppDesignTokens.spaceXS, right: AppDesignTokens.spaceXS),
-            child: IconButton(
-              onPressed: onRemove,
-              icon: Icon(Icons.close_rounded, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
-              style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
-              tooltip: 'Remove meal',
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DayDetailMealRow extends StatelessWidget {
+  const _DayDetailMealRow({required this.meal, required this.onOpen, required this.onRemove});
+
+  final _PlannedMeal meal;
+  final VoidCallback onOpen;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final isFridgeRescue = meal.recipe?.origin?.isRescueEligible ?? false;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppDesignTokens.surfaceCream,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+        border: Border.all(color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        children: [
+          Expanded(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onOpen,
+                splashFactory: NoSplash.splashFactory,
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          meal.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppDesignTokens.subheadline,
+                        ),
+                      ),
+                      if (isFridgeRescue) ...[
+                        const SizedBox(width: 8),
+                        const ProvenanceLeafBadge(compact: true),
+                      ],
+                      if (meal.source == kFromSavedMealSource) ...[
+                        const SizedBox(width: 8),
+                        const FromSavedChip(),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
             ),
+          ),
+          // Sibling of the InkWell above, never nested inside it: an
+          // IconButton inside an ancestor InkWell loses the gesture arena and
+          // its onPressed silently never fires (fixed once already, in the
+          // slot cards this screen replaced — do not re-nest it).
+          IconButton(
+            onPressed: onRemove,
+            tooltip: 'Remove meal',
+            icon: Icon(Icons.close_rounded, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.75)),
+            style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
           ),
         ],
       ),
@@ -1472,37 +1747,44 @@ class _SheetOptionTile extends StatelessWidget {
   }
 }
 
-enum _Aisle { produce, dairy, meat, pantry }
-
-class _AisleItem {
-  const _AisleItem({required this.aisle, required this.item, this.qty});
-
-  final _Aisle aisle;
-  final String item;
-
-  /// Free-text quantity, when known — used for the ingredient-pill preview
-  /// on a planned meal's card.
-  final String? qty;
-}
-
 class _PlannedMeal {
-  const _PlannedMeal({required this.title, required this.source, required this.aisleItems, required this.recipe, this.cooked = false});
+  const _PlannedMeal({
+    required this.title,
+    required this.source,
+    required this.recipe,
+    this.cooked = false,
+  });
 
   final String title;
-  final String source;
-  final List<_AisleItem> aisleItems;
 
-  /// Full Cook Mode payload so the user can cook this planned meal.
+  /// How the meal got into this day (Fridge Clearer / Custom AI Craving /
+  /// [kFromSavedMealSource]). A routing marker only — NOT provenance. Whether
+  /// cooking it counts as a rescue is decided by [recipe]'s own
+  /// `RecipeOrigin`, never by this string.
+  final String source;
+
+  /// Full Cook Mode payload so the user can cook this planned meal, with
+  /// `origin` and `originEnteredIngredients` intact.
   final CookModeRecipePayload? recipe;
 
-  /// True once a Cook Mode session for this planned meal has genuinely
-  /// finished. The slot stays visible either way — this only adds a badge.
+  /// Mirrors the persisted `user_meal_plans.is_cooked` column.
+  ///
+  /// **Nothing in the app currently sets this.** The old writer — the Weekly
+  /// Planner awaiting `push<bool>` from Cook Mode — was deleted on
+  /// 2026-08-22 because the post-cook `context.go('/')` removes this page and
+  /// completes that future with null, so it never fired on a real completion.
+  /// Deriving it from the cook log instead needs a way to attribute a
+  /// finished cook to a specific (day, slot), and no such key exists: the
+  /// cook history stores only `{recipe, cookedAt}` deduplicated by title, and
+  /// `waste_ledger_events` writes `recipe_id: null`. Matching by title is
+  /// ambiguous the moment the same dish is planned twice in a week. Rows that
+  /// already carry `is_cooked = true` render correctly; see the session
+  /// record `docs/sessions/2026-08-22_weekly-planner-redesign.md`.
   final bool cooked;
 
-  _PlannedMeal copyWith({String? title, String? source, List<_AisleItem>? aisleItems, CookModeRecipePayload? recipe, bool? cooked}) => _PlannedMeal(
+  _PlannedMeal copyWith({String? title, String? source, CookModeRecipePayload? recipe, bool? cooked}) => _PlannedMeal(
     title: title ?? this.title,
     source: source ?? this.source,
-    aisleItems: aisleItems ?? this.aisleItems,
     recipe: recipe ?? this.recipe,
     cooked: cooked ?? this.cooked,
   );

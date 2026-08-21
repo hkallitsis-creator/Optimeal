@@ -16,6 +16,20 @@ abstract final class AppDesignTokens {
   static const Color deepForest = Color(0xFF1E3A2B);
   static const Color textCharcoal = Color(0xFF2C3531);
 
+  /// Today's tint on the Weekly Planner — the one day card that is warmer than
+  /// cream. Value is the canonical champagne; the redesign spec named the hue
+  /// ("champagne tint") but not the hex, so it lives here as the single place
+  /// to adjust it.
+  static const Color champagneTint = Color(0xFFF7E7CE);
+
+  /// A completed cook that earned a Waste Ledger rescue. Hex is from the
+  /// Weekly Planner redesign spec, verbatim.
+  static const Color cookedCountedGold = Color(0xFFC77E1F);
+
+  /// A completed cook that did not count toward the ledger. Deliberately a
+  /// neutral, not a red or an amber: not counting is not a failure.
+  static const Color cookedNeutralGray = Color(0xFF8B918E);
+
   // Spacing
   static const double spaceXS = 8;
   static const double spaceSM = 16;

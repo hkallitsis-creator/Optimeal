@@ -13,6 +13,68 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Weekly Planner screen redesign
+
+Full prompt and report: `docs/sessions/2026-08-22_weekly-planner-redesign.md`.
+**The named spec file (`design_spec_weekly_planner_2026-08-21.md`) does not
+exist anywhere in the repo, on disk, or in git history** — the build followed
+the prompt's own "Core structure per spec" section, with every gap between
+that list and a shippable screen listed as an ambiguity in the session record
+rather than silently decided.
+
+**The screen.** All seven days as one vertical list. Deleted: the day-chip
+strip and the one-day-at-a-time body it drove, the Slot 1 / Slot 2 cards, the
+ingredient-pill preview (and the whole `_Aisle`/`aisle_items` write path with
+it), and `_openPlannedMeal`'s `await push<bool>`. Row states now come from a
+pure top-level `plannerMealStateFor(...)` — Empty, Planned, `cookable`
+(today only, the screen's only terracotta button), `cookedCounted` (gold) and
+`cookedNotCounted` (neutral gray). A day's second meal is added, and any meal
+removed, from a new day-detail **sheet**, so filled rows stay clean; empty
+days open the signed three-source add sheet, which is untouched. The "from
+saved" chip moved into that day detail — it is a routing marker, not
+provenance; the leaf badge stays on the week list. Three tokens added
+(`champagneTint`, `cookedCountedGold` `#C77E1F`, `cookedNeutralGray`); no hex
+in widgets.
+
+**Week toggle.** This week ↔ next week, no past. `user_meal_plans` has no week
+column, so next week rides the same integer — `day_index` 0–6 this week, 7–13
+next. Verified against live dev: no CHECK constraint, 7 and 13 insert fine,
+and older readers that filter to 0–6 drop those rows rather than mis-read
+them. **Neither week is anchored to a date, so nothing rolls over** — already
+true of the single-week model, now visible; fixing it needs a `week_start`
+column.
+
+**Cooked-state derivation — half shipped, half STOPPED.** Shipped: the
+`push<bool>` mechanism is gone, the planner subscribes to
+`AppDataChanges.ledger` and `.cookLog` (coalescing both signals from one cook
+into one re-read), and counted-vs-not is derived from the recipe's own
+`RecipeOrigin.isRescueEligible` — no ledger join, because there is no join key
+to use. Stopped: **nothing sets `user_meal_plans.is_cooked` any more**,
+because a finished cook cannot be attributed to a `(day, slot)`. The cook log
+dedupes by title (so it cannot even count two cooks of one dish),
+`waste_ledger_events` writes `recipe_id: null`, and the local weekly store
+keeps only `{ts, ingredients}`. Title matching is ambiguous the moment a dish
+is planned twice, so no heuristic was invented. Recorded as CLAUDE.md roadmap
+item 27 with two candidate fixes for Harris to rule on.
+
+**Bug found and fixed on the way:** `user_meal_plans` upserts never overwrote
+an occupied slot. PostgREST resolves `merge-duplicates` against the primary
+key unless given a conflict target, and the app sends no `id`, so every
+overwrite fell through to `23505` and into the planner's "Couldn't save. Tap
+to retry.". Fixed with `onConflict: 'user_id,day_index,slot_index'`; both
+behaviours verified against live dev with an authenticated session.
+
+**221 tests passing** (198 + 23), `flutter analyze` **46 issues**, 0 errors
+and 0 warnings, none in any file this session touched. The morning's
+placement-race regression test passes unmodified against the new screen. Dev
+was exercised with a real anonymous session and all four probe rows deleted
+afterwards; no migrations, no schema changes, no deploys, nothing on prod.
+
+Also corrected here and in CLAUDE.md: the stale claim that **anonymous
+sign-ins are disabled on dev**. They were enabled and device-verified
+2026-08-21, and re-verified from this repo on 2026-08-22 — `POST
+/auth/v1/signup` returns a real 3-part JWT with `is_anonymous: true`.
+
 ## 2026-08-22 — Stale-read-after-write: one invalidation mechanism
 
 Full prompt and report: `docs/sessions/2026-08-22_stale-read-fix.md`.
@@ -398,7 +460,8 @@ Supabase access sits behind `SavedRecipesBackend`, the same
 injectable-abstraction pattern as `ConnectivityMonitor` and
 `FridgeNudgeScheduler`, so all 25 new tests run against an in-memory fake that
 enforces the real unique constraint and upsert semantics. **No live database
-and no anonymous sign-in required** — the latter is currently disabled on dev.
+and no anonymous sign-in required.** (At the time of writing anonymous
+sign-ins were also disabled on dev; they were enabled on 2026-08-21.)
 
 `watchSavedRecipes` is an explicit `StreamController`, not `async*`: the first
 draft used `await for` over the change signal and hung on `cancel()`, since the
@@ -696,6 +759,9 @@ low-level Win32 struct debugging for a one-field toggle was judged past
 the point of a reasonable automated attempt. **Needs a manual one-time
 toggle**: Supabase Dashboard → `suuafglvrxrllnhipkiv` project →
 Authentication → Sign In / Providers → enable "Allow anonymous sign-ins".
+**Resolved 2026-08-21**: the toggle was turned on and device-verified.
+Re-verified 2026-08-22 from this repo — `POST /auth/v1/signup` against dev
+returns a real 3-part JWT with `is_anonymous: true`, `role: authenticated`.
 
 **`flutter analyze`/`flutter test` unaffected throughout**: 59 issues / 22
 passing, matching the pre-existing baseline at every checkpoint in this

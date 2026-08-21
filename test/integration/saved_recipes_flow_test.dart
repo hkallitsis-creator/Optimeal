@@ -104,6 +104,12 @@ void main() {
       expect(find.text('Rescue Dish'), findsOneWidget);
       expect(find.byType(ProvenanceLeafBadge), findsOneWidget,
           reason: 'leaf comes from the recipe payload, through the intent');
+
+      // The "from saved" chip is a routing marker, not provenance, so the
+      // 2026-08-22 redesign moved it off the week list and into the day's
+      // detail. It still has to survive the intent hop.
+      await tester.tap(find.text('Rescue Dish'));
+      await tester.pumpAndSettle();
       expect(find.byType(FromSavedChip), findsOneWidget,
           reason: 'chip comes from kFromSavedMealSource on the intent');
     });
@@ -122,6 +128,11 @@ void main() {
       await tester.tap(find.text('Monday'));
       await tester.pumpAndSettle();
 
+      expect(find.text('Craving Dish'), findsOneWidget);
+      expect(find.byType(ProvenanceLeafBadge), findsNothing);
+
+      await tester.tap(find.text('Craving Dish'));
+      await tester.pumpAndSettle();
       expect(find.byType(FromSavedChip), findsOneWidget);
       expect(find.byType(ProvenanceLeafBadge), findsNothing);
     });
@@ -256,7 +267,7 @@ void main() {
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('+ Add Meal').first);
+      await tester.tap(find.text('Nothing planned').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('My recipes'));
       await tester.pumpAndSettle();

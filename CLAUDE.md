@@ -89,6 +89,46 @@ request or when a task needs the "why."
   "Rescues come from Fridge Clearer recipes — this one didn't." The
   celebration sheet's signed one-icon/one-line/one-CTA structure was left
   untouched; it never claimed launch-surface gating.
+- **Weekly Planner — redesigned 2026-08-22.** All seven days as one vertical
+  list. **Dead and deleted**: the day-chip strip, the one-day-at-a-time body
+  it drove, the "Slot 1 / Slot 2" cards, the ingredient-pill preview (and the
+  whole `_Aisle`/`aisle_items` write path with it — the column still exists
+  and old rows keep their values, nothing reads it), and
+  `_openPlannedMeal`'s `await context.push<bool>` cooked-marking mechanism.
+  Day/row states are `PlannerMealState` — Empty, Planned, `cookable`
+  (today only, the screen's only terracotta button, "Cook"), `cookedCounted`
+  (gold `AppDesignTokens.cookedCountedGold`) and `cookedNotCounted` (neutral
+  gray). The rules live in the pure top-level `plannerMealStateFor(...)`, not
+  in a widget. **Counted-ness is NOT a ledger lookup**: it is
+  `recipe.origin.isRescueEligible`, the same signed rule
+  `selectLedgerVerdict` uses, so it needs no join — `waste_ledger_events`
+  carries no recipe reference at all (Cook Mode writes `recipe_id: null`).
+  A day's second meal is added, and any meal removed, from the **day-detail
+  sheet** (tap a filled day) so filled rows stay clean; empty days open the
+  signed three-source add sheet directly. Colours come from
+  `AppDesignTokens` only (`champagneTint`, `cookedCountedGold`,
+  `cookedNeutralGray` were added for this).
+  **Week toggle — this week ↔ next week, no past.** `user_meal_plans` has no
+  week column, so next week rides the same `day_index`: 0–6 this week, 7–13
+  next (`kNextWeekOffset`). Verified against live dev — `day_index` has no
+  CHECK constraint and accepts 7 and 13. **Neither week is anchored to a
+  calendar date, so nothing rolls over**; that was already true of the
+  single-week model and the toggle makes it visible. Fixing it needs a
+  `week_start` column, i.e. a migration.
+  **Nothing currently sets `user_meal_plans.is_cooked`** — see the roadmap
+  item; the two cooked states render correctly from stored rows but cannot be
+  reached live until a cook can be attributed to a (day, slot).
+- **`user_meal_plans` upserts MUST pass the conflict target** (fixed
+  2026-08-22). `WeeklyPlanBackend.upsertSlot` sends
+  `onConflict: 'user_id,day_index,slot_index'`
+  (`SupabaseWeeklyPlanBackend.slotConflictTarget`). PostgREST resolves
+  `merge-duplicates` against the PRIMARY KEY unless told otherwise, and the
+  app never sends an `id`, so without the target every overwrite of an
+  occupied slot failed `23505` into the planner's "Couldn't save. Tap to
+  retry." Verified both ways against live dev with an authenticated session.
+  Same class of trap as the RLS-vs-grants lesson below: two Postgres
+  mechanisms, and having the unique constraint is not the same as PostgREST
+  using it.
 - **Stale-read invalidation — one mechanism, write-driven (2026-08-22).**
   `DataChangeSignal` (`lib/services/data_change_signal.dart`) is a broadcast
   `Stream<void>` announced by whichever service performed a write; mounted
@@ -104,10 +144,10 @@ request or when a task needs the "why."
   navigation callback** — navigation callbacks are structurally unreliable
   here (`RouteObserver` forwards only `didPop`, and Flutter marks an exiting
   page that still owns a modal sheet as *complete*, not *pop*).
-  The Weekly Planner is the exception, because its reader and writer are the
-  same `State`: it carries a generation guard (`_writeEpoch`) so a load whose
-  epoch moved while it was in flight is discarded and re-read once slot
-  writes settle. Its `user_meal_plans` access sits behind the injectable
+  The Weekly Planner subscribes to both signals too (2026-08-22) and
+  additionally carries a generation guard (`_writeEpoch`), because its reader
+  and writer are the same `State`: a load whose epoch moved while it was in
+  flight is discarded and re-read once slot writes settle. Its `user_meal_plans` access sits behind the injectable
   `WeeklyPlanBackend` (`lib/services/weekly_plan_service.dart`), same pattern
   as `SavedRecipesBackend`. Full reasoning:
   `docs/sessions/2026-08-22_stale-read-fix.md`.
@@ -137,7 +177,8 @@ request or when a task needs the "why."
   `recentlyCooked()` (cap `kRecentlyCookedReadModelLimit` = 10) and
   `timesCooked`/`hasBeenCooked`. Supabase sits behind the injectable
   `SavedRecipesBackend`, so everything is unit-testable with no live DB and
-  no anonymous sign-in (disabled on dev). Cooking a saved recipe touches it;
+  no anonymous sign-in needed for the tests themselves. Cooking a saved
+  recipe touches it;
   cooking an unsaved one never silently saves it.
   **UI**: `MyRecipesScreen` is two sections separated by **card weight, not
   labels** — saved = cream cards, recently-cooked = quiet rows. Cards show
@@ -155,7 +196,9 @@ request or when a task needs the "why."
   `WasteLedgerCelebrationSheet`; there is a regression test on each.
   Weekly Planner has a third source — the add sheet is a **pane swap in one
   sheet** (sheets never stack). Planned rows carry the leaf badge (recipe's
-  own origin) and a separate "from saved" chip (`kFromSavedMealSource`).
+  own origin); the separate "from saved" chip (`kFromSavedMealSource`) moved
+  into the day-detail sheet in the 2026-08-22 planner redesign, since it is a
+  routing marker rather than provenance.
   **Gotcha that cost real debugging time**: `watchSavedRecipes()` returns a
   NEW stream per call — subscribing from `build()` resubscribes on every
   emission and hangs. Every consumer must hold the stream in State.
@@ -356,8 +399,10 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 22. Post-cook finish flow, two open UX gaps: (1) after the celebration → What You Learned → share card sequence, the app should return to Home once the share card is dismissed but currently sits idle; (2) if the share card is skipped/missed it's lost — should persist somewhere so it can be shared later.
 23. Custom AI Craving via Weekly Planner writes the generated recipe directly into the day slot with no confirmation step — open product question, linked to item 1 (nowhere to show a corrected recipe if the safety validator ever flags one on this surface).
 24. Custom AI Craving sheet's prompt-guidance copy (title, placeholder, 4 quick-pick chips) needs a rewrite — flagged as awkward, not rewritten. The feature's name itself ("Custom AI Craving") also reads awkwardly — naming question for Harris, not resolved.
-25. **Per-surface cost attribution — done 2026-08-21 (dev).** `api_call_cost_log.surface` (migration `20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart` (`fridge_clearer` / `custom_creator` / `chef_sos` — three, matching the three live call sites). `cost_usd` now bills cached prompt tokens at the cached rate rather than the full input rate; it was overstating by ~14% and would have grown with the hit rate. `ask-chef-harris` is **v5 on dev**. Still open: **three dev-only migrations have never been pushed to prod** (`20260818120000`, `20260820120000`/`20260820130000`, `20260821120000`), and prod still runs the older function version. Also unfixed: `user_id` is null on every `api_call_cost_log` row on dev, because `decodeUserIdFromAuthHeader` needs a 3-part JWT and dev (anonymous sign-in disabled) sends the `sb_publishable_…` key as the bearer — per-user attribution is dead on dev, may work on prod, not checked.
+25. **Per-surface cost attribution — done 2026-08-21 (dev).** `api_call_cost_log.surface` (migration `20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart` (`fridge_clearer` / `custom_creator` / `chef_sos` — three, matching the three live call sites). `cost_usd` now bills cached prompt tokens at the cached rate rather than the full input rate; it was overstating by ~14% and would have grown with the hit rate. `ask-chef-harris` is **v5 on dev**. Still open: **three dev-only migrations have never been pushed to prod** (`20260818120000`, `20260820120000`/`20260820130000`, `20260821120000`), and prod still runs the older function version. Also open: `user_id` was null on every `api_call_cost_log` row on dev, because `decodeUserIdFromAuthHeader` needs a 3-part JWT and the app was sending the `sb_publishable_…` key as the bearer. **Anonymous sign-ins are now ENABLED on dev** (turned on and device-verified 2026-08-21; re-verified 2026-08-22 — `POST /auth/v1/signup` returns a real 3-part JWT with `is_anonymous: true`, `role: authenticated`), so a signed-in client now sends a decodable bearer and per-user attribution should work. Not re-checked against live rows yet.
 26. **Curriculum drawers are matched against the prompt's own boilerplate — found 2026-08-21, not fixed (behavioural, Harris's call).** `_buildCurriculumAddendum` keyword-matches the whole assembled request, and the recipe surfaces' static block embeds the literal curriculum key list and cut vocabulary. So `sauteing`, `braising`, `julienne`, `dice`, `food_storage` and `leftovers` are present on **every** recipe-surface call regardless of what the user asked for, and both surfaces always pull the same few drawers from keyword noise rather than relevance. The 2026-08-21 prompt-ordering fix deliberately **preserved** this (it passes the static block into the match text) so that an ordering change stayed an ordering change — fixing it alters what reaches the model. Related to item 9.
+
+27. **A finished cook cannot be attributed to a Weekly Planner day slot — BLOCKED, needs Harris's ruling.** The redesigned planner renders both cooked states (gold check = counted, gray = didn't count) from `user_meal_plans.is_cooked`, and *counted-ness* is fully derived (`RecipeOrigin.isRescueEligible`) with no ledger join. What is missing is the other half: **nothing sets `is_cooked` any more.** The old writer — the planner awaiting `push<bool>` from Cook Mode — was deleted 2026-08-22 because the post-cook `context.go('/')` removes the planner page and completes that future with `null`, so it never fired on a real completion. Deriving it from data instead is not possible with the current schema: the cook log stores `{recipe, cookedAt}` **deduplicated by title** (so two cooks of one dish collapse to one entry), `waste_ledger_events` writes `recipe_id: null` and the local weekly store keeps only `{ts, ingredients}` — no recipe reference anywhere. Matching by title alone is ambiguous the moment the same dish is planned on two days, and would also mark a planner slot for a cook launched from Home. **Two candidate fixes, both Harris's call**: (a) carry the originating `(day_index, slot_index)` through `CookModeLaunchRequest` → `CookModeRecipePayload` so the completion knows which slot it belongs to; or (b) give `waste_ledger_events` / the cook log a real recipe key and attribute on that. Do not invent a title-matching heuristic in the meantime.
 
 ## Working conventions
 
