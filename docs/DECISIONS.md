@@ -7,6 +7,58 @@ Read on request, not auto-loaded.
 
 ---
 
+## The compatibility validator is live, and what it is allowed to conclude (23 August 2026)
+
+**Binding rule:** the app, not the model, owns cooking times. The model is
+given a closed list of **74 keys** and declares a `cooking_times_key` per cooked
+ingredient; the app resolves that key to a band from
+`lib/data/cooking_times.dart` and does the arithmetic itself. **A time or a band
+stated by the model is never authoritative and is never read.** This is option C
+as signed on 21 August, with the key-list size question answered: all 74 rows,
+not a coarser vocabulary.
+
+`lib/data/cooking_times.dart` is **derived from `docs/cooking_times_table.md`**
+and a parity test re-parses the committed doc on every run. The doc is the
+source of truth in fact, not by convention: changing a band in Dart alone fails
+the build.
+
+**Size scaling is by time multiplier, never by band shift.** ×0.4 / ×1 / ×2.5 /
+×5 against the row's reference cut, then the four shape adjustments, then the
+band is whatever the scaled time falls into. This was already the paper's word
+against the earlier session prompt's; it is now also the code's.
+
+**Tolerance is one band, and a violation never reaches the user as a warning.**
+Up to two correction regenerations, then silent fail-open: the recipe is served,
+the flag is logged, nothing is shown and nothing is blocked. The correction note
+goes on the variable half of the prompt, never the cached prefix.
+
+**Red lentils remains the one pending exception.** The key is declarable so the
+model can name the row, but it resolves to no band and every timing check skips
+it. The printed 18 min / B5 must not be used. Closing it is a one-number edit to
+the doc; the parity test then forces the Dart to match.
+
+**Two readings that go beyond the literal paper, adopted on measured evidence
+and open to reversal:**
+
+1. A step at `heat: off_heat` is never checked. Chopping and assembling are not
+   co-cooking, and real output lists four ingredients against a prep step
+   routinely.
+2. Rule 4 compares a band against the **cumulative heated minutes from the step
+   that adds the ingredient to the end of the recipe**, not one step's stated
+   duration. An ingredient added early keeps cooking; stewing beef browned for
+   10 minutes and then simmered for 90 has 100 minutes, not 10.
+
+Together these took the observed flag rate on real dev output from 4-in-7 to
+1-in-7, so they carry most of the feature's running cost. Reasoning and the raw
+observations: `docs/sessions/2026-08-23_compat-validator.md`.
+
+**Rule 5 of the paper — poultry and pork verification — is deliberately NOT in
+this validator.** It is food safety, which is roadmap item 1, with its own
+signed registry and its own decisions about blocking versus correcting. Timing
+and safety are not merged.
+
+---
+
 ## The cooking-times table and the safety hazard registry are VERIFIED (22 August 2026)
 
 **Binding rule:** `docs/cooking_times_table.md` and

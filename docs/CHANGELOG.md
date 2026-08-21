@@ -13,6 +13,63 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Compatibility validator on declared cooking-times keys (option C)
+
+Full prompt and report: `docs/sessions/2026-08-23_compat-validator.md`.
+409 tests passing (346 baseline + 63 new), 44 analyze issues (unchanged).
+Feature commit `c84ba3b`.
+
+The signed cooking-times table went live in the app, as a closed vocabulary
+rather than as data in the prompt. The model receives 74 snake_case keys and
+nothing else; it declares a `cooking_times_key` per cooked ingredient; the app
+resolves key → band locally and checks the one-band compatibility rule itself.
+This is the fifth instance of the closed-vocabulary pattern, after the cut
+vocabulary, `curriculum_lesson_id`, `sensory_cue` and `technique_diagram_id`.
+
+- `lib/data/cooking_times.dart` is **derived** from `docs/cooking_times_table.md`;
+  `test/data/cooking_times_parity_test.dart` re-parses the committed doc on
+  every run and fails on drift in row count, key set, band or minutes. The doc
+  stays the single source of truth in fact, not only by convention.
+- Size scaling is the signed **time multipliers** (×0.4 / ×1 / ×2.5 / ×5) plus the
+  four shape adjustments — not band shifts. The doc's own worked example
+  (×0.4 on a 12 min B4 lands in B2, a two-band drop) is a test.
+- `red_lentils_simmer` is declarable but resolves to no band, so every timing
+  check skips it. One number in the doc closes it — and the parity test then
+  forces the Dart to follow.
+- The three package-instruction rows keep their band for compatibility and
+  never produce a duration flag, per Harris's ruling.
+- `lamb_diced_2cm_dice`, the sheet's only dual-band row, passes if either of
+  its bands is compatible.
+- Violations produce a machine-readable flag, then up to **2** correction
+  regenerations (note appended to the variable half, never the cached prefix),
+  then **silent fail-open**: the recipe is served, the flag is logged, the user
+  is never told. Wired into Fridge Clearer stage 2 and the Custom creator;
+  stage 1 is not validated.
+- Flags go to `CompatibilityFlagLog`, a 50-entry local ring buffer. No table —
+  see the session record for when one starts being worth it.
+- Retries bill to new cost surfaces `fridge_clearer_retry` /
+  `custom_creator_retry`, so the retry rate is a `GROUP BY` on
+  `api_call_cost_log`. No edge-function change was needed.
+
+**Measured, not estimated.** The injected block is **2,418 chars** (1,547 of
+them the bare key list) and costs **+796 prompt tokens, +11.5%**, on a real dev
+call — 6,945 → 7,741 on the same recipe request. A warm call showed 7,552 of
+7,741 tokens cached (97.6%), confirming the block sits wholly inside the
+cacheable prefix. That is +$0.0020 cold and +$0.0010 warm per recipe, against
+the option-C estimate of $0.00016 warm.
+
+**Observed on 7 real dev generations**: the model never invented a key outside
+the closed list; 3–5 ingredients per recipe carried one. Reading rules 3 and 4
+literally off the paper flagged 4 of 7 (57%); two precision decisions — off-heat
+steps are never checked, and rule 4 compares against cumulative heated time
+from the adding step rather than one step's duration — took that to **1 of 7
+(14%)**, and the one survivor was a genuine violation. The retry was fired for
+real against dev and came back clean on the first correction. The deliberately
+incompatible scenario did **not** fire — the model staggered the adds despite
+the user's insistence — and is reported as such rather than claimed.
+
+---
+
 ## 2026-08-22 — Signed scans transcribed: cooking times + safety hazard registry
 
 Full prompt and report: `docs/sessions/2026-08-22_transcription.md`.
