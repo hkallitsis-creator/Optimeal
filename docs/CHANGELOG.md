@@ -13,6 +13,53 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Onboarding redesign (correctness, not restyle)
+
+Full prompt and report: `docs/sessions/2026-08-22_onboarding-redesign.md`.
+
+**Every new user was being shown promises the app no longer keeps.** Slide 3
+advertised "steps, checkboxes, and timing" (checkboxes died with the pre-cook
+merge); slide 4 advertised a Weekly Planner / Shopping List two-way sync (the
+shopping list was cut entirely in August); slide 2 quoted an unsourced CHF
+waste statistic; slide 1 was invented-persona-era text defending Chef Harris
+against being "a chatbot pretending to know knife skills".
+
+**And Skip was broken outright** — a bug found while reading the routing, not
+listed in the spec. `_skipToPaywall` set only the local `hasSeenOnboarding`
+flag, never `profile.onboarded`, then routed to `/paywall`. The router's own
+redirect (`!isOnboarded && !isOnboarding → onboarding`) bounced the user
+straight back, so Skip never skipped. Skip and Finish now share one
+`_completeOnboarding()` that performs all three writes — local flag, profile
+flag, `user_profiles` upsert — in that order, so navigation never waits on the
+network.
+
+**Routing.** Skip → Home. Finish → Home. The paywall leaves the onboarding path
+entirely until pricing is real. The paywall screen itself is untouched.
+**App-wide census**: exactly one route into `/paywall` remains —
+`UpgradePromptSheet`, a mid-app upsell — and a test asserts that list exactly.
+It composes with the 30243cf dev redirect: onboarding no longer *asks* for the
+paywall, and in a dev build the route would redirect to Home even if something
+did.
+
+**Content and visuals.** The structure (PageView, ivory card, dots, one
+terracotta CTA, Skip hidden on slide 4) was sound and is kept. Each slide's
+champagne icon tile is replaced by a real visual: a spoon-and-bowl line
+illustration and a fridge illustration in the signed diagram family (black
+outlines, terracotta fills), then **previews of real UI** — a miniature sage
+cue panel that pre-teaches green = Chef Harris teaching, and a miniature week
+strip showing the planner's three real day states (gold ✓ / today · Cook /
+dashed +). The previews are static by design.
+
+**Dev affordance.** A "Replay onboarding" row in a Developer section of
+Profile, behind `kIsDevEnvironment`, so it is compiled out of release builds.
+It calls `OnboardingScreen.resetForReplay`, which clears **both** completion
+flags — the local one and the `profile.onboarded` the router actually gates on.
+
+`flutter test`: **334 passing** (319 + 15). `flutter analyze`: **44 issues**,
+0 errors, 0 warnings. Palette guard green.
+
+---
+
 ## 2026-08-22 — Fridge Clearer redesign: one-screen input + two-stage ideas
 
 Full prompt and report: `docs/sessions/2026-08-22_fridge-clearer-redesign.md`.

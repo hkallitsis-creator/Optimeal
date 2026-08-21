@@ -3,10 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:optimeal/nav.dart';
 import 'package:optimeal/models/user_profile.dart';
 import 'package:optimeal/services/confidence_climb_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
+import 'package:optimeal/config/app_environment.dart';
+import 'package:optimeal/screens/onboarding_screen.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 import 'package:optimeal/widgets/curriculum_drawer_content.dart';
 
@@ -154,6 +157,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// Dev affordance: put the user back at slide 1.
+  ///
+  /// The reset itself lives on [OnboardingScreen.resetForReplay] — it knows
+  /// about onboarding's own completion flags, and keeping it there means it
+  /// can be tested without pumping this screen, which needs a live Supabase
+  /// instance.
+  Future<void> _replayOnboarding() async {
+    await OnboardingScreen.resetForReplay(
+        context.read<UserProfileController>());
+    if (!mounted) return;
+    context.go(AppRoutes.onboarding);
   }
 
   @override
@@ -425,6 +441,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     )
                   : _SecuredAccountStatusCard(email: userEmail),
             ),
+            // Dev builds only — `kIsDevEnvironment` is a genuine compile-time
+            // constant, so this whole branch is stripped from a prod build
+            // exactly like the DEV badge, rather than merely hidden.
+            if (kIsDevEnvironment) ...[
+              const SizedBox(height: 14),
+              ProfileSectionCard(
+                title: 'Developer',
+                subtitle: 'Dev builds only. Not present in a release build.',
+                child: _ReplayOnboardingRow(onReplay: _replayOnboarding),
+              ),
+            ],
             const SizedBox(height: 18),
             FilledButton.icon(
               onPressed: _saving ? null : _save,
@@ -992,6 +1019,45 @@ class _StepperButton extends StatelessWidget {
         ),
         overlayColor: const WidgetStatePropertyAll(Colors.transparent),
         shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(999))),
+      ),
+    );
+  }
+}
+
+/// Dev-only row that sends the user back through onboarding.
+class _ReplayOnboardingRow extends StatelessWidget {
+  const _ReplayOnboardingRow({required this.onReplay});
+
+  final Future<void> Function() onReplay;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: AppDesignTokens.quietRowSurface,
+      borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+      child: InkWell(
+        onTap: onReplay,
+        borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          child: Row(
+            children: [
+              Icon(Icons.replay_rounded,
+                  size: 20,
+                  color: AppDesignTokens.textCharcoal.withValues(alpha: 0.70)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('Replay onboarding',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w800)),
+              ),
+              Icon(Icons.chevron_right_rounded,
+                  color: AppDesignTokens.textCharcoal.withValues(alpha: 0.55)),
+            ],
+          ),
+        ),
       ),
     );
   }

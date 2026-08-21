@@ -58,6 +58,29 @@ request or when a task needs the "why."
   it is a sales CTA, and gold never goes on a CTA. Remaining audited-but-unfixed
   semantic drift is listed in
   `docs/sessions/2026-08-22_palette-v12-swap.md`.
+- **Onboarding — four slides, both exits complete, no paywall (2026-08-22).**
+  Structure kept (PageView, ivory card per slide, dots, one terracotta CTA,
+  Skip top-right hidden on slide 4); content, visuals and routing replaced.
+  **Skip and Finish share one `_completeOnboarding()`** which writes all three
+  of: `hasSeenOnboarding`, `profile.onboarded = true`, and the `user_profiles`
+  upsert, in that order. This is load-bearing, not tidiness — the router
+  redirects `!isOnboarded` back to onboarding from anywhere, and the old
+  `_skipToPaywall` set only the local flag, so **Skip was completely broken**
+  (it bounced straight back). `OnboardingScreen.resetForReplay` is the inverse
+  and must stay symmetric.
+  **Routing: Skip → Home, Finish → Home.** The paywall is out of the onboarding
+  path until pricing is real. **Exactly one route into `/paywall` remains
+  app-wide** — `UpgradePromptSheet` — pinned by a test that asserts that list
+  exactly; it composes with the dev-build redirect (below).
+  Slides carry real visuals (`lib/widgets/onboarding_visuals.dart`): two line
+  illustrations in the signed diagram family, plus **previews of real UI** — a
+  mini sage cue panel and a mini week strip showing the planner's three day
+  states — which pre-teach the colours before the user meets them. Previews are
+  static on purpose.
+  **Removed stale promises, pinned by a test that walks all four slides**:
+  checkboxes (dead since the pre-cook merge), the shopping list (cut in
+  August), an unsourced CHF statistic, and the "not a chatbot" framing.
+  Dev-only "Replay onboarding" row in Profile, behind `kIsDevEnvironment`.
 - **Fridge Clearer is one input screen + two-stage generation (2026-08-22).**
   Input: one no-scroll screen — ingredients hero card, ONE settings card with
   three rows (Time / Gear / For), pinned terracotta CTA. Suggestion chips and

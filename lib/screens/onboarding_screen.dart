@@ -7,11 +7,64 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
+import 'package:optimeal/widgets/onboarding_visuals.dart';
 
+/// The four-slide intro every new user sees.
+///
+/// Redesigned 2026-08-22 against the signed spec card. The **structure** was
+/// sound and is kept verbatim: a `PageView` of four slides, one ivory card per
+/// slide, dots, one terracotta CTA, Skip top-right hidden on the last slide.
+/// What changed is content, visuals and routing — all three were shipping
+/// promises the app no longer keeps:
+///
+/// - Slide 3 advertised "steps, checkboxes, and timing". Checkboxes died with
+///   the pre-cook merge.
+/// - Slide 4 advertised "Weekly Planner + Shopping List stay in sync. Two-way."
+///   The shopping list was cut entirely in August.
+/// - Slide 2 quoted a CHF waste statistic that was never sourced.
+/// - Slide 1 was invented-persona-era text defending Chef Harris against being
+///   "a chatbot pretending to know knife skills" — leading with what he is not.
+/// - **Skip was broken outright**: it routed to `/paywall` having set only the
+///   local `hasSeenOnboarding` flag and never `profile.onboarded`, so the
+///   router's own redirect (`!isOnboarded && !isOnboarding → onboarding`)
+///   bounced the user straight back. See [_completeOnboarding].
+///
+/// Routing is now: **Skip → Home. Finish → Home.** The paywall leaves the
+/// onboarding path entirely until pricing is real (`docs/DECISIONS.md` still
+/// records 15 CHF as a placeholder). The paywall screen itself is untouched.
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
 
   static const String hasSeenOnboardingKey = 'hasSeenOnboarding';
+
+  /// How many slides there are. Read by the dots and the last-slide checks so
+  /// adding a fifth slide cannot leave one of them behind.
+  static const int slideCount = 4;
+
+  /// Puts a user back at slide 1. Dev affordance only — see the Developer
+  /// section of the Profile screen, which is compiled out of release builds.
+  ///
+  /// Resets **both** halves of "has this user been onboarded", because they
+  /// are independent and the router gates on the second one: the local
+  /// `hasSeenOnboarding` flag, and `profile.onboarded`. Clearing only the flag
+  /// leaves the user exactly where they were — which is the same trap the old
+  /// Skip fell into (see [_OnboardingScreenState._completeOnboarding]).
+  ///
+  /// Deliberately does not touch the `user_profiles` row: this replays an
+  /// intro, it does not delete an account.
+  static Future<void> resetForReplay(UserProfileController profile) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(hasSeenOnboardingKey);
+    } catch (e) {
+      debugPrint('Replay onboarding: failed to clear local flag: $e');
+    }
+    try {
+      await profile.updateProfile(profile.profile.copyWith(onboarded: false));
+    } catch (e) {
+      debugPrint('Replay onboarding: failed to reset profile flag: $e');
+    }
+  }
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -21,6 +74,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   late final PageController _pageController;
   int _index = 0;
   bool _persisted = false;
+
+  bool get _isLastSlide => _index >= OnboardingScreen.slideCount - 1;
 
   Future<void> _upsertUserProfileToSupabase() async {
     final currentUserId = Supabase.instance.client.auth.currentUser?.id;
@@ -32,7 +87,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     try {
       final profile = context.read<UserProfileController>().profile;
-      final result = await Supabase.instance.client.from('user_profiles').upsert({
+      final result =
+          await Supabase.instance.client.from('user_profiles').upsert({
         'id': currentUserId,
         'name': profile.displayName,
         'language': profile.language,
@@ -76,54 +132,61 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
-  Future<void> _skipToPaywall() async {
+  /// The single completion path, shared by Skip and Finish.
+  ///
+  /// **Skip must complete exactly as thoroughly as Finish.** All three writes
+  /// happen, in this order, on both:
+  ///
+  /// 1. `hasSeenOnboarding` in SharedPreferences,
+  /// 2. `profile.onboarded = true` on the local controller,
+  /// 3. the `user_profiles` upsert.
+  ///
+  /// Step 2 is not optional and is not decorative: the router redirects
+  /// `!isOnboarded` back to onboarding from anywhere, so a skip that set only
+  /// the local flag left the user pinned to this screen. That is what the old
+  /// `_skipToPaywall` did, which is why Skip never worked.
+  ///
+  /// Order matters for a second reason: the controller's `notifyListeners()`
+  /// is the router's `refreshListenable`, so flipping it before the Supabase
+  /// write means navigation never waits on the network. The write is
+  /// best-effort and never blocks completion.
+  Future<void> _completeOnboarding() async {
     await _setHasSeenOnboarding();
     if (!mounted) return;
-    context.go('/paywall');
-  }
 
-  Future<void> _nextOrFinish() async {
-    if (_index < 3) {
-      await _pageController.nextPage(duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
-      return;
-    }
-
-    debugPrint("Onboarding complete - navigating to home");
-    await _setHasSeenOnboarding();
-    if (!mounted) return;
-
-    // IMPORTANT: Update the local profile controller first so `isOnboarded`
-    // flips to true and `notifyListeners()` triggers the GoRouter redirect
-    // refreshListenable. This must not be gated by the Supabase write.
     try {
       final profileController = context.read<UserProfileController>();
       final current = profileController.profile;
-
-      // Ensure all onboarding-collected fields are applied alongside onboarded=true.
-      // In this screen, those values are already stored on the controller's profile
-      // as the user proceeds through onboarding. We preserve them and only flip
-      // `onboarded` here.
-      final next = current.copyWith(onboarded: true, createdAt: current.createdAt);
+      final next =
+          current.copyWith(onboarded: true, createdAt: current.createdAt);
       await profileController.updateProfile(next);
-      debugPrint('Local profile updated: onboarded=${profileController.profile.onboarded}');
+      debugPrint(
+          'Local profile updated: onboarded=${profileController.profile.onboarded}');
     } catch (e, st) {
-      // Non-fatal: we still navigate, but redirect bouncing may persist if this fails.
-      debugPrint('Failed to update local UserProfileController during onboarding: $e');
+      debugPrint(
+          'Failed to update local UserProfileController during onboarding: $e');
       debugPrint('$st');
     }
 
-    // Backend persistence (non-blocking for navigation). Keep internals unchanged.
     try {
       await _upsertUserProfileToSupabase();
     } catch (e, st) {
-      // Non-fatal: onboarding must still complete.
       debugPrint('Onboarding profile save threw unexpectedly: $e');
       debugPrint('$st');
     }
 
-    debugPrint('Navigating to home now');
     if (!mounted) return;
     context.go(AppRoutes.home);
+  }
+
+  Future<void> _nextOrFinish() async {
+    if (!_isLastSlide) {
+      await _pageController.nextPage(
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic);
+      return;
+    }
+    await _completeOnboarding();
   }
 
   @override
@@ -137,32 +200,52 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               controller: _pageController,
               onPageChanged: (value) async {
                 setState(() => _index = value);
-                if (value >= 3) await _setHasSeenOnboarding();
+                if (value >= OnboardingScreen.slideCount - 1) {
+                  await _setHasSeenOnboarding();
+                }
               },
               children: const [
+                // 1 — Chef Harris. Leads with what he IS. No hardcoded year
+                // count, no defensive "not a chatbot" framing.
                 _OnboardingSlide(
-                  icon: Icons.restaurant_menu_rounded,
-                  headline: "Cooking shouldn't feel like debugging a recipe.",
+                  visual: SpoonAndBowlIllustration(),
+                  // PLACEHOLDER — final verbatim rides with the persona batch.
+                  headline: 'Hi, I\'m Chef Harris.',
+                  // PLACEHOLDER
                   subtext:
-                      "I'm Chef Harris — a real culinary educator. I’ll teach technique, timing, and how to not cry over onions. I'm not a chatbot pretending to know knife skills.",
+                      'A real cooking teacher — years of real students, real pans, '
+                      'real mistakes fixed. I\'ll teach you the way I teach in person.',
                 ),
+                // 2 — Fridge Clearer. No CHF statistic: it was never sourced
+                // or signed, so it is out until it is both.
                 _OnboardingSlide(
-                  icon: Icons.savings_outlined,
-                  headline: "Swiss households waste 600+ CHF a year… in food that never gets eaten.",
+                  visual: FridgeIllustration(),
+                  // PLACEHOLDER
+                  headline: 'The best dinner is already in your fridge.',
+                  // PLACEHOLDER
                   subtext:
-                      "OptiMeal's Fridge Clearer turns ‘what's about to die in my crisper’ into dinner — fast.",
+                      'Tell me what needs using up and I\'ll turn it into dinner. '
+                      'Every ingredient you rescue gets counted.',
                 ),
+                // 3 — Cook Mode. The visual pre-teaches sage = teaching.
                 _OnboardingSlide(
-                  icon: Icons.timer_outlined,
-                  headline: "Cook Mode is steps, checkboxes, and timing — not a novel.",
+                  visual: MiniCuePanelPreview(),
+                  // PLACEHOLDER
+                  headline: 'One step at a time — and how to tell it\'s working.',
+                  // PLACEHOLDER
                   subtext:
-                      "Structured, timed, checkbox-driven cooking with live timers and heat cues. So you move like a chef, not a panicked squirrel.",
+                      'Cook Mode shows you one step, then what to look, listen and '
+                      'smell for. Cook by your senses, not the clock.',
                 ),
+                // 4 — Planner + My recipes.
                 _OnboardingSlide(
-                  icon: Icons.checklist_rounded,
-                  headline: "Weekly Planner keeps every meal mapped out, Monday to Sunday.",
+                  visual: MiniWeekStripPreview(),
+                  // PLACEHOLDER
+                  headline: 'Plan your week. Keep your winners.',
+                  // PLACEHOLDER
                   subtext:
-                      "Drop recipes into any day, then jump straight into Cook Mode when it's time to cook.",
+                      'Drop a recipe into any day and cook it straight from there. '
+                      'Bookmark anything you liked and it\'s waiting in My recipes.',
                 ),
               ],
             ),
@@ -171,18 +254,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               right: 0,
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 180),
-                child: _index < 3
+                child: !_isLastSlide
                     ? Padding(
                         key: const ValueKey('skip'),
-                        padding: const EdgeInsets.only(right: AppDesignTokens.spaceSM, top: AppDesignTokens.spaceXS),
+                        padding: const EdgeInsets.only(
+                            right: AppDesignTokens.spaceSM,
+                            top: AppDesignTokens.spaceXS),
                         child: TextButton(
-                          onPressed: _skipToPaywall,
+                          // Skip completes onboarding exactly as Finish does —
+                          // see _completeOnboarding.
+                          onPressed: _completeOnboarding,
                           style: TextButton.styleFrom(
                             foregroundColor: AppDesignTokens.textCharcoal,
                             splashFactory: NoSplash.splashFactory,
                             overlayColor: Colors.transparent,
                             textStyle: AppDesignTokens.caption,
                           ),
+                          // PLACEHOLDER
                           child: const Text('Skip'),
                         ),
                       )
@@ -213,12 +301,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         style: FilledButton.styleFrom(
                           backgroundColor: AppDesignTokens.ctaTerracotta,
                           foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppDesignTokens.radiusButton)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                  AppDesignTokens.radiusButton)),
                           splashFactory: NoSplash.splashFactory,
                           overlayColor: Colors.transparent,
-                          textStyle: AppDesignTokens.subheadline.copyWith(color: Colors.white),
+                          textStyle: AppDesignTokens.subheadline
+                              .copyWith(color: Colors.white),
                         ),
-                        child: Text(_index >= 3 ? "Let's Cook" : 'Next'),
+                        // PLACEHOLDER (both labels)
+                        child: Text(_isLastSlide ? 'Let\'s cook' : 'Next'),
                       ),
                     ),
                     const SizedBox(height: AppDesignTokens.spaceSM),
@@ -233,62 +325,68 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
+/// One slide: an ivory card holding a small visual, a headline and a subtext.
+///
+/// The visual replaced a champagne-tinted icon tile. Slides 1–2 are line
+/// illustrations; 3–4 are previews of real UI, so a user meets the sage
+/// teaching panel and the planner's day states before they ever reach them.
 class _OnboardingSlide extends StatelessWidget {
-  final IconData icon;
+  const _OnboardingSlide({
+    required this.visual,
+    required this.headline,
+    required this.subtext,
+  });
+
+  final Widget visual;
   final String headline;
   final String subtext;
 
-  const _OnboardingSlide({required this.icon, required this.headline, required this.subtext});
-
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppDesignTokens.spaceLG, 40, AppDesignTokens.spaceLG, 140),
+      padding: const EdgeInsets.fromLTRB(
+          AppDesignTokens.spaceLG, 40, AppDesignTokens.spaceLG, 140),
       child: Align(
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: AppDesignTokens.surfaceIvory,
-              borderRadius: BorderRadius.circular(AppDesignTokens.radiusCard),
-              border: Border.all(color: cs.outline.withValues(alpha: 0.12), width: 1),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 18, offset: const Offset(0, 10)),
-              ],
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(AppDesignTokens.spaceLG),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: AppDesignTokens.champagneTint,
-                      borderRadius: BorderRadius.circular(AppDesignTokens.radiusChip),
-                      border: Border.all(color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.20)),
+          child: SingleChildScrollView(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppDesignTokens.surfaceIvory,
+                borderRadius:
+                    BorderRadius.circular(AppDesignTokens.radiusCard),
+                border: Border.all(
+                    color:
+                        AppDesignTokens.textCharcoal.withValues(alpha: 0.12),
+                    width: 1),
+                boxShadow: AppDesignTokens.cardShadow,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(AppDesignTokens.spaceLG),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    visual,
+                    const SizedBox(height: AppDesignTokens.spaceLG),
+                    Text(
+                      headline,
+                      style: AppDesignTokens.headline.copyWith(height: 1.18),
+                      textAlign: TextAlign.left,
                     ),
-                    child: Icon(icon, color: AppDesignTokens.ctaTerracotta, size: 26),
-                  ),
-                  const SizedBox(height: AppDesignTokens.spaceLG),
-                  Text(
-                    headline,
-                    style: AppDesignTokens.headline.copyWith(height: 1.18),
-                    textAlign: TextAlign.left,
-                  ),
-                  const SizedBox(height: AppDesignTokens.spaceMD),
-                  Text(
-                    subtext,
-                    style: AppDesignTokens.body.copyWith(height: 1.5, color: AppDesignTokens.textCharcoal.withValues(alpha: 0.80)),
-                    textAlign: TextAlign.left,
-                  ),
-                  const SizedBox(height: AppDesignTokens.spaceSM),
-                ],
+                    const SizedBox(height: AppDesignTokens.spaceMD),
+                    Text(
+                      subtext,
+                      style: AppDesignTokens.body.copyWith(
+                          height: 1.5,
+                          color: AppDesignTokens.textCharcoal
+                              .withValues(alpha: 0.80)),
+                      textAlign: TextAlign.left,
+                    ),
+                    const SizedBox(height: AppDesignTokens.spaceSM),
+                  ],
+                ),
               ),
             ),
           ),
@@ -305,20 +403,21 @@ class _DotsIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(4, (i) {
+      children: List.generate(OnboardingScreen.slideCount, (i) {
         final isActive = i == activeIndex;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
-          margin: const EdgeInsets.symmetric(horizontal: AppDesignTokens.spaceXS / 2),
+          margin: const EdgeInsets.symmetric(
+              horizontal: AppDesignTokens.spaceXS / 2),
           width: isActive ? 18 : 8,
           height: 8,
           decoration: BoxDecoration(
-            color: isActive ? AppDesignTokens.ctaTerracotta : cs.outline.withValues(alpha: 0.22),
+            color: isActive
+                ? AppDesignTokens.ctaTerracotta
+                : AppDesignTokens.textCharcoal.withValues(alpha: 0.22),
             borderRadius: BorderRadius.circular(999),
           ),
         );
