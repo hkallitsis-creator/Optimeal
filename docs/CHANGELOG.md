@@ -13,6 +13,58 @@ fidelity.
 
 ---
 
+## 2026-08-22 — Signed scans transcribed: cooking times + safety hazard registry
+
+Full prompt and report: `docs/sessions/2026-08-22_transcription.md`.
+**Docs and data only — no application code was touched** (346 tests, 44 analyze
+issues, both unchanged).
+
+**The scans are now in the repo and are the authority.** Six PDFs into
+`docs/scans/` with a provenance README mapping every original filename. The two
+documents had each been scanned in two halves under names that said nothing
+about their contents; they were identified by extracting the embedded JPEG page
+images from the PDF byte streams (`pdftoppm` is not installed) and reading the
+printed page numbers out of each footer.
+
+**Cooking Times Reference** — signed by Chef Harris 17.08.2026, all seven
+checklist items ticked. Transcribed to `docs/cooking_times_table.md`: **74
+ingredient rows** (42 vegetables, 21 proteins, 11 starches and grains), 6 bands,
+4 size-scaling multipliers, 4 shape adjustments, 5 density classes, the
+one-band compatibility rule, the poultry/pork verification wording, and the
+whole-muscle-versus-minced reasoning.
+
+**Safety Hazard Registry** — signed by Chef Harris 21.08.26, all eight
+checklist items ticked. Transcribed to `docs/safety_hazard_registry.md`:
+**11 active rules H1–H11, all KEEP-ticked and none struck**; one filled blank
+entry (H12, Fermentation Processes, handwritten, H13 left empty); and the
+three-item someday list (shellfish, raw flour/dough, raw sprouts) recorded
+**INACTIVE** and explicitly out of validator v1.
+
+**Six flags raised; both documents are ⚠ AWAITING VERIFICATION and neither is
+recorded as VERIFIED in `docs/DECISIONS.md` yet.** The two that matter most are
+the same shape: H3's four draft temperatures (poultry 74 °C, minced 71 °C, pork
+whole-muscle 63 °C + 3 min rest, fish 63 °C) and H6's 2-hour danger-zone limit
+are both printed as drafts needing correction, both have a **ticked** checklist
+item saying they were corrected, and both have an **empty** correction box. The
+values were transcribed as printed and flagged rather than assumed, because
+they are the numbers the deterministic safety layer would be built from.
+
+The other four flags are on the starches table: which row "16–20 min." belongs
+to, which row a between-rows tick confirms, "even faster" on red lentils with no
+replacement number, and how three "trust the package, not the clock"
+annotations should be encoded at all.
+
+Two mismatches with the brief are worth recording: the paper specifies size
+scaling as **time multipliers** (× 0.4 / × 1 / × 2.5 / × 5), not band shifts,
+and the two are not equivalent; and it carries **74 rows** where the validator
+design anticipated "~26 declared keys".
+
+A third worksheet — **Sensory Doneness Cues**, 4 pages — was found alongside the
+other two. Committed to `docs/scans/` so it cannot be lost, deliberately not
+read: it is outside this session's scope and needs its own pass.
+
+---
+
 ## 2026-08-22 — Generation loading card ("waiting card")
 
 Full prompt and report: `docs/sessions/2026-08-22_loading-card.md`.
