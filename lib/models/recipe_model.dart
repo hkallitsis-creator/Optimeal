@@ -1,3 +1,5 @@
+import 'package:optimeal/data/cooking_times.dart';
+
 /// Closed vocabulary for [RecipeIngredient.cut] — the single source of
 /// truth used both to build the AI-facing schema prompt (so the model is
 /// told exactly these values are allowed) and to validate the AI's
@@ -70,21 +72,33 @@ class RecipeIngredient {
   /// parse as null rather than failing — see [RecipeIngredient.fromJson].
   final String? cut;
 
+  /// Which row of the signed cooking-times table this ingredient is, from the
+  /// closed [CookingTimes.allKeys] list — the fifth instance of the
+  /// closed-vocabulary pattern. The model declares only the key; the app
+  /// resolves it to a band locally (signed option C). Null when the model
+  /// declared nothing, declared something outside the list, or the ingredient
+  /// genuinely has no row (seasonings, oil, stock). Null means "no timing
+  /// check possible here", which is the fail-open outcome by construction.
+  final String? cookingTimesKey;
+
   RecipeIngredient({
     required this.name,
     required this.amount,
     required this.unit,
     this.cut,
+    this.cookingTimesKey,
   });
 
   factory RecipeIngredient.fromJson(Map<String, dynamic> json) {
     final rawCut = json['cut'];
     final cut = (rawCut is String && ingredientCutVocabulary.contains(rawCut)) ? rawCut : null;
+    final rawKey = json['cooking_times_key'];
     return RecipeIngredient(
       name: json['name'] as String,
       amount: (json['amount'] as num).toDouble(),
       unit: json['unit'] as String,
       cut: cut,
+      cookingTimesKey: (rawKey is String && CookingTimes.isKnown(rawKey)) ? rawKey : null,
     );
   }
 
@@ -93,6 +107,7 @@ class RecipeIngredient {
         'amount': amount,
         'unit': unit,
         'cut': cut,
+        'cooking_times_key': cookingTimesKey,
       };
 
   /// Returns a new ingredient with amount scaled by [factor],
@@ -103,6 +118,7 @@ class RecipeIngredient {
       amount: amount * factor,
       unit: unit,
       cut: cut,
+      cookingTimesKey: cookingTimesKey,
     );
   }
 }

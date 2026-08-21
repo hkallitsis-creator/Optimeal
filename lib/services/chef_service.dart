@@ -30,13 +30,28 @@ const String kChefCallSurfaceChefSos = 'chef_sos';
 /// whatever `surface` string arrives without validating it against any list.
 const String kChefCallSurfaceFridgeIdeas = 'fridge_ideas';
 
+/// Compatibility-correction retries (2026-08-23), one per recipe surface.
+///
+/// A retry is a real, separately billed OpenAI call, and the whole point of
+/// capping retries at two is that their cost is bounded and *visible*. Giving
+/// them their own surface values means the retry rate is a number readable
+/// straight off `api_call_cost_log` — `fridge_clearer` vs
+/// `fridge_clearer_retry` — rather than being inferred from call counts.
+///
+/// Same as [kChefCallSurfaceFridgeIdeas]: no edge-function change was needed,
+/// because `ask-chef-harris` stores whatever `surface` string arrives.
+const String kChefCallSurfaceFridgeClearerRetry = 'fridge_clearer_retry';
+const String kChefCallSurfaceCustomCreatorRetry = 'custom_creator_retry';
+
 /// Every value the client may send as `surface`. The edge function does not
 /// validate against this list (it stores whatever string arrives); this
 /// exists so tests can assert the call sites stay in sync.
 const List<String> kChefCallSurfaces = [
   kChefCallSurfaceFridgeClearer,
+  kChefCallSurfaceFridgeClearerRetry,
   kChefCallSurfaceFridgeIdeas,
   kChefCallSurfaceCustomCreator,
+  kChefCallSurfaceCustomCreatorRetry,
   kChefCallSurfaceChefSos,
 ];
 

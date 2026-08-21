@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:optimeal/data/cooking_times.dart';
 import 'package:optimeal/models/user_profile.dart';
+import 'package:optimeal/prompts/recipe_static_prompts.dart';
 import 'package:optimeal/services/chef_service.dart';
 
 /// Locks the cache-prefix ordering contract fixed on 2026-08-21.
@@ -148,18 +150,60 @@ void main() {
     });
   });
 
+  group('the cooking-times key list in the static prefix', () {
+    test('both recipe prompts carry the whole closed list and the schema field', () {
+      for (final block in [
+        buildFridgeClearerStaticPrompt(),
+        buildCustomCreatorStaticPrompt(),
+      ]) {
+        expect(block, contains('"cooking_times_key"'));
+        expect(block, contains(CookingTimes.promptKeyList),
+            reason: 'the model can only declare from a list it was given');
+        for (final sample in ['spinach_whole_leaf', 'beef_stewing_3cm_dice', 'red_lentils_simmer']) {
+          expect(block, contains(sample));
+        }
+      }
+    });
+
+    test('stage 1 does not carry it — it asks for no ingredients to key', () {
+      final ideas = buildFridgeIdeasStaticPrompt();
+      expect(ideas, isNot(contains('cooking_times_key')));
+      expect(ideas, isNot(contains(CookingTimes.promptKeyList)),
+          reason: 'the menu-of-three call is deliberately tiny');
+    });
+
+    test('the list is in the STATIC half, so it stays inside the cached prefix', () {
+      // The whole point of option C: ~800 prompt tokens that never vary, and
+      // therefore cost the cached rate on every call after the first.
+      final assembled = ChefService().buildUserMessage(
+        userQuery: 'something entirely per-call',
+        staticPromptBlock: buildFridgeClearerStaticPrompt(),
+      );
+      expect(
+        assembled.indexOf(CookingTimes.promptKeyList),
+        lessThan(assembled.indexOf('something entirely per-call')),
+        reason: 'anything per-call must land after every static byte',
+      );
+    });
+  });
+
   group('surface identifiers', () {
-    test('there are exactly four, matching the four live call sites', () {
+    test('there are exactly six, matching the six live call sites', () {
       // Four since the Fridge Clearer went two-stage (2026-08-22): the
       // menu-of-three call and the full-recipe call are separate surfaces, so
-      // browsing cost and committing cost can be told apart.
-      expect(kChefCallSurfaces, hasLength(4));
+      // browsing cost and committing cost can be told apart. Six since the
+      // compatibility validator (2026-08-23): each recipe surface's
+      // correction retries bill to their own value, so the retry rate is
+      // readable straight off api_call_cost_log rather than inferred.
+      expect(kChefCallSurfaces, hasLength(6));
       expect(
         kChefCallSurfaces,
         containsAll(<String>[
           kChefCallSurfaceFridgeClearer,
+          kChefCallSurfaceFridgeClearerRetry,
           kChefCallSurfaceFridgeIdeas,
           kChefCallSurfaceCustomCreator,
+          kChefCallSurfaceCustomCreatorRetry,
           kChefCallSurfaceChefSos,
         ]),
       );
@@ -167,8 +211,10 @@ void main() {
 
     test('values are stable strings — they are stored in a DB column', () {
       expect(kChefCallSurfaceFridgeClearer, 'fridge_clearer');
+      expect(kChefCallSurfaceFridgeClearerRetry, 'fridge_clearer_retry');
       expect(kChefCallSurfaceFridgeIdeas, 'fridge_ideas');
       expect(kChefCallSurfaceCustomCreator, 'custom_creator');
+      expect(kChefCallSurfaceCustomCreatorRetry, 'custom_creator_retry');
       expect(kChefCallSurfaceChefSos, 'chef_sos');
     });
   });

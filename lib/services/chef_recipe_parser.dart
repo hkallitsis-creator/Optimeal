@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:optimeal/data/cooking_times.dart';
 import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 import 'package:optimeal/models/recipe_model.dart';
@@ -147,6 +148,46 @@ String _readDeclaredTechniqueDiagramIdForStep(dynamic stepJson, String stepTitle
   return trimmed;
 }
 
+/// Reads a single ingredient's declared "cooking_times_key" — fifth instance
+/// of the closed-vocabulary pattern (after cut, curriculum_lesson_id,
+/// sensory_cue and technique_diagram_id), and the one behind the compatibility
+/// validator. Unlike the others this is genuinely optional for most rows:
+/// oil, salt, stock and herbs have no row on the signed table and are supposed
+/// to declare nothing. Absence is therefore silent; only a declared value
+/// OUTSIDE the closed list is noteworthy, and those are collected into
+/// [unknownKeys] so the model's real miss rate against the list is a measured
+/// number rather than a guess.
+///
+/// Returning null means "no timing check on this ingredient" — the fail-open
+/// outcome, produced by construction rather than by a special case downstream.
+String? _readDeclaredCookingTimesKey(
+  Map<String, dynamic> ingredientJson,
+  String ingredientName,
+  List<String>? unknownKeys,
+) {
+  final raw = ingredientJson['cooking_times_key'];
+  if (raw == null) return null;
+  if (raw is! String) {
+    debugPrint('parseChefRecipeJson: cooking_times_key present but not a string '
+        '(got: $raw) for ingredient "$ingredientName"');
+    return null;
+  }
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  // The model writes "none" for an ingredient with no row, copying the
+  // convention `technique_diagram_id` taught it — observed on real dev output
+  // in this exact field. That is the field working as intended, not a miss,
+  // so it must not be counted as a rejected key.
+  if (trimmed == 'none') return null;
+  if (!CookingTimes.isKnown(trimmed)) {
+    debugPrint('parseChefRecipeJson: cooking_times_key "$trimmed" not in the closed '
+        'list for ingredient "$ingredientName"');
+    unknownKeys?.add(trimmed);
+    return null;
+  }
+  return trimmed;
+}
+
 /// Shared parser for Chef Harris's recipe JSON. Extracted 2026-08-15 from 4
 /// independently duplicated `_parseCookModeRecipe` methods (Fridge Clearer,
 /// Custom AI Recipe Creator, Fridge Countdown's "Use Tonight", and — until
@@ -173,6 +214,7 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
   required ChefRecipeSurface surface,
   bool useGenericFallbacks = true,
   bool readDescription = false,
+  List<String>? unknownCookingTimesKeys,
 }) async {
   try {
     final decoded = jsonDecode(_extractJsonObject(raw));
@@ -205,7 +247,14 @@ Future<CookModeRecipePayload?> parseChefRecipeJson({
           final unit = (m['unit'] ?? '').toString().trim();
           final rawCut = m['cut'];
           final cut = (rawCut is String && ingredientCutVocabulary.contains(rawCut)) ? rawCut : null;
-          structuredIngredients.add(RecipeIngredient(name: name, amount: amount, unit: unit.isEmpty ? 'piece' : unit, cut: cut));
+          final cookingTimesKey = _readDeclaredCookingTimesKey(m, name, unknownCookingTimesKeys);
+          structuredIngredients.add(RecipeIngredient(
+            name: name,
+            amount: amount,
+            unit: unit.isEmpty ? 'piece' : unit,
+            cut: cut,
+            cookingTimesKey: cookingTimesKey,
+          ));
           final formatted = amount > 0 ? '${_formatIngredientAmount(amount)}${unit.isEmpty ? '' : ' $unit'} $name'.trim() : name;
           ingredients.add(formatted);
         } else {

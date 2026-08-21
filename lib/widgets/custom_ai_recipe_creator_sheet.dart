@@ -8,6 +8,7 @@ import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/recent_generations_service.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
+import 'package:optimeal/services/validated_recipe_generation.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
 import 'package:optimeal/widgets/generation_loading_card.dart';
@@ -144,26 +145,39 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
         ...RecentGenerationsService.instance.recent(),
         ...recentCookHistory.map((e) => e.recipe.title),
       ];
-      final reply = await _chefService.askChefHarris(
-        userQuery: prompt,
-        staticPromptBlock: staticPrompt,
-        recipeTitle: userPrompt,
-        profile: profile,
-        forceJsonObject: true,
-        recentDishTitles: recentDishTitles,
-        excludeDishFormats: false,
-        surface: kChefCallSurfaceCustomCreator,
+      // The correction note rides on the VARIABLE half. `staticPrompt` is the
+      // cached prefix and must stay byte-identical between the first attempt
+      // and every retry — see ChefService.buildUserMessage.
+      final result = await generateValidatedRecipe(
+        logSurface: kChefCallSurfaceCustomCreator,
+        attempt: ({String? correctionNote, required bool isRetry}) =>
+            _chefService.askChefHarris(
+          userQuery: correctionNote == null ? prompt : '$prompt\n\n$correctionNote',
+          staticPromptBlock: staticPrompt,
+          recipeTitle: userPrompt,
+          profile: profile,
+          forceJsonObject: true,
+          recentDishTitles: recentDishTitles,
+          excludeDishFormats: false,
+          surface: isRetry
+              ? kChefCallSurfaceCustomCreatorRetry
+              : kChefCallSurfaceCustomCreator,
+        ),
+        parse: (raw, unknownKeys) => parseChefRecipeJson(
+          raw: raw,
+          portions: portions,
+          fallbackTitle: 'Custom Recipe',
+          surface: ChefRecipeSurface.customAiRecipeCreator,
+          unknownCookingTimesKeys: unknownKeys,
+        ),
       );
       if (!mounted) return;
-      final payload = await parseChefRecipeJson(
-        raw: reply,
-        portions: portions,
-        fallbackTitle: 'Custom Recipe',
-        surface: ChefRecipeSurface.customAiRecipeCreator,
-      );
-      if (!mounted) return;
+
+      // Fail-open: a still-flagged recipe is served silently, exactly like a
+      // clean one. Only a real generation or parse failure shows an error.
+      final payload = result.recipe;
       if (payload == null) {
-        debugPrint('CustomAiRecipeCreatorSheet: invalid JSON from model. Raw: $reply');
+        debugPrint('CustomAiRecipeCreatorSheet: no usable recipe from the model.');
         setState(() => _error = 'Chef Harris returned something unexpected. Try again.');
         return;
       }

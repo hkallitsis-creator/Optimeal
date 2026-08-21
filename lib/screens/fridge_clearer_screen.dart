@@ -14,6 +14,7 @@ import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/fridge_clearer_entry_service.dart';
 import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/services/recent_generations_service.dart';
+import 'package:optimeal/services/validated_recipe_generation.dart';
 import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -366,27 +367,44 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
         ...recentCookHistory.map((e) => e.recipe.title),
       ];
 
-      final reply = await _chefService.askChefHarris(
-        userQuery: _buildRecipeVariablePrompt(idea, portions),
-        staticPromptBlock: buildFridgeClearerStaticPrompt(),
-        recipeTitle: idea.title,
-        profile: profile,
-        forceJsonObject: true,
-        recentDishTitles: recentDishTitles,
-        surface: kChefCallSurfaceFridgeClearer,
+      // The correction note is appended to the VARIABLE half, never to the
+      // static block — the static block is the cached prefix, and a per-call
+      // correction inside it would break caching for every recipe call.
+      final variablePrompt = _buildRecipeVariablePrompt(idea, portions);
+      final result = await generateValidatedRecipe(
+        logSurface: kChefCallSurfaceFridgeClearer,
+        attempt: ({String? correctionNote, required bool isRetry}) =>
+            _chefService.askChefHarris(
+          userQuery: correctionNote == null
+              ? variablePrompt
+              : '$variablePrompt\n\n$correctionNote',
+          staticPromptBlock: buildFridgeClearerStaticPrompt(),
+          recipeTitle: idea.title,
+          profile: profile,
+          forceJsonObject: true,
+          recentDishTitles: recentDishTitles,
+          surface: isRetry
+              ? kChefCallSurfaceFridgeClearerRetry
+              : kChefCallSurfaceFridgeClearer,
+        ),
+        parse: (raw, unknownKeys) => parseChefRecipeJson(
+          raw: raw,
+          portions: portions,
+          fallbackTitle: idea.title,
+          surface: ChefRecipeSurface.fridgeClearer,
+          useGenericFallbacks: false,
+          readDescription: true,
+          unknownCookingTimesKeys: unknownKeys,
+        ),
       );
       if (!mounted) return;
 
-      var recipe = await parseChefRecipeJson(
-        raw: reply,
-        portions: portions,
-        fallbackTitle: idea.title,
-        surface: ChefRecipeSurface.fridgeClearer,
-        useGenericFallbacks: false,
-        readDescription: true,
-      );
+      // Fail-open: a recipe that still carries flags is served exactly like a
+      // clean one, with nothing shown to the user. Only a genuine generation
+      // or parse failure reaches the error card.
+      var recipe = result.recipe;
       if (recipe == null) {
-        debugPrint('FridgeClearer: stage-2 returned invalid JSON. Raw: $reply');
+        debugPrint('FridgeClearer: stage-2 produced no usable recipe.');
         if (!mounted) return;
         setState(() => _generationError =
             'Couldn\'t build that recipe right now. Please try again.');
