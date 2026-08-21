@@ -13,6 +13,86 @@ fidelity.
 
 ---
 
+## 2026-08-21 — Consolidated small-fixes build (6 items)
+
+Full prompt and report: `docs/sessions/2026-08-21_consolidated-small-fixes.md`.
+Two read-only sessions earlier the same day are recorded alongside it.
+
+**1. Bookmark on the generation surfaces.** Closed the gap where a freshly
+generated recipe could not be saved until after it had been cooked. Both
+generation results now mount the existing `SaveRecipeBookmarkButton`:
+`GeneratedRecipeCard` (renamed from `_GeneratedRecipeCard` purely so a widget
+test can construct it) beside the recipe title, and
+`GeneratedRecipeActionsSheet` in its header row. **No new persistence flow was
+needed** — the button keys on the title via `recipeKeyFor` and `save` writes
+the payload inline, which is exactly what the post-cook verdict and
+celebration sheets already do for not-yet-saved recipes. Cook Now remains the
+only primary action on both. 6 new tests.
+
+**2. Prompt-assembly ordering — the cedf753 fix was being defeated
+downstream.** The prompt named `index.ts` as the place the assembly happens;
+it isn't. The edge function only forwards `systemPrompt`/`userMessage` — the
+ordering lives in `ChefService` (Dart). Fixed there.
+`askChefHarris` now takes `staticPromptBlock` and writes it immediately after
+the static header, ahead of the profile block and everything per-call; the two
+callers' static halves moved to the new `lib/prompts/recipe_static_prompts.dart`
+and their variable halves ship as `userQuery`. Assembly extracted into the
+testable `ChefService.buildUserMessage`, with the ordering contract in its doc
+comment and locked by `test/services/chef_prompt_ordering_test.dart`.
+**Live A/B on dev, three ingredient sets, genuinely varying every call:**
+
+| ordering | call 1 | call 2 | call 3 |
+|---|---|---|---|
+| pre-fix (control) | 0 cached | 0 cached | 0 cached |
+| post-fix | 0 cached | 2944 cached | 2944 cached |
+
+`prompt_tokens` were identical in both arms (6924 / 7012 / 6953), confirming
+the change was ordering only, not content. 42.3% of a ~6,950-token prompt now
+served from cache on every repeat call, where before it was zero.
+
+**3. Cost logging.** `cost_usd` now bills cached prompt tokens at gpt-4o's
+cached rate (\$1.25/1M) and only the uncached remainder at full rate — it was
+charging everything at full rate, overstating by ~14% and growing with the hit
+rate. Measured saving on the warm verification rows: \$0.00368/call, which is
+exactly 2944 × \$1.25/1M. Added `api_call_cost_log.surface` (migration
+`20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart`
+— `fridge_clearer` / `custom_creator` / `chef_sos`, **three**, matching the
+three live call sites (`_ChefSuggestionSheet` was the fourth until 2026-08-20).
+Deliberately no CHECK constraint on the column: the client owns the vocabulary,
+and a constraint would mean a new surface can't ship without a migration, with
+a lost cost row as the failure mode. `ask-chef-harris` deployed to **dev only,
+v5**, `verify_jwt` still true; prod untouched.
+
+**4. Ledger explainer + verdict copy.** Home's explainer carries Harris's
+approved wording verbatim, replacing "Fridge Clearer cooks count toward it."
+(which described the pre-2026-08-20 launch-surface rule). The not-counted
+verdict was reframed from launch-surface to origin: "Rescues come from Fridge
+Clearer recipes — this one didn't." The celebration sheet was left alone — its
+signed one-icon/one-line/one-CTA structure never claimed surface gating, and
+the example wording supplied was positive-framing for the counted case, which
+has no verdict-copy entry.
+
+**5. CLAUDE.md/DECISIONS corrections.** Items 3 and 6 were stale (both marked
+open; both substantially or fully shipped — see CLAUDE.md for the corrected
+text). Item 15 rewritten around the real failure and the A/B above. New items
+25 (per-surface cost attribution, done; three dev-only migrations still not on
+prod) and 26 (curriculum drawers matched against the prompt's own boilerplate
+— found here, deliberately **not** fixed, since it changes what reaches the
+model). Decision C recorded in `docs/DECISIONS.md`: cooking times reach the
+model as a declared key, never as a table.
+
+**Found, not fixed** — `_buildCurriculumAddendum` keyword-matches the whole
+assembled request, and the recipe surfaces' static block embeds the literal
+curriculum key list and cut vocabulary. So `sauteing`, `braising`, `julienne`,
+`dice`, `food_storage` and `leftovers` are present on every recipe-surface
+call regardless of what the user asked. The ordering fix deliberately kept
+this behaviour (it passes the static block into the match text) so that an
+ordering change stayed an ordering change. Roadmap item 26.
+
+Tests 177 → 190, all passing. `flutter analyze` unchanged at 54 (0 errors).
+
+---
+
 ## 2026-08-20 — Saved-recipes UI: My recipes, the universal bookmark, the planner's third source
 
 Branch `feat/saved-recipes-ui` off main (after the data-layer branch was

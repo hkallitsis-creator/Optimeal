@@ -93,8 +93,16 @@ LedgerVerdict selectLedgerVerdict({
 /// don't duplicate it). [LedgerVerdict.demo] also has no entry: no verdict
 /// is shown for it at all.
 const Map<LedgerVerdict, String> ledgerVerdictCopy = {
+  // Reworded 2026-08-21 to match the approved ledger-explainer ruling. The
+  // old line ("This wasn't cooked from your fridge — only Fridge Clearer
+  // cooks count.") described launch-surface gating, which stopped being the
+  // rule on 2026-08-20: eligibility is a property of the recipe's origin, so
+  // a Fridge Clearer recipe counts wherever it is cooked. Only the reason a
+  // cook DIDN'T count needed correcting — the counted case has no entry here
+  // (the celebration sheet serves it) and its signed one-line structure is
+  // untouched.
   LedgerVerdict.notCountedNotFridgeRecipe:
-      "This wasn't cooked from your fridge — only Fridge Clearer cooks count.",
+      "Rescues come from Fridge Clearer recipes — this one didn't.",
   LedgerVerdict.notCountedReCook:
       "Already counted the first time you cooked this — re-cooks don't count again.",
   LedgerVerdict.writeFailedQueued:

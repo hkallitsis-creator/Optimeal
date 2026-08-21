@@ -7,6 +7,57 @@ Read on request, not auto-loaded.
 
 ---
 
+## Cooking times reach the model as a declared key, not a table — option C (21 August 2026)
+
+**Binding rule:** the cooking-times vocabulary is **never sent to the model as
+a table**. The prompt carries only a short closed key list (~500 chars); the
+model declares one `cooking_times_key` per recipe or step; the app resolves
+the actual minutes locally from the signed table. Fifth instance of the
+closed-vocabulary pattern, after cut vocabulary, `curriculum_lesson_id`,
+`sensory_cue`, and `technique_diagram_id` — all four of which already work.
+
+**What this supersedes.** CLAUDE.md roadmap item 15 carried a costing for a
+"~3,400-char cooking-times block", cached vs uncached. Two problems with
+using that number to decide:
+
+1. **The table does not exist.** As of 21 August 2026 there is no
+   cooking-times data anywhere in `lib/` or `docs/` — only the *shape*
+   decision (`docs/decisions_2026-08-17.md` item 2: size scaling as band
+   shifts, one-band compatibility tolerance, whole-muscle vs minced as a
+   real split). 3,400 chars was an estimate of unwritten content, and the
+   real table could land at any size.
+2. **Option C makes its size irrelevant to prompt cost.** Only the key list
+   is recurring prompt tokens. The table itself becomes app data, priced
+   once at authoring time rather than on every call forever.
+
+**The numbers this was decided from** (21 August 2026 session, verified
+against OpenAI's published gpt-4o rates: input \$2.50/1M, cached input
+\$1.25/1M, output \$10.00/1M):
+
+| placement | tokens/call | warm | cold |
+|---|---|---|---|
+| ~3,400-char table inside the cached prefix | ~850 | \$0.00106 | \$0.00213 |
+| ~3,400-char table outside it | ~850 | \$0.00213 | \$0.00213 |
+| **~500-char key list inside the prefix (option C)** | **~125** | **\$0.00016** | **\$0.00031** |
+
+At a conservative 300 calls/month the full table costs \$0.32–\$0.64/month
+depending on placement; the key list costs \$0.05–\$0.09. The absolute
+amounts are small either way — **cost is not why this was decided.** The
+reasons are that the key list keeps the resolved minutes deterministic and
+editable without touching a prompt, keeps the table auditable as signed
+content rather than as model input, and stops the table's eventual size from
+being a prompt-architecture constraint at all.
+
+**Consequence for the safety validator (roadmap item 1):** the validator
+reads the resolved local table, not model-echoed times, which is the stronger
+position anyway — a model cannot mis-transcribe a number it never received.
+
+**Still to author:** the table content itself, and the closed key list
+derived from it. Both are Harris's, and the key list must be closed and
+stable before it enters a prompt, since it becomes part of the cached prefix.
+
+---
+
 ## Rescue provenance travels with the recipe (20 August 2026)
 
 **Binding rule:** whether a completed cook counts toward the Waste Ledger is

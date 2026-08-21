@@ -8,6 +8,28 @@ import 'package:optimeal/chef_curiculum_lookups.dart';
 import 'package:optimeal/data/diagram_keys.dart';
 import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 
+/// Call-site identifiers written to `api_call_cost_log.surface`, so
+/// per-surface cost is a stored fact instead of something inferred after the
+/// fact from prompt-size clustering (which was all the 2026-08-21 numbers
+/// session could do — the column did not exist yet).
+///
+/// **Three, not four.** `_ChefSuggestionSheet` was the fourth surface until
+/// the Home hub rework deleted it on 2026-08-20. `grep -n 'askChefHarris('
+/// lib/` is the check that this list still matches reality; a call site with
+/// no constant here logs null rather than being silently miscounted.
+const String kChefCallSurfaceFridgeClearer = 'fridge_clearer';
+const String kChefCallSurfaceCustomCreator = 'custom_creator';
+const String kChefCallSurfaceChefSos = 'chef_sos';
+
+/// Every value the client may send as `surface`. The edge function does not
+/// validate against this list (it stores whatever string arrives); this
+/// exists so tests can assert the call sites stay in sync.
+const List<String> kChefCallSurfaces = [
+  kChefCallSurfaceFridgeClearer,
+  kChefCallSurfaceCustomCreator,
+  kChefCallSurfaceChefSos,
+];
+
 /// Service for "Ask Chef Harris" AI help.
 ///
 /// Uses Dreamflow's OpenAI proxy (configured via build-time env vars).
@@ -633,7 +655,30 @@ class ChefService {
   ///   of every send being stateless. Only the most recent
   ///   [_maxSosHistoryMessages] are actually sent — see that constant's doc
   ///   comment for why it's capped.
-  Future<String> askChefHarris({
+  /// Assembles the user-message half of the payload.
+  ///
+  /// **Write order is load-bearing and is the whole point of this method
+  /// being separate and testable.** OpenAI's automatic caching is strictly
+  /// prefix-based, so everything downstream of the first byte that varies
+  /// per call is uncacheable. The order below is therefore, strictly:
+  ///
+  /// 1. the static header (identical on every call, every surface)
+  /// 2. [staticPromptBlock] — the caller's own byte-identical schema /
+  ///    vocabulary declarations, if it has any
+  /// 3. the profile block (varies per user, constant for one user)
+  /// 4. everything that genuinely varies per call: recipe title, recipe
+  ///    context, conversation history, the query itself, and the
+  ///    curriculum/variety addenda
+  ///
+  /// Before 2026-08-21 the callers' static blocks travelled inside
+  /// [userQuery] and so landed at step 4, *behind* `Recipe context:` — a
+  /// line that changes whenever the ingredient selection or craving text
+  /// changes. That put ~1,200 static tokens outside the cacheable prefix on
+  /// both recipe surfaces and silently defeated the cedf753 reorder. Do not
+  /// move [staticPromptBlock] back down, and do not add anything variable
+  /// above it.
+  @visibleForTesting
+  String buildUserMessage({
     required String userQuery,
     String? recipeTitle,
     UserProfile? profile,
@@ -642,12 +687,9 @@ class ChefService {
     bool excludeDishFormats = true,
     String? recipeContext,
     List<({bool isUser, String text})>? conversationHistory,
-  }) async {
+    String? staticPromptBlock,
+  }) {
     final query = userQuery.trim();
-    if (query.isEmpty) {
-      return 'Tell me what’s happening in the pan and I’ll jump in. Happy cooking! — Chef Harris';
-    }
-
     final userMessage = StringBuffer();
 
     final name = (profile?.displayName ?? '').trim();
@@ -684,6 +726,16 @@ class ChefService {
       userMessage.writeln('End with: Happy cooking! — Chef Harris');
     }
     userMessage.writeln();
+
+    // Step 2 of the ordering contract in this method's doc comment. The
+    // caller's static block is byte-identical on every call from that
+    // surface, so it belongs here — ahead of the profile block and far
+    // ahead of anything per-call. See the doc comment before moving this.
+    final staticBlock = (staticPromptBlock ?? '').trim();
+    if (staticBlock.isNotEmpty) {
+      userMessage.writeln(staticBlock);
+      userMessage.writeln();
+    }
 
     if (name.isNotEmpty ||
         allergies.isNotEmpty ||
@@ -754,8 +806,23 @@ class ChefService {
 
     // Bucket B: pull in only the curriculum drawers relevant to this
     // specific request (technique, topic, ingredient, pairing, cuisine).
-    final curriculumAddendum =
-        _buildCurriculumAddendum('${recipeTitle ?? ''} $query');
+    //
+    // [staticPromptBlock] is deliberately included in the match text. Before
+    // 2026-08-21 the callers' static blocks were part of [userQuery], so they
+    // were always matched against; splitting them out without adding them
+    // back here would have quietly changed which drawers get injected — a
+    // behavioural change, not the ordering change this refactor is scoped to.
+    //
+    // KNOWN, PRE-EXISTING, NOT FIXED HERE: those static blocks contain the
+    // literal curriculum key list and the cut vocabulary, so words like
+    // 'sauteing', 'braising', 'julienne', 'dice', 'food_storage' and
+    // 'leftovers' are present on EVERY recipe-surface call regardless of what
+    // the user actually asked for. Both recipe surfaces therefore always pull
+    // the same few drawers from keyword noise rather than real relevance.
+    // Fixing that means changing what reaches the model and is Harris's call
+    // — see docs/sessions/2026-08-21_consolidated-small-fixes.md.
+    final curriculumAddendum = _buildCurriculumAddendum(
+        '${recipeTitle ?? ''} ${staticPromptBlock ?? ''} $query');
     if (curriculumAddendum.isNotEmpty) {
       userMessage.writeln(curriculumAddendum);
     }
@@ -805,19 +872,71 @@ class ChefService {
       '(excludeDishFormats=$excludeDishFormats)',
     );
 
-    const systemPrompt =
-        '$_systemPersona\n\n$_curriculumCore\n\n$_recipeDifficultyByKitchenConfidence';
-    final userMessageStr = userMessage.toString();
+    return userMessage.toString();
+  }
+
+  /// The system half of the payload. Entirely static and identical on every
+  /// call from every surface, so it is the front of the cacheable prefix.
+  /// Anything appended here must itself be static — see [buildUserMessage].
+  @visibleForTesting
+  static const String systemPrompt =
+      '$_systemPersona\n\n$_curriculumCore\n\n$_recipeDifficultyByKitchenConfidence';
+
+  /// Sends one call to the `ask-chef-harris` edge function.
+  ///
+  /// [staticPromptBlock] is for callers that carry their own byte-identical
+  /// schema/vocabulary text (the two recipe surfaces). Pass it separately
+  /// rather than concatenating it into [userQuery] — see [buildUserMessage]
+  /// for why the distinction is load-bearing.
+  ///
+  /// [surface] identifies the call site for cost attribution
+  /// (`api_call_cost_log.surface`). Null is allowed and logs null rather
+  /// than guessing.
+  Future<String> askChefHarris({
+    required String userQuery,
+    String? recipeTitle,
+    UserProfile? profile,
+    bool forceJsonObject = false,
+    List<String>? recentDishTitles,
+    bool excludeDishFormats = true,
+    String? recipeContext,
+    List<({bool isUser, String text})>? conversationHistory,
+    String? staticPromptBlock,
+    String? surface,
+  }) async {
+    if (userQuery.trim().isEmpty) {
+      return 'Tell me what’s happening in the pan and I’ll jump in. Happy cooking! — Chef Harris';
+    }
+
+    final userMessageStr = buildUserMessage(
+      userQuery: userQuery,
+      recipeTitle: recipeTitle,
+      profile: profile,
+      forceJsonObject: forceJsonObject,
+      recentDishTitles: recentDishTitles,
+      excludeDishFormats: excludeDishFormats,
+      recipeContext: recipeContext,
+      conversationHistory: conversationHistory,
+      staticPromptBlock: staticPromptBlock,
+    );
+
     final Map<String, dynamic> payload = {
       'systemPrompt': systemPrompt,
       'userMessage': userMessageStr,
       'temperature': forceJsonObject ? 0.25 : 0.6,
       'forceJsonObject': forceJsonObject,
+      if (surface != null) 'surface': surface,
     };
 
+    // staticPrefixChars is the useful number now: system prompt + static
+    // header + the caller's static block is what SHOULD be cache-served on
+    // a warm call. Compare it against api_call_cost_log.cached_tokens.
+    final staticPrefixChars =
+        systemPrompt.length + (staticPromptBlock?.trim().length ?? 0);
     debugPrint(
-      'ChefService.askChefHarris payload size: systemPrompt=${systemPrompt.length} chars, '
-      'userMessage=${userMessageStr.length} chars (curriculumAddendum=${curriculumAddendum.length} chars), '
+      'ChefService.askChefHarris payload size: surface=${surface ?? 'unset'} systemPrompt=${systemPrompt.length} chars, '
+      'staticPromptBlock=${staticPromptBlock?.trim().length ?? 0} chars, userMessage=${userMessageStr.length} chars, '
+      'static prefix=$staticPrefixChars chars (~${(staticPrefixChars / 4).round()} tokens est.), '
       'total=${systemPrompt.length + userMessageStr.length} chars (~${((systemPrompt.length + userMessageStr.length) / 4).round()} tokens est.)',
     );
 

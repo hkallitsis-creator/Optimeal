@@ -8,10 +8,16 @@ const corsHeaders = {
 // Single named source for OpenAI pricing (USD per 1M tokens). Update the
 // numbers AND this date whenever rates are re-verified — see CLAUDE.md
 // roadmap item 11 for the durable-cost-history design this feeds.
-// Rates checked 2026-08-13 against OpenAI's published pricing.
-const OPENAI_PRICING_PER_MILLION_TOKENS: Record<string, { input: number; output: number }> = {
-  'gpt-4o': { input: 2.50, output: 10.00 },
-  'gpt-4o-mini': { input: 0.15, output: 0.60 }
+//
+// `cachedInput` added 2026-08-21. Prompt tokens served from OpenAI's
+// automatic prefix cache are billed at half rate, and cost_usd was charging
+// ALL prompt tokens at the full input rate — a ~14% overstatement measured
+// across the 13 cache-aware rows on dev, and one that grows as hit rates do.
+// Rates checked 2026-08-21 against OpenAI's published pricing
+// (https://developers.openai.com/api/docs/pricing).
+const OPENAI_PRICING_PER_MILLION_TOKENS: Record<string, { input: number; cachedInput: number; output: number }> = {
+  'gpt-4o': { input: 2.50, cachedInput: 1.25, output: 10.00 },
+  'gpt-4o-mini': { input: 0.15, cachedInput: 0.075, output: 0.60 }
 };
 
 // Decodes the `sub` (user id) claim out of the caller's JWT without a
@@ -52,6 +58,13 @@ async function logCallCost(row: {
   // upstream response has no usage detail to read this from, so a null
   // row never falsely claims "measured and confirmed zero cached tokens".
   cachedTokens: number | null;
+  // Which client call site produced this call (2026-08-21). Null when the
+  // caller didn't send one — never guessed, since a wrong attribution is
+  // worse than a missing one. See kChefCallSurfaces in
+  // lib/services/chef_service.dart for the values the app actually sends;
+  // this function deliberately does not validate against that list, so a new
+  // surface can ship client-side without a redeploy.
+  surface: string | null;
 }) {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -77,7 +90,8 @@ async function logCallCost(row: {
         input_rate_per_million: row.inputRatePerMillion,
         output_rate_per_million: row.outputRatePerMillion,
         cost_usd: row.costUsd,
-        cached_tokens: row.cachedTokens
+        cached_tokens: row.cachedTokens,
+        surface: row.surface
       })
     });
     if (!res.ok) {
@@ -92,7 +106,8 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { systemPrompt, userMessage, temperature, forceJsonObject, model } = await req.json();
+    const { systemPrompt, userMessage, temperature, forceJsonObject, model, surface } = await req.json();
+    const resolvedSurface = typeof surface === 'string' && surface.trim() !== '' ? surface.trim().slice(0, 64) : null;
 
     if (!userMessage || typeof userMessage !== 'string') {
       return new Response(JSON.stringify({ error: 'userMessage is required' }), {
@@ -166,9 +181,19 @@ Deno.serve(async (req) => {
       // to null (not 0) so a row this field is genuinely missing from is
       // never confused with a row that measured a real zero.
       const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? null;
-      const estCostUsd = (promptTokens / 1_000_000) * rates.input + (completionTokens / 1_000_000) * rates.output;
+      // Cached prompt tokens bill at half rate, so they are priced
+      // separately from the uncached remainder (2026-08-21). A null
+      // cachedTokens means "not measured", which is treated as zero cached
+      // here — that keeps the old, conservative (higher) cost for rows we
+      // genuinely cannot verify, rather than inventing a discount.
+      const billableCachedTokens = cachedTokens ?? 0;
+      const uncachedPromptTokens = Math.max(0, promptTokens - billableCachedTokens);
+      const estCostUsd =
+        (uncachedPromptTokens / 1_000_000) * rates.input +
+        (billableCachedTokens / 1_000_000) * rates.cachedInput +
+        (completionTokens / 1_000_000) * rates.output;
       console.log(
-        `ask-chef-harris: model=${resolvedModel} prompt_tokens=${promptTokens} cached_tokens=${cachedTokens} completion_tokens=${completionTokens} est_cost_usd=${estCostUsd.toFixed(5)}`
+        `ask-chef-harris: surface=${resolvedSurface ?? 'unset'} model=${resolvedModel} prompt_tokens=${promptTokens} cached_tokens=${cachedTokens} completion_tokens=${completionTokens} est_cost_usd=${estCostUsd.toFixed(5)}`
       );
 
       const userId = decodeUserIdFromAuthHeader(req.headers.get('Authorization'));
@@ -185,7 +210,8 @@ Deno.serve(async (req) => {
         inputRatePerMillion: rates.input,
         outputRatePerMillion: rates.output,
         costUsd: estCostUsd,
-        cachedTokens
+        cachedTokens,
+        surface: resolvedSurface
       });
     }
 

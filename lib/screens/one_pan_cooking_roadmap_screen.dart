@@ -3577,6 +3577,7 @@ class _ChefSosSheetState extends State<_ChefSosSheet> {
         profile: profile,
         recipeContext: widget.recipeContext,
         conversationHistory: history,
+        surface: kChefCallSurfaceChefSos,
       );
       if (!mounted) return;
       setState(() => _messages.add(_SosMessage.chef(reply)));

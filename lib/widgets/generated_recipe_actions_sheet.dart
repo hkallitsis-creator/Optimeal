@@ -3,20 +3,39 @@ import 'package:go_router/go_router.dart';
 
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/theme.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
+import 'package:optimeal/widgets/save_recipe_bookmark_button.dart';
 import 'package:optimeal/widgets/weekday_picker_sheet.dart';
 
 /// Shows a compact recipe preview with two actions:
 /// - "Cook Now" -> opens Cook Mode
 /// - "Plan for Day" -> queues an add-to-weekly-plan intent
+///
+/// Plus the universal bookmark in the header row (2026-08-21). Same widget,
+/// same semantics, same quiet treatment as its other mounts: no label, no
+/// copy, never a step. A generated recipe needs nothing persisted first —
+/// [SaveRecipeBookmarkButton] keys on the title via
+/// [SavedRecipesService.recipeKeyFor] and `save` writes the whole payload
+/// inline, exactly as it already does from the post-cook verdict sheets, so
+/// there is no not-yet-saved special case to handle here.
 class GeneratedRecipeActionsSheet extends StatelessWidget {
-  const GeneratedRecipeActionsSheet({super.key, required this.recipe, required this.sourceLabel, required this.surface});
+  const GeneratedRecipeActionsSheet({
+    super.key,
+    required this.recipe,
+    required this.sourceLabel,
+    required this.surface,
+    this.service,
+  });
 
   final CookModeRecipePayload recipe;
   final String sourceLabel;
+
+  /// Injectable for tests. Defaults to the shared singleton.
+  final SavedRecipesService? service;
 
   /// Which surface generated [recipe] — this widget is shared by Fridge
   /// Countdown and Custom AI Recipe Creator, which need to be
@@ -51,6 +70,7 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
               Expanded(
                 child: Text('Generated recipe', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
               ),
+              SaveRecipeBookmarkButton(recipe: recipe, service: service),
               IconButton(
                 onPressed: () => context.pop(),
                 icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),

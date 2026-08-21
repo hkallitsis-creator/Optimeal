@@ -705,8 +705,13 @@ class _ThisWeekLedgerSheet extends StatelessWidget {
                       height: 1.35),
                 ),
                 const SizedBox(height: 4),
+                // Approved wording, verbatim (2026-08-21). Replaces
+                // 'Fridge Clearer cooks count toward it.', which described
+                // the pre-2026-08-20 rule: eligibility is a property of the
+                // RECIPE's origin now, not of the screen the cook was
+                // launched from. Do not paraphrase or re-compress this.
                 Text(
-                  'Fridge Clearer cooks count toward it.',
+                  'A recipe created in the Fridge Clearer counts as a rescue wherever you cook it — right away, or later from your Weekly Planner. What matters is where the recipe came from, not where you pressed Cook.',
                   style: theme.textTheme.labelSmall?.copyWith(
                       color: AppDesignTokens.deepForest,
                       fontWeight: FontWeight.w700,
