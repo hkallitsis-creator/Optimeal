@@ -13,6 +13,50 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Pre-vacation audit + system freeze (read-only on app code)
+
+Verification-only session over `224ba24`; no file under `lib/`, `test/`,
+`android/`, `ios/` or `supabase/` was touched, no dev DB writes, no prod
+contact. Tagged **`vacation-2026-08`**.
+
+- **`docs/audit_2026-08-23.md`** — findings ranked CRITICAL/HIGH/MEDIUM/LOW
+  over the twelve audit areas (cook lifecycle, step-list integrity,
+  generation pipeline, Fridge Clearer stages, signal coverage, entitlement,
+  timer, servings, crash classes, stale strings, guard-test inventory, edge
+  function). Headlines: 0 CRITICAL; 2 HIGH (a stale `_resumableSession` on a
+  still-mounted overview can silently restart an in-progress cook at Step 1;
+  the back-from-Cook-Mode round trip stacks two overviews); 6 MEDIUM
+  (resume-path stepper ignored, divergent null-servings fallbacks, the true
+  worst case of **7 model calls per recipe / 9 per Fridge Clearer intent**,
+  allergen retries skipping the safety correction round, stale paywall copy,
+  thin `max_tokens` headroom); 6 LOW. Suite at freeze: **703 tests passing,
+  0 failing**; analyze **40** (0 errors, 7 warnings, 33 info); TODO/FIXME in
+  `lib/`: 2; placeholder strings: 123 lines.
+- **CLAUDE.md corrected against the code** (11 corrections). Most
+  significant: `kChefCallSurfaces` is **10**, not 8 (the `_allergen_retry`
+  twins were never recorded); the safety name list and the allergen synonym
+  list are **SIGNED**, not DRAFT; the allergen fail-open question is
+  **RULED** (interim fail-open with a loud log), not pending; roadmap item 20
+  is **closed in code** (two-stage redesign removed the fabricated fallback);
+  the Environment section's claim that entitlement "stays debug-based" is
+  marked superseded by the 2026-08-23 env-based fix.
+- **DECISIONS.md reconciled** against the 22–23 Aug session docs: seven
+  binding rulings had no entry and were added (sales-sheet-never-interrupts-
+  a-cook; the branding gate as a decision; onboarding both-exits-complete +
+  dev-paywall-skip; the waiting card's no-progress-bar/truthful-lines rules;
+  Cook Mode one-focused-step + Finish & Plate placement; planner slot
+  attribution option A; write-driven signals over navigation callbacks). Two
+  internal contradictions in the safety-validator entry (DRAFT list, unsigned
+  carve-out) marked superseded by the same-day ratification entries.
+- **`docs/device_check_kickoff_2026-08.md`** created: per-surface device
+  acceptance checklists for everything built 22–23 Aug, plus KNOWN-UNBUILT
+  and KNOWN-OPEN lists so device findings don't re-report decided or
+  never-built things.
+
+Session record: `docs/sessions/2026-08-23_pre-vacation-audit.md`.
+
+---
+
 ## 2026-08-23 — Custom Recipe Creator sheet + system back
 
 Full prompt and report: `docs/sessions/2026-08-23_custom-creator.md`.

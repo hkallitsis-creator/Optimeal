@@ -417,6 +417,95 @@ would mean a second environment branch in a second place.
 
 ---
 
+## Reconciliation additions — rulings that had no entry here (recorded 23 August 2026)
+
+The pre-vacation reconcile (`docs/audit_2026-08-23.md`) checked every ruling
+in the 22–23 August session reports against this file. Seven were binding but
+recorded only in a session doc or CLAUDE.md. Each is added below with its
+session as source; none is new — only the record was missing.
+
+### A sales sheet never interrupts an active cook path (23 August 2026)
+
+Source: design chat, ratified by strategy chat;
+`docs/sessions/2026-08-23_design-qa-polish.md`. **Binding rule:** the upgrade
+sheet may only fire from Home, or after the post-cook verdict's exit CTA has
+landed the user on Home — never between pre-cook and verdict. Enforced in the
+shared entry point (`UpgradePromptSheet.show` refuses while
+`UpgradeNudgeGate.isCookPathActive`), not in the callers. The sheet is a plain
+kit sheet — no star glyph, no "Nice cooking!" headline — and its CTA stays
+terracotta: gold never goes on a sale. The two cap gates fire before a cook
+starts and are unaffected.
+
+### No public branding before CH+EU trademark clearance (standing rule; share card + launcher, 23 August 2026)
+
+Source: the signed share-card spec's GATE line and the launcher-label fix;
+`docs/sessions/2026-08-23_design-qa-polish.md`,
+`docs/sessions/2026-08-23_dev-entitlement.md`. **Binding rule:** no app name,
+wordmark, logo or link on any surface that leaves the device — the share
+image, the share text, the exported filename — until CH+EU trademark
+clearance. The share card keeps an **empty** branding slot;
+`test/widgets/share_card_branding_guard_test.dart` is permanent. The launcher
+label reads "OptiMeal dev" on both env branches for the same reason (GATED).
+
+### Onboarding: both exits complete, both land on Home; the paywall is out of the onboarding path (22 August 2026)
+
+Source: signed onboarding spec; `docs/sessions/2026-08-22_onboarding-redesign.md`.
+**Binding rule:** Skip → Home and Finish → Home, and both run the same
+`_completeOnboarding()` (local flag + `profile.onboarded` + the
+`user_profiles` upsert — Skip that sets only the local flag is the bug that
+trapped users in onboarding). The paywall re-enters the first-run path only
+when pricing is real. Companion rule from the same build pair: **dev builds
+never show the paywall** — a route-level redirect on `AppRoutes.paywall`, so
+every entry point present and future is covered at once.
+
+### The generation waiting card: no progress bar, and its lines must be true (22 August 2026)
+
+Source: signed loading-card spec; `docs/sessions/2026-08-22_loading-card.md`.
+**Binding rules:** one component for every AI generation wait; **no progress
+bar, signed** — generation time is unpredictable and a stalling bar is worse
+than none; short waits get one static line (cycling over a 2s wait flickers),
+long waits cycle ~2.5s; **cycling lines are claims about real pipeline
+behaviour and must stay true** (a test forbids claiming nutrition, safety or
+cost analysis that does not happen). The illustration's **gold pearl is a
+signed exception** to "gold = earned only", by name in the spec; the wood-tan
+illustration tokens are quarantined non-semantic.
+
+### Cook Mode is one focused step; Finish & Plate lives only at the end of the overview sheet's list (22 August 2026)
+
+Source: signed Cook Mode/Palette card §3–5;
+`docs/sessions/2026-08-22_cookmode-unit-b.md`. **Binding rules:** while a cook
+is under way the screen is header → tappable progress bar → one step card →
+bottom bar, with everything else one tap away in a two-pane sheet that swaps
+panes and never stacks; there is no previous-step whisper (deliberate
+asymmetry); **Finish & Plate is never per-step** — it skips every remaining
+step and fires a permanent ledger write, so it does not sit under the user's
+thumb; the SOS square is persistent in the app bar in every state.
+
+### A finished cook is attributed to exactly the launched planner slot — option A (22 August 2026)
+
+Source: Harris's ruling on roadmap item 27;
+`docs/sessions/2026-08-22_planner-corrections.md`. **Binding rule:** slot
+identity is **launch context** — `PlannerSlotRef` stamped once by the row
+whose Cook button was pressed, riding `CookModeLaunchRequest` and the saved
+session, **never** the persisted recipe payload (a saved recipe must not
+remember one day slot). Completion marks exactly that row via a targeted
+UPDATE (never an upsert — it must not resurrect a deleted meal), then raises
+`AppDataChanges.mealPlan`. Nothing is ever inferred and no title matching
+exists. Counted-vs-not stays derived from `RecipeOrigin.isRescueEligible`.
+
+### Stale reads are fixed by write-driven signals, never navigation callbacks (22 August 2026)
+
+Source: `docs/sessions/2026-08-22_stale-read-fix.md`. **Binding rule:** a
+cross-screen read gets a subscription to the `DataChangeSignal` for its store,
+announced by the service that performed the write. Navigation callbacks are
+structurally unreliable here — Flutter's `RouteObserver` forwards only
+`didPop`, and an exiting page that still owns a modal sheet is marked
+*complete*, not *pop*, so the post-cook exit fires nothing. (The 2026-08-23
+audit found one reader added after this rule without a subscription —
+`RecipeDetailsScreen`'s resumable-session read, finding H-1.)
+
+---
+
 ## Duck is exempt from H3 as well as H1 and H2 (23 August 2026)
 
 **Binding rule:** duck **whole muscle** — breast, magret, leg, thigh, whole
@@ -565,6 +654,9 @@ both marked on the registry as Harris's to author. Both are `// PLACEHOLDER` in
 source and both degrade to a model-facing correction directive. **No user-facing
 safety sentence was invented**, and none may be.
 
+**[SUPERSEDED same day — the list was ratified; see "The poultry/pork/fish
+name list is ratified (23 August 2026)" above. The paragraph below records the
+state when this entry was written.]**
 **The closed poultry/pork name list is DRAFT and NOT signed.** H1's detection
 depends on it; the registry describes it as "drafted separately for review" and
 it had never existed. `lib/data/safety_ingredient_names.dart` is that draft —
@@ -577,6 +669,8 @@ that **poultry mince resolves to 74 °C rather than 71 °C** (both are signed;
 the higher governs, so no new number was introduced). Signature converts the
 file's status in a follow-up line — it does not need a rebuild.
 
+**[SUPERSEDED same day — the H12 ruling (21 August, recorded 23 August) signs
+the carve-out; see the H12 entry above.]**
 **The H12 bread carve-out is UNSIGNED.** The build brief described a signed
 H12 ruling with a named bread carve-out; no such ruling is in the repo, and
 `sourdough`, `levain`, `poolish` and `biga` appear nowhere in `docs/`. What is

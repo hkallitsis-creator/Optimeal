@@ -137,16 +137,19 @@ request or when a task needs the "why."
 - **Cook Mode is a focused, one-step layout (2026-08-22, Unit B).** While a
   cook is under way (`_cookStarted && _activeStepIndex != null`) the screen is
   header → tappable progress bar → **one** ivory step card → bottom bar. The
-  card reads action line → heat/time pills (heat is the only warm pill; timer
-  is quiet text, not a third pill) → **cue panel above the detail** → demoted
+  card reads action line → meta row (heat is the only warm pill; **the "timer
+  as quiet text" part is SUPERSEDED 2026-08-23** — the time pill and countdown
+  collapsed into the one `StepTimerPill`, and the meta row became a `Wrap`;
+  see the step-timer entry below) → **cue panel above the detail** → demoted
   bullets + diagram pills → a next-step **whisper** fused to the bottom edge
   (no previous-step whisper, deliberately). Everything else is one tap away in
   `_CookOverviewSheet` — two panes (all steps / ingredients) swapped in place,
   never stacked. **Finish & Plate exists only at the end of that step list.**
   Bottom bar is an outlined pause square + one terracotta CTA + Ask-Chef as a
   hint; the **SOS square is persistent in the app bar in every state**.
-  The pre-cook and finished bodies are unchanged (`_buildPreCookBody`) — the
-  pre-cook moment merge and the SOS sheet redesign are separate queued builds.
+  The pre-cook moment merge **has since landed** (2026-08-23 — see the mise
+  entry below; `_buildPreCookBody` survives but its checklist card is gone);
+  the SOS sheet redesign is still a separate queued build.
   Tier-3 timer promotion is evidence-gated and deliberately not built.
   **Cue rendering is one widget, `_CuePanel`** (`_SensoryCueCard` /
   `_SensoryCueDetailSheet` deleted): sage teaching panel, "HOW YOU KNOW IT'S
@@ -377,14 +380,20 @@ request or when a task needs the "why."
   rework): Fridge Clearer stage 1 (`fridge_ideas`), Fridge Clearer stage 2
   (`fridge_clearer`), Custom AI Recipe Creator, Chef SOS — each tagged
   with a `surface` from `kChefCallSurfaces`, logged to
-  `api_call_cost_log.surface`. **`kChefCallSurfaces` holds eight values since
-  2026-08-23**: the two recipe surfaces each gained a `_retry` twin
+  `api_call_cost_log.surface`. **`kChefCallSurfaces` holds TEN values since
+  2026-08-23** (audit-corrected — this file previously said eight): the two
+  recipe surfaces each gained a `_retry` twin
   (`fridge_clearer_retry`, `custom_creator_retry`) so compatibility-correction
   regenerations are countable straight off the cost log rather than inferred,
-  and then a `_safety_retry` twin (`fridge_clearer_safety_retry`,
+  then a `_safety_retry` twin (`fridge_clearer_safety_retry`,
   `custom_creator_safety_retry`) so a food-safety correction is never billed
-  into the same bucket as a timing one. They are not separate call sites — the
-  same two sites send a different `surface` depending on `RecipeRetryKind`. Message assembly lives in the separately
+  into the same bucket as a timing one, and then an `_allergen_retry` twin
+  (`fridge_clearer_allergen_retry`, `custom_creator_allergen_retry`) with the
+  allergen guard. They are not separate call sites — the same two sites send a
+  different `surface` depending on `RecipeRetryKind`. **Worst case per recipe
+  is 7 model calls** (1 first + 2 compat + 2 safety + 2 allergen retries), and
+  a Fridge Clearer intent can add up to 2 stage-1 calls (the silent allergen
+  regenerate) — 9 total. See `docs/audit_2026-08-23.md` M-3. Message assembly lives in the separately
   testable `ChefService.buildUserMessage`, whose **write order is
   load-bearing for prompt caching** (see Open Roadmap item 15 before
   changing it); callers with byte-identical schema text pass it as
@@ -449,8 +458,14 @@ request or when a task needs the "why."
   Built only from the signed `docs/safety_hazard_registry.md`.
   `lib/services/safety_validator.dart` implements H1–H11 plus H12 detection;
   `lib/data/safety_ingredient_names.dart` holds the closed poultry/pork/fish
-  vocabulary (**174 terms, DRAFT, NOT SIGNED** — H1's detection depends on it
-  and it needs Harris's signature).
+  vocabulary — **174 terms, RATIFIED/SIGNED 2026-08-23, nothing pending**
+  (this file previously said DRAFT; corrected by the 2026-08-23 audit). Signed
+  with it: the cured ready-to-eat exclusion, the poultry-mince 74 °C
+  tie-break, the veggie-product and animal-compound exclusions, the
+  Swiss/German additions (strike-only), the shrimp group at the fish 63 °C
+  floor, and **duck whole-muscle exempt from H1, H2's pink-language check AND
+  H3's temperature floor** (`donenessExempt`; duck mince stays comminuted at
+  74 °C). Full record: `docs/DECISIONS.md`.
   **This is not the compatibility validator and must never be merged with it.**
   Compat is advisory and fails open silently; **H1's enforcement is a
   deterministic injection the app performs itself** — the signed
@@ -500,17 +515,22 @@ request or when a task needs the "why."
   available ingredients, got a recipe using none of them) **and**
   `lib/services/allergen_guard.dart` — a deterministic post-parse check over
   generated ingredient NAMES against `lib/data/allergen_synonyms.dart`
-  (14 keys = the Profile chips exactly; synonym lists are DRAFT pending
-  Harris). Whole-word matching is load-bearing: real output used **nutritional
-  yeast** as the dairy substitute, and a substring matcher would flag the
-  substitute as the allergen. Runs **third and last**, after compat and safety,
-  so nothing can re-break a correction it won. Correction retry ×2 then
-  **fail-open with a loud log** — whether it should fail CLOSED is argued in
-  `docs/DECISIONS.md` and is **PENDING HARRIS**.
-  **Known unresolved: Fridge Clearer stage-1 ideas leak allergens.** On the
-  adversarial run the ideas screen offered "Cheesy Potato Skillet" and
-  "Spinach Walnut Salad" to a dairy/nut-avoiding profile before stage 2
-  produced a clean recipe. Detection exists; the action is Harris's ruling.
+  (14 keys = the Profile chips exactly; **the synonym lists are SIGNED,
+  2026-08-23** — including `soy sauce`/`beer` under both Gluten and their own
+  allergen, and coconut deliberately NOT a tree nut). Whole-word matching is
+  load-bearing: real output used **nutritional yeast** as the dairy
+  substitute, and a substring matcher would flag the substitute as the
+  allergen. Runs **third and last**, after compat and safety, so nothing can
+  re-break a correction it won. Correction retry ×2 then fail-open —
+  **RULED 2026-08-23 (Harris): INTERIM fail-open with a loud log**
+  (`AllergenFlagLog`, which may never be removed); fail-closed is adopted in
+  principle and waits on a signed "couldn't build this safely" state
+  (persona-batch content). The stage-1 ideas leak this build detected was
+  closed the same day — see the stage-1 entry below. One undocumented
+  interaction worth knowing (`docs/audit_2026-08-23.md` M-4): an
+  allergen-retry recipe gets no further safety *correction* round — new
+  H2–H11 findings on it are re-detected and logged, then served; H1's
+  injection is applied after everything and is never skipped.
 - **Custom Recipe Creator sheet — redesigned 2026-08-23.**
   `CustomAiRecipeCreatorSheet`. **Cut**: the explainer paragraph (the field's
   placeholder carries it), the sparkle chip beside the title, bolt icons on
@@ -639,6 +659,9 @@ request or when a task needs the "why."
   from `GeneratedRecipeActionsSheet` ("Cook Now stays the only primary action"
   is signed), and the planner's own **Cook** button goes direct because it must
   stamp `PlannerSlotRef`, which this screen cannot supply.
+  **Re-cooking a saved recipe is a real cook (ruled 2026-08-23)**: Start
+  cooking launches with `surface: null` and `isReCook` false — eligibility is
+  the RECIPE's `RecipeOrigin`, and the cook earns its own new cook-log row.
 - **Cut pills resolve client-side (2026-08-23).**
   `lib/services/cut_key_resolver.dart`. **`RecipeIngredient.cut` already
   exists** and is parser-validated against `ingredientCutVocabulary`, so the
@@ -776,12 +799,13 @@ request or when a task needs the "why."
   run commands:
   - Dev (default): `flutter run -d chrome` — no flag needed.
   - Prod: `flutter run -d chrome --dart-define=OPTIMEAL_ENV=prod`.
-  **`EntitlementService.isPro()`'s `kDebugMode` bypass was deliberately
-  left untouched** — it stays debug-based, not environment-based. A prod
-  *build* run in debug mode (e.g. local `flutter run` with the prod flag)
-  still bypasses entitlement checks; that's an intentional, separate
-  decision not made as part of this environment split — do not conflate
-  the two mechanisms or assume fixing one changes the other.
+  **SUPERSEDED 2026-08-23:** entitlement is now environment-based
+  (`kIsDevEnvironment || kDebugMode` via `entitlementBypassFor`) — see the
+  Paywall entry above. The old note here that the bypass "stays debug-based,
+  not environment-based" described the pre-fix state and is kept only as
+  history: a prod *build* run in debug mode still bypasses via the surviving
+  `kDebugMode` OR, which is deliberate (a debug build is a developer's
+  machine).
 
 ## Current Supabase RLS state (all public-schema tables have RLS enabled — none exposed with RLS disabled)
 
@@ -822,8 +846,8 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 1. **Safety validator — deterministic layer DONE 2026-08-23; the backstop and two signed sentences remain. STILL A PRE-LAUNCH BLOCKER.** The deterministic half is live and described in Current architecture facts: H1–H11 plus H12 detection, built only from the signed registry, with H1 enforced by unconditional app-side cue injection. **What is left:**
     (a) **The model-review backstop** — the registry names two layers and only the first is built. Nothing re-reads a whole recipe for mishandling outside the eleven named rules. Not started.
     (b) **Two pieces of signed user-facing wording that do not exist**, both `// PLACEHOLDER` in source and both marked on the paper as Harris's: the **H2 cooked-through line** and the **H8 vulnerable-groups caution**. Until they exist, those two rules can only ask the model twice and then give up. Proposal in the session doc: author both and inject them deterministically rather than trusting the model.
-    (c) **The 174-term poultry/pork/fish name list is DRAFT and unsigned**, and H1's detection depends on it entirely. Three calls need Harris by name: the **cured ready-to-eat exclusion** (bacon/pancetta/prosciutto/chorizo/cervelat excluded from H1 — the one exclusion that silences a rule rather than narrowing it), **duck** (included, so duck breast is told any pink goes back on), and **poultry mince resolving to 74 °C not 71 °C**.
-    (d) **The H12 bread carve-out is unsigned** — the build brief called it signed; it is nowhere in the repo. Needs a signature or a strike. H12 itself is log-only because the handwritten entry defines no action; the session doc proposes moving it to the generation prompt instead, which is where its prose actually points.
+    (c) **CLOSED 2026-08-23 — the 174-term name list is RATIFIED.** All three flagged calls were signed by name (cured ready-to-eat exclusion; duck — resolved the other way: whole-muscle duck is EXEMPT from H1/H2/H3, mince stays comminuted; poultry mince at 74 °C), plus the shrimp group, the veggie-product and animal-compound exclusions, and the Swiss/German additions. Nothing in the file is pending.
+    (d) **CLOSED 2026-08-23 — the H12 ruling (21 Aug, strategy chat) is now committed to `docs/DECISIONS.md`**, bread carve-out signed by name. H12's deterministic layer stays log-only per the ruling's own words; the "Quick X" substitution behaviour is persona/prompt work in the authoring batch and the prompt line has NOT been added yet.
     (e) **H10 on non-poultry meat is log-only** — a stuffed beef roulade has no signed centre-verification wording and the H1 cue's text is poultry language. Needs a second signed cue.
     (f) **`_ChefSosSheet` and `ai-recipe-precision`'s precision cards are still NOT covered** — both return content outside `CookModeRecipePayload` and need their own scoping decision. Unchanged by this build.
     **Closed by the 2026-08-23 build:** Rule 5 of the cooking-times paper and the `SensoryCue.mandatoryOnPoultryAndPork` note are the same check, and it is now H1's injection. The pasteurisation permanent rule is H3. The someday list (shellfish, raw flour/dough, sprouts) stays INACTIVE with a test enforcing its absence.
@@ -845,12 +869,12 @@ Numbering is not priority-ordered across every item — treat "HIGH PRIORITY" ta
 17. Apple/Google OAuth account linking — not started, needs native iOS/Android config; likely blocked on this being a Windows dev machine (check `flutter devices` before assuming either platform is testable here).
 18. Deep link fix for the email-confirmation redirect (currently goes to `localhost:3000`) — not started, same native-platform-config caveat as above.
 19. Lower priority, not urgent: rate limiting on Edge Functions; privacy policy covering Swiss FADP + EU GDPR (needs legal review before the first external tester); Supabase Storage bucket policies (once images are added); duplicate RLS policy cleanup (cosmetic, see RLS table); `UsageCapService.increment(...)` firing even when `askChefHarris` never reaches OpenAI (harmless while Harris is the only user; a real problem once caps gate paying subscribers).
-20. Fridge Clearer fabricates a hardcoded fallback recipe on `_parseCookModeRecipe` returning null, instead of showing "no recipe" like the other 3 recipe-generating surfaces do. Blocks the safety validator's hard-fail mode (item 1) on this surface. Small fix: the screen already has `_generationError` state + a wired `_InlineErrorCard` used for real exceptions — the parse-failure branch just needs to set `_generationError` instead of building a fallback recipe. Not started.
+20. **CLOSED — verified in code by the 2026-08-23 audit.** The two-stage Fridge Clearer redesign removed the fabricated fallback entirely: stage 2 parses with `useGenericFallbacks: false` and a null result sets `_generationError` → the inline error card, exactly like the other surfaces; stage 1 already fabricated nothing. No blocker remains here for item 1's hard-fail mode.
 21. **"Save if you liked it" / My recipes — data layer AND UI done 2026-08-20 (dev).** `saved_recipes` (dev only) + `SavedRecipesService` + the My recipes screen, the universal bookmark, and the Weekly Planner's third source all ship; see the two "Saved recipes" entries in Current architecture facts. **It does not use the `recipes` table at all** — that table's unreachable write grants are therefore not a blocker for this item (they remain a separate, unrelated loose end). Still open: **the two migrations exist on dev only and have not been pushed to prod**; the "feedback" half of the original one-liner (never scoped); every user-facing string on these surfaces is a `// SIGNED-CONTENT PLACEHOLDER` awaiting the Chef Harris authoring pass; and the list-row unsave affordance (no swipe-to-unsave and no overflow menus in this build — unsave is the bookmark toggle only, deferred to device review by spec).
 22. Post-cook finish flow, two open UX gaps: (1) after the celebration → What You Learned → share card sequence, the app should return to Home once the share card is dismissed but currently sits idle; (2) if the share card is skipped/missed it's lost — should persist somewhere so it can be shared later.
 23. Custom AI Craving via Weekly Planner writes the generated recipe directly into the day slot with no confirmation step — open product question, linked to item 1 (nowhere to show a corrected recipe if the safety validator ever flags one on this surface).
 24. Custom AI Craving sheet's prompt-guidance copy (title, placeholder, 4 quick-pick chips) needs a rewrite — flagged as awkward, not rewritten. The feature's name itself ("Custom AI Craving") also reads awkwardly — naming question for Harris, not resolved.
-25. **Per-surface cost attribution — done 2026-08-21 (dev).** `api_call_cost_log.surface` (migration `20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart` (`fridge_ideas` / `fridge_clearer` / `custom_creator` / `chef_sos` — four since the Fridge Clearer went two-stage on 2026-08-22, matching the four live call sites; **eight since 2026-08-23**, with `fridge_clearer_retry` / `custom_creator_retry` for compatibility-correction regenerations and `fridge_clearer_safety_retry` / `custom_creator_safety_retry` for safety-correction ones; the edge function stores whatever string arrives and needed no change for any of these additions). `cost_usd` now bills cached prompt tokens at the cached rate rather than the full input rate; it was overstating by ~14% and would have grown with the hit rate. `ask-chef-harris` is **v5 on dev**. Still open: **three dev-only migrations have never been pushed to prod** (`20260818120000`, `20260820120000`/`20260820130000`, `20260821120000`), and prod still runs the older function version. Also open: `user_id` was null on every `api_call_cost_log` row on dev, because `decodeUserIdFromAuthHeader` needs a 3-part JWT and the app was sending the `sb_publishable_…` key as the bearer. **Anonymous sign-ins are now ENABLED on dev** (turned on and device-verified 2026-08-21; re-verified 2026-08-22 — `POST /auth/v1/signup` returns a real 3-part JWT with `is_anonymous: true`, `role: authenticated`), so a signed-in client now sends a decodable bearer and per-user attribution should work. Not re-checked against live rows yet.
+25. **Per-surface cost attribution — done 2026-08-21 (dev).** `api_call_cost_log.surface` (migration `20260821120000`, **dev only**) plus `kChefCallSurfaces` in `chef_service.dart` (`fridge_ideas` / `fridge_clearer` / `custom_creator` / `chef_sos` — four since the Fridge Clearer went two-stage on 2026-08-22, matching the four live call sites; **ten since 2026-08-23**, with `_retry` twins for compatibility corrections, `_safety_retry` twins for safety corrections, and `_allergen_retry` twins for allergen corrections; the edge function stores whatever string arrives and needed no change for any of these additions). `cost_usd` now bills cached prompt tokens at the cached rate rather than the full input rate; it was overstating by ~14% and would have grown with the hit rate. `ask-chef-harris` is **v5 on dev**. Still open: **three dev-only migrations have never been pushed to prod** (`20260818120000`, `20260820120000`/`20260820130000`, `20260821120000`), and prod still runs the older function version. Also open: `user_id` was null on every `api_call_cost_log` row on dev, because `decodeUserIdFromAuthHeader` needs a 3-part JWT and the app was sending the `sb_publishable_…` key as the bearer. **Anonymous sign-ins are now ENABLED on dev** (turned on and device-verified 2026-08-21; re-verified 2026-08-22 — `POST /auth/v1/signup` returns a real 3-part JWT with `is_anonymous: true`, `role: authenticated`), so a signed-in client now sends a decodable bearer and per-user attribution should work. Not re-checked against live rows yet.
 26. **Curriculum drawers are matched against the prompt's own boilerplate — found 2026-08-21, not fixed (behavioural, Harris's call).** `_buildCurriculumAddendum` keyword-matches the whole assembled request, and the recipe surfaces' static block embeds the literal curriculum key list and cut vocabulary. So `sauteing`, `braising`, `julienne`, `dice`, `food_storage` and `leftovers` are present on **every** recipe-surface call regardless of what the user asked for, and both surfaces always pull the same few drawers from keyword noise rather than relevance. The 2026-08-21 prompt-ordering fix deliberately **preserved** this (it passes the static block into the match text) so that an ordering change stayed an ordering change — fixing it alters what reaches the model. Related to item 9.
     **Got measurably worse on 2026-08-23, unfixed.** The compatibility
     validator's 74-key list is part of the static block, so it is now part of
@@ -885,6 +909,15 @@ introduced anywhere.
 
 ## Working conventions
 
+- **`docs/audit_2026-08-23.md` is the pre-vacation audit** (read-only
+  verification pass over `224ba24`). Its open findings are NOT fixed: two HIGH
+  (H-1 stale `_resumableSession` on `RecipeDetailsScreen` can silently restart
+  an in-progress cook; H-2 back-from-Cook-Mode stacks two overviews), six
+  MEDIUM (resume-path stepper is a lie; divergent null-servings fallbacks in
+  Cook Mode; 7-calls-per-recipe worst case undocumented + edge-function 502s
+  under bursts; allergen retries skip the safety correction round; stale
+  paywall copy; `max_tokens: 1200` headroom) and six LOW. Start there when
+  picking up work.
 - **`docs/DECISIONS.md` and `docs/CHANGELOG.md` exist alongside this file.** DECISIONS.md holds binding product/architecture decisions and their reasoning (not descriptions of current code). CHANGELOG.md holds completed work and full session history, newest first. Neither is auto-loaded — read on request or when a task needs history/reasoning this file deliberately omits to stay small.
 - **CLAUDE.md is authoritative for Roadmap item numbering.** If Harris refers to an item by a number that doesn't match what's actually here, stop and ask — don't guess which item was meant.
 - **Locate code by content/class name, not filename** — the Dreamflow-export filename-shuffling issue was checked and is NOT present in this repo, but this remains the safer default if it's ever in doubt again.
@@ -904,7 +937,10 @@ introduced anywhere.
   "OptiMeal dev" today on purpose** (GATED: trademark clearance), so that
   distinction is currently unobservable. iOS is a plain string, not
   env-resolved — it would need an xcconfig/scheme split, not worth building
-  while both values are identical.
+  while both values are identical. **Audit note (2026-08-23):** only iOS
+  `CFBundleDisplayName` was fixed — `CFBundleName` (the fallback name some
+  system UI uses) is still `dreamflow`. One-line fix whenever iOS work
+  happens; see `docs/audit_2026-08-23.md` L-2.
 - **Building and installing to a real device (learned 23 Aug, cost a wasted test round).** `flutter install` does **NOT** build — it pushes whatever APK already exists in `build/app/outputs/flutter-apk/`, silently, however stale. Running it alone once installed a build that was 16 commits old and looked like a pile of regressions. **The correct pair is always `flutter build apk --release` first, then `flutter install --release -d <deviceId>`.** Pass `-d` explicitly: with four devices attached (phone, Windows, Chrome, Edge) the bare command prompts and hangs a non-interactive shell. Note also that `flutter install` **uninstalls the old version first**, which wipes app data — SharedPreferences, the onboarding flag, and the anonymous Supabase session, so the next launch mints a **new `auth.uid()`** and prior dev data (saved recipes, planner rows, ledger events) is orphaned rather than gone.
 - **Live-testing convention**: run a single `flutter run -d chrome --web-port=8765` in the background, have Harris test in that one tab. After code changes, kill the process (`netstat -ano | findstr ":8765"` → `taskkill //PID <pid> //F`) and relaunch fresh on the same port rather than hot-reloading. Keep it to one running instance, same port, always — a second instance on a different port has caused real confusion (Harris testing a stale tab, wrongly concluding a fix hadn't landed).
 - No browser automation (`claude-in-chrome`) was available as of the last check — if it becomes available, that's strictly better for anything visual, but check rather than assuming it's still unavailable by default.
