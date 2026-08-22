@@ -39,12 +39,12 @@ function decodeUserIdFromAuthHeader(authHeader: string | null): string | null {
   }
 }
 
-// Inserts into api_call_cost_log using the service role key (bypasses
-// RLS — the table has zero authenticated/anon policies by design, see the
-// migration). Callers await this, but it's wrapped in try/catch so a
-// logging failure can never turn into a failed recipe response — same
-// fail-open principle UsageCapService already uses client-side.
-async function logCallCost(row: {
+// The row logCallCost writes. Hoisted to a named type (2026-08-23) so the
+// function signature below fits on one line — an inline multi-line parameter
+// type ends in a bare `}) {`, and losing that single line in a dashboard
+// copy-paste produced a parse error two constructs away ("Expected ',', got
+// 'if'") that pointed nowhere near the real damage.
+type CostLogRow = {
   userId: string | null;
   functionName: string;
   model: string;
@@ -65,7 +65,14 @@ async function logCallCost(row: {
   // this function deliberately does not validate against that list, so a new
   // surface can ship client-side without a redeploy.
   surface: string | null;
-}) {
+};
+
+// Inserts into api_call_cost_log using the service role key (bypasses
+// RLS — the table has zero authenticated/anon policies by design, see the
+// migration). Callers await this, but it's wrapped in try/catch so a
+// logging failure can never turn into a failed recipe response — same
+// fail-open principle UsageCapService already uses client-side.
+async function logCallCost(row: CostLogRow) {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
