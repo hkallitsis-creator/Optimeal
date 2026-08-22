@@ -11,10 +11,11 @@
       "Bash(grep:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)",
       "Bash(supabase db push --linked:*)",
       "Bash(supabase migration:*)",
-      "Bash(supabase db diff:*)"
+      "Bash(supabase db diff:*)",
+      "Bash(supabase functions deploy ask-chef-harris:*)"
     ],
     "deny": [
-      "Bash(supabase functions deploy:*)",
+      "Bash(supabase functions deploy ai-recipe-precision:*)",
       "Bash(supabase link:*)",
       "Bash(supabase unlink:*)",
       "Bash(supabase projects:*)"
