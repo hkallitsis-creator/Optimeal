@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { systemPrompt, userMessage, temperature, forceJsonObject, model, surface } = await req.json();
+    const { systemPrompt, userMessage, temperature, forceJsonObject, model, surface, maxTokens } = await req.json();
     const resolvedSurface = typeof surface === 'string' && surface.trim() !== '' ? surface.trim().slice(0, 64) : null;
 
     if (!userMessage || typeof userMessage !== 'string') {
@@ -138,7 +138,10 @@ Deno.serve(async (req) => {
         { role: 'user', content: userMessage }
       ],
       temperature: typeof temperature === 'number' ? temperature : 0.6,
-      max_tokens: 1200,
+      // Bounded pass-through of the client's request (ChefService sends
+      // `maxTokens: 2000` on the recipe surfaces since 299f078); anything
+      // absent or malformed keeps the old 1200 default. Floor 256, cap 2000.
+      max_tokens: Math.min(Math.max(Number(maxTokens ?? 1200) || 1200, 256), 2000),
       ...(forceJsonObject ? { response_format: { type: 'json_object' } } : {})
     };
 
@@ -215,7 +218,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ content, usage, model: resolvedModel }), {
+    // finish_reason lets the client (ChefService, since 299f078) tell a
+    // truncated reply ("length") apart from a complete one and log it.
+    return new Response(JSON.stringify({ content, usage, model: resolvedModel, finish_reason: data?.choices?.[0]?.finish_reason ?? null }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
