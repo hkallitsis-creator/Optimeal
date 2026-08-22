@@ -13,6 +13,37 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Profile redesign + backend wiring verification
+
+Full prompt and report: `docs/sessions/2026-08-23_profile.md`.
+657 tests passing (623 baseline + 34 new), **40** analyze issues (was 44).
+
+**Half A — the §4 verification. All five controls are LIVE**, proven with an
+adversarial profile against real dev output, not by reading code. A profile
+avoiding egg, dairy and tree nuts, handed "eggs, cheese, walnuts" as the
+ingredients it *has*, produced a recipe using none of them, at `basePortions: 5`
+from the household default, in the vegan baseline the diet field set.
+
+- **New: the deterministic allergen guard.** `allergen_guard.dart` +
+  `allergen_synonyms.dart` (14 keys = the Profile chips exactly). Runs third
+  and last, correction retry ×2, then fail-open **with a loud log**.
+  Fail-open vs fail-closed is argued in DECISIONS.md and is PENDING HARRIS.
+- **Found and reported, unresolved: stage-1 ideas leak allergens.** The ideas
+  screen offered "Cheesy Potato Skillet" and "Spinach Walnut Salad" to a
+  dairy/nut-avoiding profile. Detection built; the action is Harris's ruling.
+- Two new cost surfaces so the allergen retry rate is readable on its own.
+
+**Half B — the redesign.** Language card deleted (unshipped languages; the
+field stays, no migration). Every explainer paragraph, every Material radio and
+the mixed selection styles gone — one `SelectionChip`, champagne fill. The
+**dark-forest button fill exits the app**, now enforced by the palette guard.
+The Save Profile button is gone: the screen autosaves, which frees the one
+terracotta CTA to be "Secure my account". Comfortable Techniques is read-only
+with no un-mark path. Dev section is a dashed-ghost container behind
+`kIsDevEnvironment`.
+
+---
+
 ## 2026-08-23 — Pre-cook merge: Step 1 = mise en place
 
 Full prompt and report: `docs/sessions/2026-08-23_precook-merge.md`.

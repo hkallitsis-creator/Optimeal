@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -39,14 +41,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _saving = false;
 
   final _confidenceClimbService = ConfidenceClimbService();
+
+  /// Debounce for the inline name field and the chip rows.
+  ///
+  /// The screen used to end in a "Save Profile" button that also popped the
+  /// route. Selections now persist as they are made, so there is no save
+  /// button and nothing to forget to press — and the screen's one terracotta
+  /// CTA can be "Secure my account", which is the only action here that is
+  /// actually a decision.
+  Timer? _autoSaveTimer;
+
+  void _scheduleAutoSave() {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted) _save(silent: true);
+    });
+  }
   Set<String> _comfortableTechniqueIds = const <String>{};
 
-  static const List<({String label, String code})> _languageOptions = <({String label, String code})>[
-    (label: 'English', code: 'en'),
-    (label: 'Deutsch', code: 'de'),
-    (label: 'Français', code: 'fr'),
-    (label: 'Italiano', code: 'it'),
-  ];
+  // The Language card is DELETED. Deutsch/Français/Italiano were offered and
+  // none of them is shipped — a stale promise, the same class of thing the
+  // onboarding rewrite cut. `_language` stays on the model and in the store
+  // (no migration to drop it); it simply has no UI until localization exists.
 
   static const List<String> _allergenOptions = <String>[
     'Gluten',
@@ -87,30 +103,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _comfortableTechniqueIds = ids);
   }
 
-  /// Confidence regresses — Confidence Climb lets the user say so
-  /// (docs/decisions_2026-08-17.md item 7 / CLAUDE.md Package E3).
-  Future<void> _unmarkComfortable(String techniqueId) async {
-    setState(() => _comfortableTechniqueIds = _comfortableTechniqueIds.difference({techniqueId}));
-    await _confidenceClimbService.markNotComfortable(techniqueId);
-  }
+  // _unmarkComfortable was deleted with the redesign. The Confidence Climb
+  // is READ-ONLY here by signed decision: rows are filled solely by the
+  // post-cook confidence question, and there is no self-declaration path in
+  // either direction. The Climb is earned, not set.
 
   @override
   void dispose() {
+    _autoSaveTimer?.cancel();
     _nameController.dispose();
     _nameFocus.dispose();
     super.dispose();
   }
 
-  Future<void> _save() async {
+  Future<void> _save({bool silent = false}) async {
     if (_saving) return;
     final profileController = context.read<UserProfileController>();
     final current = profileController.profile;
 
+    // An empty name is no longer an error worth interrupting for: the field
+    // is inline and saves as you type, so a half-typed name would otherwise
+    // fire a snackbar on every keystroke. It simply is not persisted empty.
     final displayName = _nameController.text.trim();
-    if (displayName.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a name so Chef Harris knows what to call you.')),
-      );
+    if (displayName.isEmpty && !silent) {
       _nameFocus.requestFocus();
       return;
     }
@@ -118,7 +133,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _saving = true);
     try {
       final next = current.copyWith(
-        displayName: displayName,
+        displayName: displayName.isEmpty ? current.displayName : displayName,
         language: _language,
         diet: _diet,
         allergies: _allergies.toList(growable: false),
@@ -129,28 +144,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
 
       if (!persisted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not save profile. Please try again.')),
-        );
+        // Autosave failures stay quiet: the screen saves on every chip tap,
+        // and a snackbar per tap would be worse than the failure.
+        if (!silent) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Could not save profile. Please try again.')),
+          );
+        }
         return;
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Profile saved!'),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(milliseconds: 1200),
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        ),
-      );
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        context.pop();
-      });
     } catch (e) {
       debugPrint('ProfileScreen.save failed: $e');
-      if (!mounted) return;
+      if (!mounted || silent) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not save profile. Please try again.')),
       );
@@ -165,6 +171,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// about onboarding's own completion flags, and keeping it there means it
   /// can be tested without pumping this screen, which needs a live Supabase
   /// instance.
+  /// Unchanged auth flow — only the button that opens it was restyled.
+  Future<void> _openSecureAccountSheet() async {
+    await AppBottomSheet.show<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: AppDesignTokens.surfaceIvory,
+      builder: (_) => const _SecureAccountSheet(),
+    );
+    if (!mounted) return;
+    setState(() {});
+  }
+
   Future<void> _replayOnboarding() async {
     await OnboardingScreen.resetForReplay(
         context.read<UserProfileController>());
@@ -175,8 +194,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final isAnonymous = Supabase.instance.client.auth.currentUser?.isAnonymous ?? true;
+    final isAnonymous =
+        Supabase.instance.client.auth.currentUser?.isAnonymous ?? true;
     final userEmail = Supabase.instance.client.auth.currentUser?.email;
 
     return Scaffold(
@@ -185,325 +204,183 @@ class _ProfileScreenState extends State<ProfileScreen> {
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Profile & Settings'),
+        // SIGNED-CONTENT PLACEHOLDER
+        title: const Text('Profile'),
         centerTitle: false,
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 28),
           children: [
-            ProfileSectionCard(
-              title: 'Display name',
-              subtitle: 'What should Chef Harris call you?',
+            // ── Name: one quiet row, no card headline, no explainer ────────
+            _QuietRow(
+              // SIGNED-CONTENT PLACEHOLDER
+              label: 'Name',
               child: TextField(
                 controller: _nameController,
                 focusNode: _nameFocus,
+                textAlign: TextAlign.end,
                 textInputAction: TextInputAction.done,
+                onChanged: (_) => _scheduleAutoSave(),
+                onSubmitted: (_) => _save(silent: true),
                 decoration: const InputDecoration(
-                  hintText: 'e.g., Alex',
+                  border: InputBorder.none,
+                  isDense: true,
+                  // SIGNED-CONTENT PLACEHOLDER
+                  hintText: 'Chef',
                 ),
               ),
             ),
+
             const SizedBox(height: 14),
-            ProfileSectionCard(
-              title: 'Language',
-              subtitle: 'Choose the app language (more coming soon).',
-              child: Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: _languageOptions.map((opt) {
-                  final selected = _language == opt.code;
-                  return FilterChip(
-                    selected: selected,
-                    showCheckmark: false,
-                    label: Text(opt.label),
-                    selectedColor: AppDesignTokens.champagneTint,
-                    side: BorderSide(
-                      color: (selected ? AppDesignTokens.ctaTerracotta : scheme.outline).withValues(alpha: 0.18),
-                      width: selected ? 1.2 : 1.0,
-                    ),
-                    labelStyle: TextStyle(
-                      color: selected ? AppDesignTokens.ctaTerracotta : scheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    onSelected: (v) {
-                      if (!v) return;
-                      setState(() => _language = opt.code);
-                    },
-                  );
-                }).toList(growable: false),
-              ),
-            ),
-            const SizedBox(height: 14),
-            ProfileSectionCard(
-              title: 'Dietary baseline',
-              subtitle: 'Helps Chef Harris tailor suggestions to your local pantry.',
-              child: Column(
-                children: [
-                  DietOptionTile(
-                    title: 'Omnivore',
-                    subtitle: 'Anything goes — balanced and practical.',
-                    value: UserDiet.omnivore,
-                    groupValue: _diet,
-                    onChanged: (v) => setState(() => _diet = v),
-                  ),
-                  const SizedBox(height: 10),
-                  DietOptionTile(
-                    title: 'Vegetarian',
-                    subtitle: 'No meat. Dairy/eggs are okay.',
-                    value: UserDiet.vegetarian,
-                    groupValue: _diet,
-                    onChanged: (v) => setState(() => _diet = v),
-                  ),
-                  const SizedBox(height: 10),
-                  DietOptionTile(
-                    title: 'Pescatarian',
-                    subtitle: 'Vegetarian + fish/seafood.',
-                    value: UserDiet.pescatarian,
-                    groupValue: _diet,
-                    onChanged: (v) => setState(() => _diet = v),
-                  ),
-                  const SizedBox(height: 10),
-                  DietOptionTile(
-                    title: 'Vegan',
-                    subtitle: 'No animal products.',
-                    value: UserDiet.vegan,
-                    groupValue: _diet,
-                    onChanged: (v) => setState(() => _diet = v),
-                  ),
-                  const SizedBox(height: 10),
-                  DietOptionTile(
-                    title: 'Flexitarian',
-                    subtitle: 'Mostly plants, occasionally meat/fish.',
-                    value: UserDiet.flexitarian,
-                    groupValue: _diet,
-                    onChanged: (v) => setState(() => _diet = v),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            ProfileSectionCard(
-  title: 'Allergen safeguards',
-              subtitle: 'Select any allergens or intolerances to avoid.',
-              child: Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: _allergenOptions.map((label) {
-                  final selected = _allergies.contains(label);
-                  return FilterChip(
-                    selected: selected,
-                    showCheckmark: false,
-                    label: Text(label),
-                    // Kit rule (2026-08-22): selection is a champagne fill
-                    // with terracotta-on-light text. This was the last
-                    // terracotta-fill selection left in the app; the diet
-                    // chips above moved during the palette sweep.
-                    selectedColor: AppDesignTokens.champagneTint,
-                    side: BorderSide(
-                      color: (selected
-                              ? AppDesignTokens.terracottaOnLight
-                              : scheme.outline)
-                          .withValues(alpha: selected ? 0.28 : 0.18),
-                      width: selected ? 1.2 : 1.0,
-                    ),
-                    labelStyle: TextStyle(
-                      color: selected
-                          ? AppDesignTokens.terracottaOnLight
-                          : scheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    onSelected: (v) {
-                      setState(() {
-                        if (v) {
-                          _allergies.add(label);
-                        } else {
-                          _allergies.remove(label);
-                        }
-                      });
-                    },
-                  );
-                }).toList(growable: false),
-              ),
-            ),
-            const SizedBox(height: 14),
-            ProfileSectionCard(
-              title: 'Skill & servings',
-              subtitle: 'Tune instructions to your style and household size.',
+
+            // ── EATING ─────────────────────────────────────────────────────
+            _ProfileCard(
+              // SIGNED-CONTENT PLACEHOLDER
+              label: 'EATING',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ConfidenceOptionRow(
-                    value: KitchenConfidence.beginner,
-                    groupValue: _confidence,
-                    title: 'Beginner',
-                    subtitle: 'More guidance, less jargon.',
-                    onChanged: (v) => setState(() => _confidence = v),
-                  ),
-                  const SizedBox(height: 10),
-                  ConfidenceOptionRow(
-                    value: KitchenConfidence.fastEfficient,
-                    groupValue: _confidence,
-                    title: 'Fast & Efficient',
-                    subtitle: 'Direct steps, minimal fuss.',
-                    onChanged: (v) => setState(() => _confidence = v),
-                  ),
-                  const SizedBox(height: 10),
-                  ConfidenceOptionRow(
-                    value: KitchenConfidence.confident,
-                    groupValue: _confidence,
-                    title: 'Confident Cook',
-                    subtitle: 'Shorter instructions, more freedom.',
-                    onChanged: (v) => setState(() => _confidence = v),
-                  ),
-                  if (_comfortableTechniqueIds.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      'Comfortable with',
-                      style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant, fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Tap to say you\'re not quite there yet — confidence can dip back down.',
-                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final id in _comfortableTechniqueIds)
-                          InputChip(
-                            label: Text(resolveDrawerEntry(id)?.title ?? id),
-                            onDeleted: () => _unmarkComfortable(id),
-                            deleteIcon: const Icon(Icons.replay_rounded, size: 16),
-                            backgroundColor: AppDesignTokens.deepForest.withValues(alpha: 0.08),
-                            side: BorderSide(color: AppDesignTokens.deepForest.withValues(alpha: 0.18)),
-                            labelStyle: const TextStyle(color: AppDesignTokens.deepForest, fontWeight: FontWeight.w700),
-                          ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: scheme.surface,
-                      borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-                      border: Border.all(color: scheme.outline.withValues(alpha: 0.12)),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Servings', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900)),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Scale ingredients automatically (1–4+ people).',
-                                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.3),
-                              ),
-                            ],
-                          ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final d in UserDiet.values)
+                        SelectionChip(
+                          label: _dietLabel(d),
+                          selected: _diet == d,
+                          onTap: () {
+                            setState(() => _diet = d);
+                            _scheduleAutoSave();
+                          },
                         ),
-                        const SizedBox(width: 12),
-                        _ServingsStepper(
-                          value: _servings,
-                          onChanged: (v) => setState(() => _servings = v),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  // SIGNED-CONTENT PLACEHOLDER
+                  const _CardLabel('AVOID'),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final a in _allergenOptions)
+                        SelectionChip(
+                          label: a,
+                          selected: _allergies.contains(a),
+                          showRemoveGlyph: true,
+                          onTap: () {
+                            setState(() {
+                              if (!_allergies.remove(a)) _allergies.add(a);
+                            });
+                            _scheduleAutoSave();
+                          },
                         ),
-                      ],
-                    ),
+                    ],
                   ),
                 ],
               ),
             ),
+
             const SizedBox(height: 14),
-            ProfileSectionCard(
-              title: 'Account',
-              subtitle: isAnonymous
-                  ? 'Optional: keep your data safe across devices.'
-                  : 'Your account is secured and can be restored on new devices.',
-              child: isAnonymous
-                  ? _AnonymousAccountPromptCard(
-                      onSecurePressed: () async {
-                        await AppBottomSheet.show<void>(
-                          context: context,
-                          isScrollControlled: true,
-                          showDragHandle: true,
-                          backgroundColor: AppDesignTokens.surfaceIvory,
-                          builder: (_) => const _SecureAccountSheet(),
-                        );
-                        if (!mounted) return;
-                        // Refresh this screen’s UI after a successful link.
-                        setState(() {});
+
+            // ── GUIDANCE ───────────────────────────────────────────────────
+            _ProfileCard(
+              // SIGNED-CONTENT PLACEHOLDER
+              label: 'GUIDANCE',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final c in KitchenConfidence.values)
+                    GuidanceRow(
+                      label: _confidenceLabel(c),
+                      selected: _confidence == c,
+                      onTap: () {
+                        setState(() => _confidence = c);
+                        _scheduleAutoSave();
                       },
-                    )
-                  : _SecuredAccountStatusCard(email: userEmail),
+                    ),
+                  const SizedBox(height: 12),
+                  Divider(
+                      height: 1,
+                      color: AppDesignTokens.textCharcoal
+                          .withValues(alpha: 0.10)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          // SIGNED-CONTENT PLACEHOLDER. Household DEFAULT
+                          // semantics, never a live scaler: it prefills the
+                          // Fridge Clearer portion segment and new recipes'
+                          // basePortions. The live adjuster lives on the
+                          // recipe overview and only there.
+                          'Usually cooking for',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppDesignTokens.textCharcoal,
+                          ),
+                        ),
+                      ),
+                      _ServingsStepper(
+                        value: _servings,
+                        onChanged: (v) {
+                          setState(() => _servings = v);
+                          _scheduleAutoSave();
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-            // Dev builds only — `kIsDevEnvironment` is a genuine compile-time
-            // constant, so this whole branch is stripped from a prod build
-            // exactly like the DEV badge, rather than merely hidden.
+
+            const SizedBox(height: 14),
+
+            // ── COMFORTABLE TECHNIQUES — read-only, earned ─────────────────
+            _ProfileCard(
+              // SIGNED-CONTENT PLACEHOLDER
+              label: 'COMFORTABLE TECHNIQUES',
+              child: _ComfortableTechniques(ids: _comfortableTechniqueIds),
+            ),
+
+            const SizedBox(height: 14),
+
+            // ── Account ────────────────────────────────────────────────────
+            if (isAnonymous)
+              _AnonymousAccountPromptCard(
+                  onSecurePressed: _openSecureAccountSheet)
+            else
+              _SecuredAccountStatusCard(email: userEmail),
+
             if (kIsDevEnvironment) ...[
-              const SizedBox(height: 14),
-              ProfileSectionCard(
-                title: 'Developer',
-                subtitle: 'Dev builds only. Not present in a release build.',
-                child: _ReplayOnboardingRow(onReplay: _replayOnboarding),
-              ),
+              const SizedBox(height: 18),
+              _DevSection(onReplayOnboarding: _replayOnboarding),
             ],
-            const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: Icon(Icons.save_rounded, color: scheme.onTertiary),
-              label: Text('💾 Save Profile', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900)),
-              style: FilledButton.styleFrom(
-                backgroundColor: scheme.tertiary,
-                foregroundColor: scheme.onTertiary,
-                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 18),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-              ),
-            ),
           ],
         ),
       ),
     );
   }
-}
 
-/// White, rounded card that pops off the sage canvas.
-class ProfileSectionCard extends StatelessWidget {
-  const ProfileSectionCard({super.key, required this.title, required this.subtitle, required this.child});
+  static String _dietLabel(UserDiet d) => switch (d) {
+        UserDiet.omnivore => 'Omnivore',
+        UserDiet.vegetarian => 'Vegetarian',
+        UserDiet.pescatarian => 'Pescatarian',
+        UserDiet.vegan => 'Vegan',
+        UserDiet.flexitarian => 'Flexitarian',
+      };
 
-  final String title;
-  final String subtitle;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-        border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
-        boxShadow: ProfileScreen.cardShadow,
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
-          const SizedBox(height: 6),
-          Text(subtitle, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.35)),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
-    );
-  }
+  /// Names are SIGNED as-is; the old explainer paragraphs are folded into the
+  /// row as the one line after the separator.
+  static String _confidenceLabel(KitchenConfidence c) => switch (c) {
+        // SIGNED-CONTENT PLACEHOLDER (descriptions only — names are signed)
+        KitchenConfidence.beginner => 'Beginner · more guidance, less jargon',
+        KitchenConfidence.fastEfficient =>
+          'Fast & efficient · direct steps, minimal fuss',
+        KitchenConfidence.confident =>
+          'Confident cook · technique names, no hand-holding',
+      };
 }
 
 class _AnonymousAccountPromptCard extends StatelessWidget {
@@ -528,7 +405,7 @@ class _AnonymousAccountPromptCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.lock_outline_rounded, color: AppDesignTokens.deepForest),
+              const Icon(Icons.lock_outline_rounded, color: AppDesignTokens.deepForest),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -555,7 +432,10 @@ class _AnonymousAccountPromptCard extends StatelessWidget {
                 style: theme.textTheme.labelLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w900),
               ),
               style: FilledButton.styleFrom(
-                backgroundColor: AppDesignTokens.deepForest,
+                // The screen's ONE terracotta CTA. This was dark-forest —
+                // a colour that is not a button fill anywhere in the kit and
+                // now exists nowhere in lib/ as one (palette guard enforces).
+                backgroundColor: AppDesignTokens.ctaTerracotta,
                 foregroundColor: Colors.white,
                 splashFactory: NoSplash.splashFactory,
                 overlayColor: Colors.transparent,
@@ -588,7 +468,7 @@ class _SecuredAccountStatusCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.verified_rounded, color: AppDesignTokens.deepForest),
+          const Icon(Icons.verified_rounded, color: AppDesignTokens.deepForest),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -656,10 +536,10 @@ class _SecureAccountSheetState extends State<_SecureAccountSheet> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Account secured — check your email to confirm the change.'),
+        const SnackBar(
+          content: Text('Account secured — check your email to confirm the change.'),
           behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          margin: EdgeInsets.fromLTRB(16, 0, 16, 16),
         ),
       );
 
@@ -760,7 +640,10 @@ class _SecureAccountSheetState extends State<_SecureAccountSheet> {
                 child: FilledButton(
                   onPressed: _saving ? null : _submit,
                   style: FilledButton.styleFrom(
-                    backgroundColor: AppDesignTokens.deepForest,
+                    // The screen's ONE terracotta CTA. This was dark-forest —
+                // a colour that is not a button fill anywhere in the kit and
+                // now exists nowhere in lib/ as one (palette guard enforces).
+                backgroundColor: AppDesignTokens.ctaTerracotta,
                     foregroundColor: Colors.white,
                     splashFactory: NoSplash.splashFactory,
                     overlayColor: Colors.transparent,
@@ -805,141 +688,6 @@ class _SecureAccountSheetState extends State<_SecureAccountSheet> {
                     side: BorderSide(color: scheme.outline.withValues(alpha: 0.22)),
                   ),
                   child: Text('Not now', style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class DietOptionTile extends StatelessWidget {
-  const DietOptionTile({
-    super.key,
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.groupValue,
-    required this.onChanged,
-  });
-
-  final String title;
-  final String subtitle;
-  final UserDiet value;
-  final UserDiet groupValue;
-  final ValueChanged<UserDiet> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final selected = value == groupValue;
-
-    return Material(
-      color: scheme.surface,
-      borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-      child: InkWell(
-        onTap: () => onChanged(value),
-        borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-        splashFactory: NoSplash.splashFactory,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        hoverColor: Colors.transparent,
-        child: Container(
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-            border: Border.all(color: selected ? AppDesignTokens.deepForest.withValues(alpha: 0.45) : scheme.outline.withValues(alpha: 0.14)),
-            boxShadow: ProfileScreen.cardShadow,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            children: [
-              Icon(
-                selected ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
-                color: selected ? AppDesignTokens.deepForest : scheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 3),
-                    Text(subtitle, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.25)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class ConfidenceOptionRow extends StatelessWidget {
-  const ConfidenceOptionRow({
-    super.key,
-    required this.value,
-    required this.groupValue,
-    required this.title,
-    required this.subtitle,
-    required this.onChanged,
-  });
-
-  final KitchenConfidence value;
-  final KitchenConfidence groupValue;
-  final String title;
-  final String subtitle;
-  final ValueChanged<KitchenConfidence> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final selected = value == groupValue;
-
-    return Material(
-      color: scheme.surface,
-      borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-      child: InkWell(
-        onTap: () => onChanged(value),
-        borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-        splashFactory: NoSplash.splashFactory,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        hoverColor: Colors.transparent,
-        child: Container(
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
-            border: Border.all(color: selected ? AppDesignTokens.ctaTerracotta.withValues(alpha: 0.55) : scheme.outline.withValues(alpha: 0.14)),
-            boxShadow: ProfileScreen.cardShadow,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Icon(
-                  selected ? Icons.check_circle_rounded : Icons.circle_outlined,
-                  color: selected ? AppDesignTokens.ctaTerracotta : scheme.onSurfaceVariant,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 3),
-                    Text(subtitle, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.25)),
-                  ],
                 ),
               ),
             ],
@@ -1061,4 +809,362 @@ class _ReplayOnboardingRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One quiet row: a label and an inline control. No card headline, no
+/// explainer paragraph — the old screen had one on every card.
+class _QuietRow extends StatelessWidget {
+  const _QuietRow({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      decoration: BoxDecoration(
+        color: AppDesignTokens.surfaceIvory,
+        borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
+        border: Border.all(
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: AppDesignTokens.textCharcoal,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
+/// A section card: one quiet uppercase label, then content. No subtitle
+/// paragraph — every one of those was cut.
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      decoration: BoxDecoration(
+        color: AppDesignTokens.surfaceIvory,
+        borderRadius: BorderRadius.circular(ProfileScreen.cardRadius),
+        border: Border.all(
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _CardLabel(label),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _CardLabel extends StatelessWidget {
+  const _CardLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      text,
+      style: theme.textTheme.labelSmall?.copyWith(
+        color: AppDesignTokens.deepForest.withValues(alpha: 0.70),
+        fontWeight: FontWeight.w900,
+        letterSpacing: 0.6,
+      ),
+    );
+  }
+}
+
+/// **The one selection style on this screen.** Champagne fill when selected,
+/// quiet surface with a hairline when not.
+///
+/// This replaced three different styles that used to coexist here: Material
+/// radio circles, a terracotta check glyph, and a border-only selected state.
+/// Selection is never communicated by a border alone and never by an icon
+/// alone — kit rule.
+class SelectionChip extends StatelessWidget {
+  const SelectionChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.showRemoveGlyph = false,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  /// Allergen chips carry a ✕ when selected, because deselecting one is a
+  /// meaningful action rather than an idle toggle.
+  final bool showRemoveGlyph;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: selected
+          ? AppDesignTokens.champagneTint
+          : AppDesignTokens.quietRowSurface,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: selected
+                ? null
+                : Border.all(
+                    color: AppDesignTokens.textCharcoal
+                        .withValues(alpha: 0.14)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected
+                      ? AppDesignTokens.terracottaOnLight
+                      : AppDesignTokens.textCharcoal.withValues(alpha: 0.80),
+                ),
+              ),
+              if (selected && showRemoveGlyph) ...[
+                const SizedBox(width: 6),
+                const Icon(Icons.close_rounded,
+                    size: 14, color: AppDesignTokens.terracottaOnLight),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One guidance option. Single-select, champagne fill when chosen — **no
+/// radio circle**; the old screen used Material radios here.
+class GuidanceRow extends StatelessWidget {
+  const GuidanceRow({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selected
+            ? AppDesignTokens.champagneTint
+            : AppDesignTokens.quietRowSurface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: selected
+                  ? null
+                  : Border.all(
+                      color: AppDesignTokens.textCharcoal
+                          .withValues(alpha: 0.12)),
+            ),
+            child: Text(
+              label,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                color: selected
+                    ? AppDesignTokens.terracottaOnLight
+                    : AppDesignTokens.textCharcoal.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The Confidence Climb, shown but never set here.
+///
+/// **READ-ONLY, signed.** Rows are filled solely by the post-cook confidence
+/// question; there is no self-declaration path and no un-marking path, and
+/// there are deliberately no tap handlers on any row. The Climb is earned.
+///
+/// Gold is used for the "automatic" state and nowhere else on this screen —
+/// it is the earned family, and this is the one earned thing on the surface.
+class _ComfortableTechniques extends StatelessWidget {
+  const _ComfortableTechniques({required this.ids});
+
+  final Set<String> ids;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (ids.isEmpty) {
+      return Text(
+        // SIGNED-CONTENT PLACEHOLDER
+        'Nothing here yet — techniques land here once cooking them feels automatic.',
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: AppDesignTokens.textCharcoal.withValues(alpha: 0.65),
+          height: 1.35,
+        ),
+      );
+    }
+
+    final entries = resolveDrawerEntries(ids.toList(growable: false))
+        .toList(growable: false);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final e in entries)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.workspace_premium_rounded,
+                    size: 18, color: AppDesignTokens.goldEarnedOnLight),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    e.title,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: AppDesignTokens.goldEarnedOnLight,
+                    ),
+                  ),
+                ),
+                Text(
+                  // SIGNED-CONTENT PLACEHOLDER
+                  'automatic',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: AppDesignTokens.goldEarnedOnLight,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Dev-only affordances, in a dashed-ghost container so they never read as
+/// part of the product. Folds away entirely in a prod build — `kIsDevEnvironment`
+/// is a compile-time constant, same as the DEV badge.
+class _DevSection extends StatelessWidget {
+  const _DevSection({required this.onReplayOnboarding});
+
+  final Future<void> Function() onReplayOnboarding;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return CustomPaint(
+      painter: _DashedBorderPainter(
+        color: AppDesignTokens.textCharcoal.withValues(alpha: 0.28),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'DEV',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: AppDesignTokens.textCharcoal.withValues(alpha: 0.55),
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _ReplayOnboardingRow(onReplay: onReplayOnboarding),
+            const SizedBox(height: 6),
+            Text(
+              'Environment: ${AppEnvironmentConfig.environment.name} · '
+              '${AppEnvironmentConfig.supabase.url.split('//').last.split('.').first}',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: AppDesignTokens.textCharcoal.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashedBorderPainter extends CustomPainter {
+  const _DashedBorderPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+
+    final rrect = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(14),
+    );
+    final path = Path()..addRRect(rrect);
+
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final next = distance + 6;
+        canvas.drawPath(
+          metric.extractPath(distance, next.clamp(0, metric.length)),
+          paint,
+        );
+        distance = next + 5;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedBorderPainter oldDelegate) =>
+      oldDelegate.color != color;
 }

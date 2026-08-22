@@ -150,6 +150,7 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
       // and every retry — see ChefService.buildUserMessage.
       final result = await generateValidatedRecipe(
         logSurface: kChefCallSurfaceCustomCreator,
+        avoidedAllergens: profile.allergies,
         attempt: ({String? correctionNote, required RecipeRetryKind retryKind}) =>
             _chefService.askChefHarris(
           userQuery: correctionNote == null ? prompt : '$prompt\n\n$correctionNote',
@@ -163,6 +164,8 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
             RecipeRetryKind.first => kChefCallSurfaceCustomCreator,
             RecipeRetryKind.compatibility => kChefCallSurfaceCustomCreatorRetry,
             RecipeRetryKind.safety => kChefCallSurfaceCustomCreatorSafetyRetry,
+            RecipeRetryKind.allergen =>
+              kChefCallSurfaceCustomCreatorAllergenRetry,
           },
         ),
         parse: (raw, unknownKeys) => parseChefRecipeJson(

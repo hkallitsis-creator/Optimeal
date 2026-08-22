@@ -7,6 +7,88 @@ Read on request, not auto-loaded.
 
 ---
 
+## Allergen enforcement is a prompt constraint AND a deterministic check (23 August 2026)
+
+**Binding rule:** avoided allergens are enforced twice — once by the prompt,
+which already worked, and once by `lib/services/allergen_guard.dart`, which
+does not depend on the model.
+
+**Verified live before building anything.** With a deliberately adversarial
+profile (avoid Egg, Dairy, Tree Nuts; diet vegan) handed
+"eggs, cheese, walnuts, potatoes, spinach" as the ingredients it *has*, the
+generated recipe used **none of them**. The prompt half is genuinely live.
+What it is not is a guarantee, and the failure mode here is an allergic
+reaction, so the deterministic half was added anyway.
+
+The check inspects generated **ingredient names**, whole-word. Step prose is
+deliberately not scanned: a step saying "unlike a classic carbonara, there is
+no egg here" is correct, and a rule that fires on recipes doing the right thing
+is a rule people learn to ignore. Whole-word matching is likewise load-bearing —
+real output produced **nutritional yeast** as the vegan substitute for
+parmesan, and a substring matcher would have flagged the substitute as the
+allergen it was replacing.
+
+**Ordering:** allergens run third and last, after compatibility and safety, so
+they get the final say on what is served and a correction they win cannot be
+re-broken by a later timing retry.
+
+**FAIL-OPEN vs FAIL-CLOSED — PENDING HARRIS.** It currently fails **open with a
+loud log**, matching the other two validators, and this is deliberately not
+decided here. The argument both ways, so it can be ruled on rather than
+inherited:
+
+- *For fail-closed:* every other fail-open in this app costs a worse dinner. This
+  one costs an allergic reaction. A user who typed "Tree Nuts" into their
+  profile has made a medical statement, and serving them a recipe containing
+  walnuts after two failed corrections is worse than serving nothing.
+- *For fail-open:* the guard is a **synonym list**, not a lab test. A false
+  positive blocks a perfectly good recipe, and the failure is silent to the
+  user either way unless we also design an error state — which does not exist
+  yet. Failing closed with no explanatory surface would read as "the app is
+  broken".
+- **My view:** fail *closed*, but only once there is a real user-facing state
+  to fail into — "we could not build this safely, here is why". Failing closed
+  into a blank error today trades one bad outcome for a different one. Until
+  that surface exists, fail-open-with-log is the honest interim, and the log
+  is the thing that must never be dropped.
+
+**The stage-1 leak, unresolved and reported.** On the same adversarial run,
+the Fridge Clearer's *ideas* screen offered "Cheesy Potato Skillet" and
+"Spinach Walnut Salad" — two of three ideas containing the user's allergens —
+before stage 2 correctly produced a clean recipe. The ideas are user-facing
+generation output. Detection exists (`allergensInIdeaText`); what to do about
+it (filter, regenerate, or annotate) is Harris's ruling, because filtering
+could leave fewer than three ideas and dropping to zero would break the surface.
+
+---
+
+## The Profile Language card is deleted; the field stays (23 August 2026)
+
+**Binding rule:** the Language card is gone from the Profile screen. It offered
+Deutsch, Français and Italiano, **none of which is shipped** — the same
+stale-promise class as onboarding's checkboxes and shopping list. It returns
+when localization actually exists, not before, and there is no English-only
+placeholder card in the meantime.
+
+`UserProfile.language` **stays on the model and in the store**. No migration to
+drop it: the value round-trips harmlessly, and dropping a column to remove a UI
+card would be a schema change for nothing.
+
+---
+
+## "Usually cooking for" is a household DEFAULT, never a live scaler (23 August 2026)
+
+**Binding rule:** the Profile stepper prefills — the Fridge Clearer portion
+segment and new recipes' `basePortions`. It **never** rescales an open recipe.
+Live rescaling lives on the recipe overview and only there.
+
+The two are easy to conflate and were conflated in the old copy ("Scale
+ingredients automatically (1–4+ people)"), which described a live scaler that
+this control has never been. Verified live: a profile household of 5 produced
+`basePortions: 5` on both a Fridge Clearer and a Custom generation.
+
+---
+
 ## Step 1 is mise en place, and there is only ever one prep step (23 August 2026)
 
 **Binding rule 1 — the dedup.** Cook Mode prepends a client-synthesized

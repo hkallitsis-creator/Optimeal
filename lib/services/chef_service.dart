@@ -58,6 +58,17 @@ const String kChefCallSurfaceFridgeClearerSafetyRetry =
 const String kChefCallSurfaceCustomCreatorSafetyRetry =
     'custom_creator_safety_retry';
 
+/// Allergen-correction retries (2026-08-23), one per recipe surface.
+///
+/// Separate again, for the same reason the safety retries are separate from
+/// the timing ones: an allergen correction is the one whose failure is an
+/// allergic reaction, and its rate must be readable on its own rather than
+/// averaged into a bucket with knife-cut timing.
+const String kChefCallSurfaceFridgeClearerAllergenRetry =
+    'fridge_clearer_allergen_retry';
+const String kChefCallSurfaceCustomCreatorAllergenRetry =
+    'custom_creator_allergen_retry';
+
 /// Every value the client may send as `surface`. The edge function does not
 /// validate against this list (it stores whatever string arrives); this
 /// exists so tests can assert the call sites stay in sync.
@@ -66,9 +77,11 @@ const List<String> kChefCallSurfaces = [
   kChefCallSurfaceFridgeClearerRetry,
   kChefCallSurfaceFridgeIdeas,
   kChefCallSurfaceFridgeClearerSafetyRetry,
+  kChefCallSurfaceFridgeClearerAllergenRetry,
   kChefCallSurfaceCustomCreator,
   kChefCallSurfaceCustomCreatorRetry,
   kChefCallSurfaceCustomCreatorSafetyRetry,
+  kChefCallSurfaceCustomCreatorAllergenRetry,
   kChefCallSurfaceChefSos,
 ];
 

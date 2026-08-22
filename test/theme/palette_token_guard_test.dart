@@ -137,4 +137,31 @@ void main() {
       );
     }
   });
+
+  test('deep forest is never a button fill', () {
+    // Signed 2026-08-23 with the Profile redesign: the dark-forest CTA colour
+    // exits the app. It is a TEXT and GLYPH colour — the app's one filled CTA
+    // colour is terracotta, everywhere, and a second filled-CTA colour is
+    // exactly how a kit stops being a kit.
+    //
+    // deepForest itself stays a token: headings and lock/verified glyphs use
+    // it legitimately. What is forbidden is using it as a fill.
+    final offenders = <String>[];
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      final lines = entity.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i];
+        if (line.trimLeft().startsWith('//')) continue;
+        final isFill = line.contains('backgroundColor:') ||
+            line.contains('color: AppDesignTokens.deepForest,') &&
+                line.contains('fill');
+        if (isFill && line.contains('deepForest')) {
+          offenders.add('${entity.path}:${i + 1}');
+        }
+      }
+    }
+    expect(offenders, isEmpty,
+        reason: 'deepForest used as a fill: $offenders');
+  });
 }

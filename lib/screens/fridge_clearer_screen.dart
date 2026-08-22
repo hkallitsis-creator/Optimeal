@@ -402,6 +402,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       final variablePrompt = _buildRecipeVariablePrompt(idea, portions);
       final result = await generateValidatedRecipe(
         logSurface: kChefCallSurfaceFridgeClearer,
+        avoidedAllergens: profile.allergies,
         attempt: ({String? correctionNote, required RecipeRetryKind retryKind}) =>
             _chefService.askChefHarris(
           userQuery: correctionNote == null
@@ -416,6 +417,8 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
             RecipeRetryKind.first => kChefCallSurfaceFridgeClearer,
             RecipeRetryKind.compatibility => kChefCallSurfaceFridgeClearerRetry,
             RecipeRetryKind.safety => kChefCallSurfaceFridgeClearerSafetyRetry,
+            RecipeRetryKind.allergen =>
+              kChefCallSurfaceFridgeClearerAllergenRetry,
           },
         ),
         parse: (raw, unknownKeys) => parseChefRecipeJson(

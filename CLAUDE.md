@@ -474,6 +474,42 @@ request or when a task needs the "why."
   generations and is excluded from `flutter test` by having no `_test.dart`
   suffix. Full reasoning: `docs/DECISIONS.md` and
   `docs/sessions/2026-08-23_safety-validator.md`.
+- **Profile — redesigned 2026-08-23, and what each field actually drives.**
+  `ProfileScreen` (`lib/screens/profile_screen.dart`). **All five controls are
+  LIVE** — verified against real dev output, not just code, with an
+  adversarial profile. Name → `Name to address`; Diet → `Diet baseline`;
+  Guidance → `Kitchen confidence` + a hard-constraint instruction; Household →
+  `Household servings` **and** the Fridge Clearer portion prefill and new
+  recipes' `basePortions`; Allergens → the avoid block **plus** the
+  deterministic guard below.
+  **Cut**: the Language card entirely (Deutsch/Français/Italiano were never
+  shipped — the `language` FIELD stays on the model, no migration), every
+  per-card explainer paragraph, Material radio circles, the mixed selection
+  styles, the **dark-forest button fill** (now nowhere in `lib/` as a fill —
+  palette guard enforces), and the Save Profile button (the screen autosaves).
+  **One selection style**: `SelectionChip`, champagne fill. **One terracotta
+  CTA**: Secure my account. Comfortable Techniques is **READ-ONLY** — filled
+  only by the post-cook confidence question, gold on "automatic", no tap
+  handlers and no un-mark path. Dev section is a dashed-ghost container behind
+  `kIsDevEnvironment`.
+  **"Usually cooking for" is a household DEFAULT, never a live scaler** — it
+  prefills; the live adjuster is the recipe overview's and only there.
+- **Allergens are enforced twice (2026-08-23).** The prompt block (live, and
+  proven live: a profile avoiding egg/dairy/nuts, handed exactly those as
+  available ingredients, got a recipe using none of them) **and**
+  `lib/services/allergen_guard.dart` — a deterministic post-parse check over
+  generated ingredient NAMES against `lib/data/allergen_synonyms.dart`
+  (14 keys = the Profile chips exactly; synonym lists are DRAFT pending
+  Harris). Whole-word matching is load-bearing: real output used **nutritional
+  yeast** as the dairy substitute, and a substring matcher would flag the
+  substitute as the allergen. Runs **third and last**, after compat and safety,
+  so nothing can re-break a correction it won. Correction retry ×2 then
+  **fail-open with a loud log** — whether it should fail CLOSED is argued in
+  `docs/DECISIONS.md` and is **PENDING HARRIS**.
+  **Known unresolved: Fridge Clearer stage-1 ideas leak allergens.** On the
+  adversarial run the ideas screen offered "Cheesy Potato Skillet" and
+  "Spinach Walnut Salad" to a dairy/nut-avoiding profile before stage 2
+  produced a clean recipe. Detection exists; the action is Harris's ruling.
 - **Pre-cook merge — Step 1 is mise en place (2026-08-23).** The
   `_IngredientsChecklistCard` / `_IngredientChecklistRow` pre-cook surface,
   its tick state, its `0/N` counter and its **inline servings stepper** are

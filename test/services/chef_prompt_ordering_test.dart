@@ -188,7 +188,7 @@ void main() {
   });
 
   group('surface identifiers', () {
-    test('there are exactly eight, matching the live call sites and retries', () {
+    test('there are exactly ten, matching the live call sites and retries', () {
       // Four since the Fridge Clearer went two-stage (2026-08-22): the
       // menu-of-three call and the full-recipe call are separate surfaces, so
       // browsing cost and committing cost can be told apart. Six since the
@@ -198,7 +198,10 @@ void main() {
       // Eight since the safety validator (2026-08-23): a safety correction is
       // different work from a timing correction and gets its own value, for
       // the same reason the two validators are separate code.
-      expect(kChefCallSurfaces, hasLength(8));
+      // Ten since the allergen guard (2026-08-23): an allergen correction is
+      // the one whose failure is an allergic reaction, and its rate must be
+      // readable on its own rather than averaged into a timing bucket.
+      expect(kChefCallSurfaces, hasLength(10));
       expect(
         kChefCallSurfaces,
         containsAll(<String>[
@@ -209,6 +212,8 @@ void main() {
           kChefCallSurfaceCustomCreator,
           kChefCallSurfaceCustomCreatorRetry,
           kChefCallSurfaceCustomCreatorSafetyRetry,
+          kChefCallSurfaceFridgeClearerAllergenRetry,
+          kChefCallSurfaceCustomCreatorAllergenRetry,
           kChefCallSurfaceChefSos,
         ]),
       );

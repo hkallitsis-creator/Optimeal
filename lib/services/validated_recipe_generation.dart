@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/allergen_guard.dart';
 import 'package:optimeal/services/compatibility_flag_log.dart';
 import 'package:optimeal/services/cooking_compatibility_validator.dart';
 import 'package:optimeal/services/safety_flag_log.dart';
@@ -19,6 +20,9 @@ enum RecipeRetryKind {
 
   /// A regeneration prompted by the safety validator.
   safety,
+
+  /// A regeneration prompted by the allergen guard.
+  allergen,
 }
 
 /// One generation attempt. [correctionNote] is null on the first attempt and
@@ -48,6 +52,8 @@ class ValidatedRecipeResult {
     this.safetyReport = const SafetyReport.clean(),
     this.safetyRetriesUsed = 0,
     this.servedWithSafetyFindings = false,
+    this.allergenViolations = const [],
+    this.allergenRetriesUsed = 0,
   });
 
   final CookModeRecipePayload? recipe;
@@ -73,10 +79,21 @@ class ValidatedRecipeResult {
   /// The recipe is still served — that is the registry's signed behaviour —
   /// but H1's injected cue has been applied regardless.
   final bool servedWithSafetyFindings;
+
+  /// Allergen violations still present on the served recipe. **Empty is the
+  /// only acceptable steady state**; a non-empty list means the guard failed
+  /// open and the caller is serving a recipe containing something the user
+  /// told us they cannot eat.
+  final List<AllergenViolation> allergenViolations;
+
+  final int allergenRetriesUsed;
 }
 
 /// Signed cap. Two corrections, then serve whatever we have.
 const int kMaxCompatibilityRetries = 2;
+
+/// Allergen corrections, same cap as the other two layers.
+const int kMaxAllergenRetries = 2;
 
 /// Generate → validate (timing) → correct → validate (safety) → correct →
 /// inject → serve.
@@ -115,6 +132,8 @@ Future<ValidatedRecipeResult> generateValidatedRecipe({
   required String logSurface,
   int maxRetries = kMaxCompatibilityRetries,
   int maxSafetyRetries = kMaxSafetyRetries,
+  int maxAllergenRetries = kMaxAllergenRetries,
+  List<String> avoidedAllergens = const [],
 }) async {
   CookModeRecipePayload? best;
   var bestReport = const CompatibilityReport.clean();
@@ -196,6 +215,40 @@ Future<ValidatedRecipeResult> generateValidatedRecipe({
     if (!safetyReport.hasCorrectable) break;
   }
 
+  // ── Allergen guard, on the recipe that survived both validators ─────────
+  //
+  // Third and last, because it is the only layer whose failure is an allergic
+  // reaction: it gets the final say on what is served, and a correction it
+  // wins is not allowed to be re-broken by a later timing retry.
+  var allergenRetriesUsed = 0;
+  var violations =
+      findAllergenViolations(recipe: best!, avoided: avoidedAllergens);
+
+  for (var i = 1; i <= maxAllergenRetries && violations.isNotEmpty; i++) {
+    final raw = await attempt(
+      correctionNote: buildAllergenCorrectionNote(violations),
+      retryKind: RecipeRetryKind.allergen,
+    );
+    if (raw == null || raw.trim().isEmpty) break;
+
+    final unknownKeys = <String>[];
+    final parsed = await parse(raw, unknownKeys);
+    if (parsed == null) break;
+
+    allergenRetriesUsed = i;
+    final candidate =
+        findAllergenViolations(recipe: parsed, avoided: avoidedAllergens);
+
+    // Allergens outrank timing and every other correction: a recipe with
+    // fewer of them is better even if it is worse in every other way.
+    if (candidate.length < violations.length) {
+      best = parsed;
+      violations = candidate;
+      bestReport = validateCookingCompatibility(parsed, unknownKeys: unknownKeys);
+    }
+    if (violations.isEmpty) break;
+  }
+
   // ── The guarantee. Applied last, unconditionally, to what is served ──────
   final injected = applySafetyInjections(best!);
   best = injected.recipe;
@@ -211,6 +264,15 @@ Future<ValidatedRecipeResult> generateValidatedRecipe({
 
   final servedWithFlags = !bestReport.isClean;
   final servedWithSafetyFindings = safetyReport.hasCorrectable;
+
+  if (violations.isNotEmpty) {
+    // FAIL-OPEN, LOUDLY. Whether this should fail CLOSED instead is argued in
+    // the session report and is PENDING HARRIS — it is deliberately not
+    // decided here. What is not negotiable is that it is never silent.
+    debugPrint('AllergenGuard: SERVING WITH ${violations.length} UNRESOLVED '
+        'VIOLATION(S) after $allergenRetriesUsed retries on $logSurface: '
+        '${violations.map((v) => v.toJson()).toList()}');
+  }
 
   await CompatibilityFlagLog.record(
     surface: logSurface,
@@ -233,5 +295,7 @@ Future<ValidatedRecipeResult> generateValidatedRecipe({
     safetyReport: safetyReport,
     safetyRetriesUsed: safetyRetriesUsed,
     servedWithSafetyFindings: servedWithSafetyFindings,
+    allergenViolations: violations,
+    allergenRetriesUsed: allergenRetriesUsed,
   );
 }
