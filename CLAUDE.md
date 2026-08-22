@@ -578,15 +578,28 @@ request or when a task needs the "why."
   makes "no auto-start, ever" a property of the code. Step 1 and 0-minute steps
   render no pill. The bottom-bar pause square is the same action as tapping the
   pill, deliberately, so there is one mental model.
-- **Back from Cook Mode goes to the recipe overview (2026-08-23).**
-  `_backToOverview` → `pushReplacement(AppRoutes.recipe, extra: payload)`.
-  Back used to pop to the generation surface where the recipe no longer
-  existed. **The session stays active**, so the overview's Start cooking is a
-  *resume at the stored step*: `RecipeDetailsScreen` loads the active session,
-  matches it by recipe key, and pushes the `ActiveCookSession` — which carries
-  the payload, the step index, the completed set **and `plannerSlot`**, so slot
-  attribution survives the detour. Complements, does not replace, the standing
-  "Cook Now bypasses the overview" ruling; the home glyph is unchanged.
+- **Back from Cook Mode goes to the recipe overview — pop OR replace, never
+  two overviews of one recipe (2026-08-23, post-audit fix).** `_backToOverview`
+  first asks `OverviewRouteRegistry`
+  (`lib/services/overview_route_registry.dart` — overviews register their
+  normalized recipe key, `SavedRecipesService.recipeKeyFor`, in
+  `initState`/`dispose`): if an overview for this recipe is already mounted
+  below, back **POPS** to it (audit H-2 — unconditional `pushReplacement`
+  used to stack `[overview(old), overview(new)]` with the lower one stale);
+  otherwise — generation Cook Now, planner Cook, resume banner — back
+  **REPLACES** Cook Mode with a fresh overview as before. Back used to pop to
+  the generation surface where the recipe no longer existed. **The session
+  stays active**, so the overview's Start cooking is a *resume at the stored
+  step*: `RecipeDetailsScreen` loads the active session, matches it by recipe
+  key, **re-reads it on every `AppDataChanges.cookLog` signal** (audit H-1 —
+  it was initState-only, so a stale overview could silently restart a live
+  cook at Step 1), and pushes the `ActiveCookSession` — which carries the
+  payload, the step index, the completed set **and `plannerSlot`**, so slot
+  attribution survives the detour. **While a session is in progress the
+  overview's servings stepper renders DISABLED at the session's locked N**
+  (audit M-1) and re-enables when the session ends, via the same signal.
+  Complements, does not replace, the standing "Cook Now bypasses the
+  overview" ruling; the home glyph is unchanged.
 - **Type scale (2026-08-23, Harris): bigger where possible.** Cook Mode action
   line +3 sp, cue sentence +2 sp, detail +1 sp; whisper and meta pills
   unchanged. App-wide `AppDesignTokens.body` 15 → **16**, changed in the tokens
@@ -627,6 +640,12 @@ request or when a task needs the "why."
   overview sheet, jump-to-step, cooked-set rewrite and the SOS marker all
   index it. Step 1 is **excluded from the SOS prompt payload** and carries no
   timer, heat, cue, compat or safety check.
+  **Null-servings fallback is ONE function since the post-audit fix (audit
+  M-2)**: `resolveCookModeServings` (`lib/models/recipe_scale.dart`) — launch
+  servings → profile household if onboarded → recipe `basePortions` → 1 —
+  resolved once into `_currentPortions` at Cook Mode mount, so the mise pill
+  and the mid-cook `_ingredients` (overview sheet, SOS payload, ledger)
+  can never scale differently again.
   **There is no `ChecklistScreen` route and never was** — the checklist was a
   card. A test forbids one appearing.
 - **Recipe overview — redesigned 2026-08-23.** `RecipeDetailsScreen`
@@ -910,12 +929,12 @@ introduced anywhere.
 ## Working conventions
 
 - **`docs/audit_2026-08-23.md` is the pre-vacation audit** (read-only
-  verification pass over `224ba24`). Its open findings are NOT fixed: two HIGH
-  (H-1 stale `_resumableSession` on `RecipeDetailsScreen` can silently restart
-  an in-progress cook; H-2 back-from-Cook-Mode stacks two overviews), six
-  MEDIUM (resume-path stepper is a lie; divergent null-servings fallbacks in
-  Cook Mode; 7-calls-per-recipe worst case undocumented + edge-function 502s
-  under bursts; allergen retries skip the safety correction round; stale
+  verification pass over `224ba24`). **H-1, H-2, M-1 and M-2 were FIXED the
+  same day** by the post-audit fix build (pop-vs-replace back routing +
+  `OverviewRouteRegistry`, the overview's cookLog subscription, the locked
+  stepper, `resolveCookModeServings`). Still open, deliberately, for
+  post-vacation: four MEDIUM (7-calls-per-recipe worst case + edge-function
+  502s under bursts; allergen retries skip the safety correction round; stale
   paywall copy; `max_tokens: 1200` headroom) and six LOW. Start there when
   picking up work.
 - **`docs/DECISIONS.md` and `docs/CHANGELOG.md` exist alongside this file.** DECISIONS.md holds binding product/architecture decisions and their reasoning (not descriptions of current code). CHANGELOG.md holds completed work and full session history, newest first. Neither is auto-loaded — read on request or when a task needs history/reasoning this file deliberately omits to stay small.

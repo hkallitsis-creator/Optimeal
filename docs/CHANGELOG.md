@@ -13,6 +13,50 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Post-audit fix: back round trip (H-1, H-2) + servings fallbacks (M-1, M-2)
+
+The last code change before the vacation tag; closes the audit's two HIGH and
+first two MEDIUM findings. Minimal diff: two screens, one widget, one model
+function, one new 50-line registry.
+
+- **H-2 (first — it armed H-1):** `_backToOverview` now pops back to the
+  launching overview when one for the same recipe is mounted below, and only
+  otherwise replaces Cook Mode with a fresh one. **Never two overviews of one
+  recipe on the stack.** Identity = the normalized recipe key
+  (`SavedRecipesService.recipeKeyFor`); mounted-ness comes from the new
+  `OverviewRouteRegistry` (`lib/services/overview_route_registry.dart`),
+  registered/unregistered by `RecipeDetailsScreen`'s
+  `initState`/`dispose` — go_router does not expose a lower route's `extra`
+  version-stably, and pages below the top stay mounted, so mounted-ness is
+  the honest proxy.
+- **H-1:** `RecipeDetailsScreen` subscribes to `AppDataChanges.cookLog`
+  (`saveActiveSession`/`clearActiveSession` both fire it — no separate
+  session-write signal exists) and re-reads the resumable session on every
+  signal. A returned-to overview now always resumes; the
+  silent-restart-at-Step-1 overwrite is closed, verified end to end by widget
+  test and by a live dev generation driven through the exact repro (pop → one
+  overview in tree → resume at Step 3, same recipe key, `completedSteps`
+  {0, 1} intact; planner detour keeps `PlannerSlotRef`).
+- **M-1:** while a session is in progress the overview stepper renders
+  **disabled at the session's locked N** (`RecipeOverviewBody.enabled`), and
+  re-enables via the same signal when the session ends.
+- **M-2:** one fallback — `resolveCookModeServings` in
+  `lib/models/recipe_scale.dart` (launch → household if onboarded →
+  `basePortions` → 1), resolved once into `_currentPortions` at Cook Mode
+  mount; `_buildMiseCard`'s separate profile-consulting chain deleted, so the
+  mise pill and `_ingredients` (overview sheet, SOS, ledger) share one scale.
+  A pre-M-2 resumed session with null `currentPortions` keeps the resolved
+  value instead of nulling it.
+
+Untouched per the brief: validators, allergen guard, prompts, timer, paywall
+strings, `max_tokens`. Tests **711 passing** (703 + 8 new in
+`test/screens/post_audit_backtrip_test.dart` + the live probe pair
+`test/manual/h1_backtrip_probe.dart`); analyze **40**, palette guard green.
+Tag `vacation-2026-08` moved to this build. Session record:
+`docs/sessions/2026-08-23_post-audit-fix.md`.
+
+---
+
 ## 2026-08-23 — Pre-vacation audit + system freeze (read-only on app code)
 
 Verification-only session over `224ba24`; no file under `lib/`, `test/`,

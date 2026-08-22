@@ -7,6 +7,43 @@ Read on request, not auto-loaded.
 
 ---
 
+## Never two overviews of one recipe on the stack; the overview re-reads the session on signal (23 August 2026)
+
+Source: the post-audit fix round, closing `docs/audit_2026-08-23.md` H-1, H-2,
+M-1 and M-2.
+
+**Binding rule 1 — back routing is pop-or-replace, decided by what is
+underneath.** Cook Mode's back (arrow and system gesture alike) asks
+`OverviewRouteRegistry` whether an overview for **this** recipe — matched on
+the normalized recipe key, `SavedRecipesService.recipeKeyFor`, the same
+identity resume matching uses — is already mounted below. If so, back **pops**
+to it; otherwise (generation Cook Now, planner Cook, the resume banner) back
+**replaces** Cook Mode with a fresh overview. The unconditional
+`pushReplacement` this refines was chosen so a round trip could not stack Cook
+Modes; when the overview was the launcher it stacked overviews instead, and
+the lower, stale one could silently restart a live cook at Step 1.
+
+**Binding rule 2 — the overview subscribes to its store's signal.**
+`RecipeDetailsScreen` re-reads the resumable session on every
+`AppDataChanges.cookLog` (`saveActiveSession`/`clearActiveSession` both fire
+it; there is no separate session-write signal). This is not new law — it is
+the standing write-driven-signals rule applied to the one reader that predated
+it. Consequence: a returned-to overview always knows a session exists, so
+Start cooking resumes and can never overwrite a live session.
+
+**Binding rule 3 — the stepper honours the lock.** While a session is in
+progress for this recipe, the overview's servings stepper renders **disabled
+at the session's locked N** ("quantities lock when Cook Mode opens" was
+already signed; a live stepper the resume ignored was the lie). It re-enables
+by itself when the session ends, via the same signal.
+
+**With them, one fallback:** every Cook Mode entry resolves null servings
+through `resolveCookModeServings` (launch → household if onboarded →
+`basePortions` → 1), once, at mount — Cook Mode previously computed two
+different fallbacks and its own surfaces could disagree about the scale.
+
+---
+
 ## No emoji inside a CTA label — house rule (23 August 2026)
 
 **Binding rule:** no emoji in the label of any `FilledButton`,

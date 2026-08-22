@@ -22,6 +22,7 @@ import 'package:optimeal/models/recipe_scale.dart';
 import 'package:optimeal/services/prep_step_detector.dart';
 import 'package:optimeal/widgets/mise_en_place_card.dart';
 import 'package:optimeal/widgets/step_timer_pill.dart';
+import 'package:optimeal/services/overview_route_registry.dart';
 import 'package:optimeal/services/upgrade_nudge_gate.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -530,9 +531,18 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       // Uses the actual portion count the recipe was generated for. Falls
       // back to 2 only for older/cached recipes that predate this field.
       _basePortions = payload.basePortions ?? 2;
-      // The overview's frozen choice, read once. Null means this launch
-      // skipped the overview, so the recipe's own base stands.
-      _currentPortions = widget.servings ?? _currentPortions;
+      // The overview's frozen choice, read once — and when this launch
+      // skipped the overview (generation Cook Now, planner Cook), the ONE
+      // shared fallback resolves it here, at mount, so the mise pill and
+      // `_ingredients` can never disagree again (audit M-2). The profile is
+      // read once deliberately: quantities are locked from launch.
+      final profile = context.read<UserProfileController>().profile;
+      _currentPortions = resolveCookModeServings(
+        launchServings: widget.servings,
+        profileHouseholdServings:
+            profile.onboarded ? profile.householdServings : null,
+        recipeBasePortions: payload.basePortions,
+      );
       final resolvedSteps = payload.steps
           .where((s) => s.title.trim().isNotEmpty)
           .map(
@@ -600,7 +610,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       _activeStepIndex = resume.activeStepIndex;
       _completedSteps = Set<int>.from(resume.completedSteps);
       _activeRemaining = resume.activeRemaining;
-      _currentPortions = resume.currentPortions;
+      // A pre-M-2 session can carry null here; keep the freshly resolved
+      // value rather than nulling out the one source of truth.
+      _currentPortions = resume.currentPortions ?? _currentPortions;
       _surface = resume.surface;
       _isReCook = resume.isReCook;
       _plannerSlot = resume.plannerSlot;
@@ -1429,9 +1441,17 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
 
   /// Back → this recipe's overview, carrying the recipe itself.
   ///
-  /// `pushReplacement` rather than `push`: the overview replaces Cook Mode in
-  /// the stack, so a round trip cannot leave two Cook Modes behind it. The
-  /// active session is untouched — it is what makes Start cooking a resume.
+  /// **Never two overviews of one recipe on the stack** (audit H-2). When the
+  /// overview that launched this cook is still mounted below — matched on the
+  /// normalized recipe key, `SavedRecipesService.recipeKeyFor`, the same
+  /// identity the resume matching uses — back POPS to it. Otherwise
+  /// (generation Cook Now, planner Cook, the resume banner: launches with no
+  /// overview underneath) `pushReplacement` swaps Cook Mode for a fresh
+  /// overview, so a round trip cannot leave two Cook Modes behind it either
+  /// way. The active session is untouched in both branches — it is what makes
+  /// Start cooking a resume, and the persist below is what (via
+  /// `AppDataChanges.cookLog`) tells the popped-to overview the session
+  /// exists.
   ///
   /// A recipe-less launch (the demo body) has nothing to show an overview of,
   /// so that case keeps the old pop.
@@ -1442,6 +1462,11 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       return;
     }
     unawaited(_persistActiveSession());
+    if (OverviewRouteRegistry.hasMountedFor(
+        SavedRecipesService.recipeKeyFor(payload.title))) {
+      context.pop();
+      return;
+    }
     context.pushReplacement(AppRoutes.recipe, extra: payload);
   }
 
@@ -1872,15 +1897,10 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// base. Generation surfaces and the planner Cook button bypass the overview
   /// and pass null, which is why the fallback has to exist at all.
   Widget _buildMiseCard(int index) {
-    final profile = context.watch<UserProfileController>().profile;
-    final household = profile.onboarded ? profile.householdServings : null;
-    final servings = _currentPortions ??
-        defaultServingsFor(
-          profileHouseholdServings: household,
-          recipeBasePortions: _baseStructuredIngredients == null
-              ? null
-              : _basePortions,
-        );
+    // ONE fallback chain, shared with `_ingredients` — `_currentPortions` is
+    // resolved once at mount via `resolveCookModeServings` (audit M-2), so
+    // this pill and the mid-cook ingredients pane can never disagree.
+    final servings = _currentPortions ?? _basePortions;
 
     final nextIndex = index + 1;
     return MiseEnPlaceCard(

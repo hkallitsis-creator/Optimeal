@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,8 @@ import 'package:optimeal/models/recipe_scale.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
+import 'package:optimeal/services/data_change_signal.dart';
+import 'package:optimeal/services/overview_route_registry.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -72,10 +76,38 @@ class _RecipeDetailsScreenState extends State<RecipeDetailsScreen> {
   /// session persisted, even when it is the same recipe.
   ActiveCookSession? _resumableSession;
 
+  /// Re-read on every cook-store write, not only in `initState` (audit H-1).
+  ///
+  /// This screen used to load the session once and never again — the one
+  /// reader that predated its store's signal. An overview left mounted under
+  /// the stack (My recipes → overview → Start cooking → back) then still
+  /// believed no session existed, and its Start cooking silently restarted an
+  /// in-progress cook at Step 1, overwriting the live session. Same pattern
+  /// as Home's resume banner; `saveActiveSession`/`clearActiveSession` both
+  /// fire this signal, so there is no separate session-write signal to watch.
+  StreamSubscription<void>? _cookLogSub;
+
+  /// This instance's key in [OverviewRouteRegistry], while a recipe is shown.
+  String? _registeredRecipeKey;
+
   @override
   void initState() {
     super.initState();
+    final recipe = widget.recipe;
+    if (recipe != null) {
+      _registeredRecipeKey = SavedRecipesService.recipeKeyFor(recipe.title);
+      OverviewRouteRegistry.register(_registeredRecipeKey!);
+    }
     _loadResumableSession();
+    _cookLogSub = AppDataChanges.cookLog.listen(_loadResumableSession);
+  }
+
+  @override
+  void dispose() {
+    _cookLogSub?.cancel();
+    final key = _registeredRecipeKey;
+    if (key != null) OverviewRouteRegistry.unregister(key);
+    super.dispose();
   }
 
   Future<void> _loadResumableSession() async {
@@ -178,7 +210,15 @@ class _RecipeDetailsScreenState extends State<RecipeDetailsScreen> {
           : SingleChildScrollView(
               child: RecipeOverviewBody(
                 recipe: payload,
-                servings: _resolveServings(payload, household),
+                // While a session is in progress the quantities are LOCKED
+                // (signed: they lock from Start cooking), so the stepper
+                // renders disabled at the session's own N rather than lying
+                // with a live default it would ignore (audit M-1). It
+                // re-enables by itself when the session ends — the cookLog
+                // subscription re-reads and _resumableSession goes null.
+                servings: _resumableSession?.currentPortions ??
+                    _resolveServings(payload, household),
+                enabled: _resumableSession == null,
                 onServingsChanged: (v) => setState(() => _servings = v),
               ),
             ),

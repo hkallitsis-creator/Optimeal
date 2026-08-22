@@ -42,6 +42,7 @@ class RecipeOverviewBody extends StatelessWidget {
     required this.recipe,
     required this.servings,
     required this.onServingsChanged,
+    this.enabled = true,
   });
 
   final CookModeRecipePayload recipe;
@@ -51,6 +52,11 @@ class RecipeOverviewBody extends StatelessWidget {
   final int servings;
 
   final ValueChanged<int> onServingsChanged;
+
+  /// False while a cook session is in progress for this recipe (audit M-1):
+  /// quantities are locked from Start cooking, so the stepper shows the
+  /// locked N read-only instead of a live control the resume would ignore.
+  final bool enabled;
 
   /// A recipe that never declared what it was written for cannot be scaled
   /// from anything, so the stepper is disabled rather than multiplying by a
@@ -148,7 +154,7 @@ class RecipeOverviewBody extends StatelessWidget {
                 minutes: minutes,
                 stepCount: recipe.steps.length,
                 servings: servings,
-                enabled: _scalable,
+                enabled: _scalable && enabled,
                 min: kServingsMin,
                 max: ceiling,
                 onChanged: onServingsChanged,

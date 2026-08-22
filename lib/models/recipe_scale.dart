@@ -66,6 +66,30 @@ int defaultServingsFor({
   return chosen.clamp(kServingsMin, ceiling);
 }
 
+/// The ONE null-servings fallback for every Cook Mode entry (audit M-2).
+///
+/// Cook Mode used to compute two different fallbacks when a launch carried no
+/// servings: the mise card's pill asked the profile while the `_ingredients`
+/// getter (overview sheet, SOS payload, ledger `cookedIngredients`) fell back
+/// to the recipe's `basePortions` — so Step 1 could say "Serves 5" while the
+/// mid-cook ingredients pane showed base-2 amounts. Every entry now resolves
+/// through here, once, at mount.
+///
+/// Precedence is the signed default order: the launch's frozen choice (the
+/// overview stepper) → the profile household **when the caller has verified
+/// `profile.onboarded`** (pass null otherwise — `UserProfile.empty()` reports
+/// a household of 1 on a non-nullable field, so an unfiltered value would
+/// out-rank every recipe's own base) → the recipe's own `basePortions` → 1.
+int resolveCookModeServings({
+  int? launchServings,
+  int? profileHouseholdServings,
+  int? recipeBasePortions,
+}) =>
+    launchServings ??
+    profileHouseholdServings ??
+    recipeBasePortions ??
+    1;
+
 /// One ingredient, scaled and formatted for display.
 @immutable
 class ScaledIngredient {
