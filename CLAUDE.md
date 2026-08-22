@@ -402,16 +402,18 @@ request or when a task needs the "why."
   increment once per intent in the screens, the cost row is written
   server-side only on OpenAI success), so worst-case **HTTP** requests are
   double the billed counts (14 / 18) while billed calls stay 7 / 9.
-  **Token headroom (audit M-6) is HALF-done, edge-gated:** recipe surfaces
-  send `maxTokens: kRecipeGenerationMaxTokens` (2000; ideas stage deliberately
-  not — its completions measure ~155) and the client logs
-  `finish_reason == "length"` to `GenerationTruncationLog` — but the
-  **deployed function hardcodes `max_tokens: 1200`, ignores the field, and
-  returns no `finish_reason`** (verified live 2026-08-23: the 8-step-traybake
-  probe came back `completion_tokens: 1200/1200`, JSON not closed). Both
-  client paths are dormant until the redeploy; the exact function diff is in
-  `docs/sessions/2026-08-23_insurance-bundle.md` — deploy it explicitly
-  post-vacation, never assume it's live. Message assembly lives in the separately
+  **Token headroom (audit M-6) is LIVE end to end (2026-08-23):** recipe
+  surfaces send `maxTokens: kRecipeGenerationMaxTokens` (2000; ideas stage
+  deliberately not — its completions measure ~155), the function passes it
+  through bounded (256–2000, default 1200) and returns `finish_reason`,
+  which the client logs to `GenerationTruncationLog` on `"length"`.
+  **Deployed to dev as ask-chef-harris v6** (`verify_jwt: true` preserved),
+  verified live: the 8-step-traybake probe that truncated at
+  `1200/1200, JSON unclosed` on v5 returns `completion: 1355,
+  finish_reason: stop, JSON closes` on v6. Prod still runs the older
+  function. Deploys of this one function are now allowed in
+  `.claude/settings.json` (`--linked`-pinned to dev; `ai-recipe-precision`'s
+  deploy hold stays denied). Message assembly lives in the separately
   testable `ChefService.buildUserMessage`, whose **write order is
   load-bearing for prompt caching** (see Open Roadmap item 15 before
   changing it); callers with byte-identical schema text pass it as
@@ -953,11 +955,10 @@ introduced anywhere.
   `OverviewRouteRegistry`, the overview's cookLog subscription, the locked
   stepper, `resolveCookModeServings`); **M-3 and M-4 by the insurance bundle**
   (gateway retry + documented worst-case counts; chain re-entry on every
-  regenerate); **M-6 half-fixed** — the client sends the raise and handles
-  `finish_reason`, but the deployed function clamps at 1200 and the
-  **edge redeploy is owed** (diff in the insurance-bundle session doc).
-  Still open for post-vacation: M-5 (stale paywall copy), the edge redeploy,
-  and six LOW. Start there when picking up work.
+  regenerate); **M-6 fully fixed** — client raise + `finish_reason`
+  handling, and the edge function deployed to dev as **v6** the same day.
+  Still open for post-vacation: M-5 (stale paywall copy) and six LOW.
+  Start there when picking up work.
 - **`docs/DECISIONS.md` and `docs/CHANGELOG.md` exist alongside this file.** DECISIONS.md holds binding product/architecture decisions and their reasoning (not descriptions of current code). CHANGELOG.md holds completed work and full session history, newest first. Neither is auto-loaded — read on request or when a task needs history/reasoning this file deliberately omits to stay small.
 - **CLAUDE.md is authoritative for Roadmap item numbering.** If Harris refers to an item by a number that doesn't match what's actually here, stop and ask — don't guess which item was meant.
 - **Locate code by content/class name, not filename** — the Dreamflow-export filename-shuffling issue was checked and is NOT present in this repo, but this remains the safer default if it's ever in doubt again.

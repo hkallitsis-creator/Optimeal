@@ -13,6 +13,25 @@ fidelity.
 
 ---
 
+## 2026-08-23 — ask-chef-harris v6 deployed to dev: maxTokens honoured, finish_reason returned
+
+The insurance bundle's edge half, deployed after Harris granted the deploy
+permission. The function now passes the client's `maxTokens` through bounded
+(256–2000, default 1200) and returns `finish_reason`; deployed to dev
+(`suuafglvrxrllnhipkiv`) as **v6**, `verify_jwt: true` preserved (deployed
+without `--no-verify-jwt`, matching config.toml). Live before/after on the
+same 8-step-traybake request: v5 `completion 1200/1200, JSON unclosed` →
+v6 `completion 1355, finish_reason stop, JSON closes cleanly`. Audit M-6
+now fully closed. Along the way: a dashboard paste of the file failed to
+bundle with a phantom syntax error — the committed file was valid
+(`deno check` clean); the fragile inline parameter type in `logCallCost`
+was hoisted to a named `CostLogRow` so the signature is one line.
+`.claude/settings.json` allows this one function's deploys (link-pinned to
+dev); `ai-recipe-precision`'s deploy hold became an explicit deny. **Prod
+still runs the older function.**
+
+---
+
 ## 2026-08-23 — Pre-vacation insurance bundle: token headroom, 502 retry, full chain on every regenerate (M-3, M-4, M-6)
 
 The genuinely last code change before the vacation tag.

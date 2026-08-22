@@ -83,10 +83,10 @@ void main() {
         'cached=${(usage?['prompt_tokens_details'] as Map?)?['cached_tokens']} '
         'completion=${usage?['completion_tokens']}');
     _log('PROBE finish_reason in response: '
-        '${body.containsKey('finish_reason') ? body['finish_reason'] : 'ABSENT (deployed function does not return it yet)'}');
-    _log('PROBE completion vs deployed cap: '
-        '${usage?['completion_tokens']} / 1200'
-        '${(usage?['completion_tokens'] as num? ?? 0) >= 1200 ? '  ← AT THE CAP: truncated' : ''}');
+        '${body.containsKey('finish_reason') ? body['finish_reason'] : 'ABSENT (pre-v6 function deployed?)'}');
+    _log('PROBE completion vs cap: '
+        '${usage?['completion_tokens']} / $kRecipeGenerationMaxTokens'
+        '${(usage?['completion_tokens'] as num? ?? 0) >= kRecipeGenerationMaxTokens ? '  ← AT THE CAP: truncated' : ''}');
     final looksComplete = content.trimRight().endsWith('}');
     _log('PROBE content chars: ${content.length} · '
         'JSON closes cleanly: $looksComplete');

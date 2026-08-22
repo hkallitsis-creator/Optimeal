@@ -194,6 +194,23 @@ green. Three pre-existing orchestrator tests initially failed against the
 naive re-entry loop and drove the `closed`-flag semantics above — they now
 pass unmodified.
 
+### Addendum, same day — the redeploy landed
+
+Harris granted the deploy permission mid-flow (after a dashboard paste of
+the file mangled a line and failed to bundle — the committed file was valid,
+`deno check` clean; the fragile inline parameter type was hoisted to a named
+`CostLogRow` anyway, `5bac250`). `.claude/settings.json` now allows
+`supabase functions deploy ask-chef-harris` (link/unlink/projects stay
+denied, pinning the target to dev; `ai-recipe-precision`'s hold is now an
+explicit deny). Deployed with `supabase functions deploy ask-chef-harris
+--use-api` — **no** `--no-verify-jwt`, since config.toml and the deployed
+config both say `verify_jwt = true` — landing as **v6, ACTIVE,
+verify_jwt: true** on `suuafglvrxrllnhipkiv`. The same long-request probe
+that measured `1200/1200, JSON unclosed` on v5 now returns:
+`prompt=7700 (7552 cached) · completion=1355 · finish_reason=stop ·
+JSON closes cleanly: true`. M-6 is closed end to end; prod still runs the
+older function.
+
 ### Constraint compliance
 
 No prod contact, no DB work, no edge deploy. Timer, routing, servings,
