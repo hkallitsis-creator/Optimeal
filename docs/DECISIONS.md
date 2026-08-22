@@ -7,6 +7,85 @@ Read on request, not auto-loaded.
 
 ---
 
+## Cut pills resolve client-side; no schema and no prompt change (23 August 2026)
+
+**Binding rule:** the cut diagram on an ingredient row is resolved in the app,
+by `lib/services/cut_key_resolver.dart`. No prompt was changed and no field was
+added, so this costs zero tokens.
+
+**A premise correction, recorded because it changes the design.** The build
+brief said `RecipeIngredient` is name/amount/unit only and has no per-ingredient
+cut key. It is not: `RecipeIngredient.cut` exists, is parsed from the model's
+declared `cut`, and is already validated against the closed
+`ingredientCutVocabulary` by `chef_recipe_parser.dart`. So the resolver uses the
+**declared value first** and falls back to text matching only when the model
+declared nothing — strictly better than inferring from prose in every case,
+because a declared key is the model's statement about the ingredient while a
+text match is an inference from a sentence that may be about something else.
+
+Three hard limits, each with a test: it can only ever return a key from the
+signed cut vocabulary; a **technique** diagram (`pan_crowding`,
+`cold_vs_hot_pan`) can never attach to an ingredient row, because a fact about a
+pan is not a fact about a carrot; and the pill form returns a key only when a
+diagram is actually **built**, so the 15 valid-but-undrawn keys render nothing
+rather than something broken.
+
+**Prose matching is sentence-scoped, not step-scoped.** Found on real dev
+output: a step that said "thinly slice the potatoes" and "season with salt" put
+a `thin_slice` pill on the SALT, and one mentioning lemon wedges put `wedges` on
+the FETA. Requiring the ingredient and the cut phrase to share a sentence is
+what makes the match about that ingredient. Both false positives are pinned.
+
+---
+
+## The servings scale is launch context, never persisted (23 August 2026)
+
+**Binding rule:** the servings count chosen on the recipe overview travels on
+`CookModeLaunchRequest.servings` and **must never be written onto
+`CookModeRecipePayload`**. Same rule and same reasoning as `PlannerSlotRef`: the
+payload is persisted into `saved_recipes.recipe_payload` and
+`user_meal_plans.recipe_payload`, so a scale stored there would make a saved
+recipe permanently remember one evening's headcount. Saved recipes keep their
+`basePortions` and are rescaled fresh every time the overview opens.
+
+The scale holder is the overview screen's own `State` — deliberately not a new
+service. That single choice is what makes the signed lock/unlock behaviour fall
+out for free: Cook Mode reads `servings` once on mount, and popping back
+re-enables the stepper because the overview's `State` was never disposed. No
+persisted schema change, no migration.
+
+**Default precedence:** planner slot > profile household **if set** > recipe
+`basePortions`. "If set" is load-bearing rather than pedantic —
+`UserProfile.empty()` reports a household of 1 on a non-nullable field, so an
+un-onboarded profile would silently out-rank every recipe's own base and open
+everything at Serves 1. `profile.onboarded` is the honest proxy. **The planner
+tier has no data source yet**: `PlannerSlotRef` carries week/day/slot and no
+headcount. The parameter exists and is always null.
+
+**Whole-piece rule:** countable units (piece, clove, slice, and a bare unit)
+round UP, with a hint only when rounding changed the number. Non-count units get
+one decimal, trailing `.0` dropped, `½`/`¼`/`¾` on spoons, and bulk grams and
+millilitres at 100+ round to the nearest 5 — a scaled 187.5 g is a precision no
+kitchen can weigh.
+
+---
+
+## Re-cooking a saved recipe is a real cook (23 August 2026)
+
+**Binding rule:** launching Cook Mode from the recipe overview passes
+`surface: null` and does **not** set `isReCook`.
+
+Rescue eligibility is a property of the RECIPE (`RecipeOrigin`), not of the
+screen that launched it, so a saved Fridge Clearer recipe cooked again still
+counts as a rescue with no special handling. Leaving `isReCook` false is the
+deliberate half: a launch flagged as a re-cook never logs, and this is a real
+cook that earns its own **new** cook-log row rather than mutating the old one.
+
+This also closes a device bug that had made the whole Saved feature a read-only
+archive — recipes opened from My Recipes had no cook affordance at all.
+
+---
+
 ## Entitlement is a property of the environment, not the build mode (23 August 2026)
 
 **Binding rule:** `EntitlementService.isPro()` returns entitled whenever the

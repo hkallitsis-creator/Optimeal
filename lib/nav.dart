@@ -116,6 +116,7 @@ class AppRouter {
                 surface: extra.surface,
                 isReCook: extra.isReCook,
                 plannerSlot: extra.plannerSlot,
+                servings: extra.servings,
               );
             }
             return const OnePanCookingRoadmapScreen();

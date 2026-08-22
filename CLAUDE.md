@@ -474,6 +474,45 @@ request or when a task needs the "why."
   generations and is excluded from `flutter test` by having no `_test.dart`
   suffix. Full reasoning: `docs/DECISIONS.md` and
   `docs/sessions/2026-08-23_safety-validator.md`.
+- **Recipe overview — redesigned 2026-08-23.** `RecipeDetailsScreen`
+  (`lib/screens/recipe_details_screen.dart`) + `RecipeOverviewBody` /
+  `RecipeOverviewBottomBar` (`lib/widgets/recipe_overview_body.dart`). The
+  surface between choosing a recipe and Cook Mode.
+  **Cut**: the 250px terracotta hero (now a modest 96px empty ivory photo
+  slot), the three-line description (one line, ellipsized), the "Mode: Cook
+  Mode" tautology pill, the "Est. time" pill-card (now a quiet
+  `~50 min · 5 steps` meta line), and the **inline Steps list** — steps live in
+  Cook Mode and its overview sheet only.
+  **Added**: the pinned bottom bar — quiet outlined Plan square (existing
+  `WeekdayPickerSheet`) + one terracotta "Start cooking". That CTA closes a
+  real device bug: recipes opened from My Recipes had **no cook affordance at
+  all**, making Saved a read-only archive.
+  **The servings stepper's only real home is here** (Cook Mode's old inline
+  one still exists and is the pre-cook merge's to delete — until then there
+  are two, and **this one is authoritative**). It rescales live from
+  `structuredIngredients` via `lib/models/recipe_scale.dart`.
+  **Scale is launch context**: `CookModeLaunchRequest.servings`, held in the
+  overview's `State`, **never** written onto `CookModeRecipePayload` (which is
+  persisted). Cook Mode reads it once on mount — that IS the "lock"; popping
+  back unlocks because the `State` was never disposed. No schema change.
+  Ingredient rows are `IngredientRow` (`lib/widgets/ingredient_row.dart`) —
+  **built once, rendered twice**: the pre-cook merge's Step 1 reuses it.
+  **Entry-point routing (verified 2026-08-23)**: Saved · Recently Cooked (both
+  `MyRecipesScreen._openDetails`) and the planner's day-detail *view* tap all
+  push `AppRoutes.recipe` and land here. **Three paths deliberately bypass it**
+  — Fridge Clearer stage 2 and the Custom creator both go straight to Cook Mode
+  from `GeneratedRecipeActionsSheet` ("Cook Now stays the only primary action"
+  is signed), and the planner's own **Cook** button goes direct because it must
+  stamp `PlannerSlotRef`, which this screen cannot supply.
+- **Cut pills resolve client-side (2026-08-23).**
+  `lib/services/cut_key_resolver.dart`. **`RecipeIngredient.cut` already
+  exists** and is parser-validated against `ingredientCutVocabulary`, so the
+  declared value wins and prose matching is only a fallback. No prompt change,
+  no schema change, zero token cost. Prose matching is **sentence-scoped** —
+  step-scoped put a `thin_slice` pill on the salt on real output. It can never
+  return a technique key (`pan_crowding`, `cold_vs_hot_pan`) and never returns
+  a key whose diagram is not built, so 15 of the 16 valid cut keys render
+  nothing rather than something broken.
 - **Share card and the branding gate (2026-08-23).** `PostCookShareCardSheet`
   (`lib/widgets/post_cook_share_card.dart`) is the only surface that leaves the
   device. **No app name, wordmark, logo or link may appear on it, in the shared

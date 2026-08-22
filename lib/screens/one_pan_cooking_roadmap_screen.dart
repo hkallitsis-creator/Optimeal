@@ -85,11 +85,28 @@ class CookModeLaunchRequest {
     required this.surface,
     this.isReCook = false,
     this.plannerSlot,
+    this.servings,
   });
 
   final CookModeRecipePayload recipe;
   final CookModeSurface? surface;
   final bool isReCook;
+
+  /// The servings count the user chose on the recipe overview, frozen at the
+  /// moment they pressed Start cooking. Null for launches that skip the
+  /// overview, which then fall back to the recipe's own `basePortions`.
+  ///
+  /// **Launch context, exactly like [plannerSlot] and [surface] — deliberately
+  /// NOT on [CookModeRecipePayload].** The payload is persisted into
+  /// `saved_recipes.recipe_payload` and `user_meal_plans.recipe_payload`;
+  /// writing a chosen scale into it would make a saved recipe permanently
+  /// remember that one evening's headcount. Saved recipes keep `basePortions`
+  /// and are rescaled fresh every time the overview is opened.
+  ///
+  /// This is what "quantities lock when Cook Mode opens" means concretely:
+  /// Cook Mode reads this once, on mount, and the overview's stepper is only
+  /// live again when the route pops back to it.
+  final int? servings;
 
   /// The Weekly Planner row this launch came from, or null for every other
   /// launch point. Stamped once, by the planner, on the row whose Cook button
@@ -264,7 +281,8 @@ class OnePanCookingRoadmapScreen extends StatefulWidget {
       this.resumeSession,
       this.surface,
       this.isReCook = false,
-      this.plannerSlot});
+      this.plannerSlot,
+      this.servings});
 
   /// Optional dynamic recipe passed from other screens (e.g. Fridge Clearer).
   /// When null, Cook Mode falls back to the built-in demo recipe.
@@ -296,6 +314,10 @@ class OnePanCookingRoadmapScreen extends StatefulWidget {
   /// [resumeSession] is provided — so an interrupted planner cook still marks
   /// the right row when it is resumed. See [PlannerSlotRef].
   final PlannerSlotRef? plannerSlot;
+
+  /// Frozen servings from the recipe overview. See
+  /// [CookModeLaunchRequest.servings].
+  final int? servings;
 
   @override
   State<OnePanCookingRoadmapScreen> createState() =>
@@ -523,6 +545,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       // Uses the actual portion count the recipe was generated for. Falls
       // back to 2 only for older/cached recipes that predate this field.
       _basePortions = payload.basePortions ?? 2;
+      // The overview's frozen choice, read once. Null means this launch
+      // skipped the overview, so the recipe's own base stands.
+      _currentPortions = widget.servings ?? _currentPortions;
       final resolvedSteps = payload.steps
           .where((s) => s.title.trim().isNotEmpty)
           .map(

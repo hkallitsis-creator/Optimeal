@@ -13,6 +13,38 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Recipe overview redesign
+
+Full prompt and report: `docs/sessions/2026-08-23_recipe-overview.md`.
+593 tests passing (543 baseline + 50 new), 44 analyze issues (unchanged).
+
+- **The overview is rebuilt to the signed spec.** Gone: the half-screen
+  terracotta hero, the three-line description, the "Mode: Cook Mode" tautology,
+  the "Est. time" pill-card, and the inline Steps list. In: a 96px empty photo
+  slot, a one-line ellipsized description, a `~50 min · 5 steps` meta line, a
+  champagne gear card, and quiet ingredient rows.
+- **The device bug is closed.** Recipes opened from My Recipes had no cook
+  affordance — Saved was a read-only archive. A pinned terracotta "Start
+  cooking" now sits beside a quiet Plan square, and a widget test asserts it is
+  present and functional for all five entry shapes.
+- **The servings stepper has its new and only real home here**, rescaling live
+  from structured data. Scale is **launch context** on
+  `CookModeLaunchRequest.servings`, never written onto the persisted payload —
+  so Cook Mode's read-once IS the lock, and popping back unlocks for free. No
+  migration.
+- **`IngredientRow` is built once and rendered twice** — the pre-cook merge's
+  Step 1 reuses it. Per R1, the old checklist and its stepper are untouched;
+  **the app now has two steppers until that build lands**.
+- **`cut_key_resolver.dart`.** The brief's premise was wrong —
+  `RecipeIngredient.cut` already exists and is parser-validated — so the
+  declared value wins and prose is a fallback. Real output made it
+  sentence-scoped: step-scoped matching put a `thin_slice` pill on the salt and
+  `wedges` on the feta.
+- Real dev runs: match rate **5 of 14 ingredients with a cut, 0 pills** (only
+  `julienne` is drawn, and neither recipe used it).
+
+---
+
 ## 2026-08-23 — Dev entitlement fix + four follow-ups
 
 Full prompt and report: `docs/sessions/2026-08-23_dev-entitlement.md`.
