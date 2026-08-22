@@ -7,6 +7,74 @@ Read on request, not auto-loaded.
 
 ---
 
+## Safety validator v1 is live — the deterministic layer (23 August 2026)
+
+**Binding rule:** food safety and cooking-time compatibility are **two
+validators, not one**, and the difference is not organisational. The
+compatibility validator is advisory and fails open silently. The safety
+validator does not: H1's enforcement is a **deterministic injection** the app
+performs on the recipe itself, which never asks the model, never retries, and
+has no failure path. They share the parsed payload and the ring-buffer log
+shape and nothing else. Do not merge them behind a common "validator"
+abstraction.
+
+**Ordering is fixed and load-bearing.** Compatibility runs first and settles
+completely; safety then judges the recipe that is actually going to be served;
+the injection is applied **last of all**, after every correction round of both
+layers. A compatibility retry produces a whole new recipe, so an injection
+applied earlier would be discarded with the draft it was written onto, and
+H1's guarantee would quietly become "usually". `test/services/
+safety_generation_ordering_test.dart` pins this.
+
+**Enforcement per rule follows the registry, not a house style.** H1 (and H10
+where it rides H1's path) injects. H2, H3, H4, H5, H6, H7, H8, H9 and H11
+correct-and-regenerate, capped at 2, then the recipe is served and the finding
+logged — the registry's own signed *"correction-and-regenerate, never
+blocking"* and *"after 2 failed corrections the recipe is served and the flag
+logged"*. H12, and H10 on non-poultry meat, are **log-only**. The user is never
+blocked and never shown a warning; the only visible output is H1's cue, which
+reads as an ordinary sensory cue because that is what it is.
+
+**Two rules cannot complete their signed enforcement**, because the wording
+does not exist: H2's cooked-through line and H8's vulnerable-groups caution are
+both marked on the registry as Harris's to author. Both are `// PLACEHOLDER` in
+source and both degrade to a model-facing correction directive. **No user-facing
+safety sentence was invented**, and none may be.
+
+**The closed poultry/pork name list is DRAFT and NOT signed.** H1's detection
+depends on it; the registry describes it as "drafted separately for review" and
+it had never existed. `lib/data/safety_ingredient_names.dart` is that draft —
+174 terms, written by Claude. Three judgement calls in it need Harris
+specifically: the **cured ready-to-eat exclusion** (bacon, pancetta, prosciutto,
+chorizo, cervelat are excluded from H1, which is the one exclusion that
+silences a rule rather than narrowing it), **duck** (included as poultry, so a
+duck breast recipe is told any pink means it goes back on), and the tie-break
+that **poultry mince resolves to 74 °C rather than 71 °C** (both are signed;
+the higher governs, so no new number was introduced). Signature converts the
+file's status in a follow-up line — it does not need a rebuild.
+
+**The H12 bread carve-out is UNSIGNED.** The build brief described a signed
+H12 ruling with a named bread carve-out; no such ruling is in the repo, and
+`sourdough`, `levain`, `poolish` and `biga` appear nowhere in `docs/`. What is
+signed is Harris's handwritten prose, which has no detection or on-flag
+structure. The carve-out ships because H12 is log-only and therefore cannot
+reach a user, and because yeast dough is fermentation by any technical reading.
+It needs a signature or a strike.
+
+**The someday list stays out.** S1 shellfish, S2 raw flour and dough, S3
+sprouts are INACTIVE. A test scans the two source files with comments stripped
+and fails on any executable mention, so a half-implementation breaks the build
+rather than shipping quietly.
+
+**Rule 5 of the cooking-times paper is now implemented** — it is H1, and it is
+the injection. The cross-reference the compatibility validator left open is
+closed.
+
+Full reasoning, the rule-by-rule table, the complete draft name list and the
+live-generation observations: `docs/sessions/2026-08-23_safety-validator.md`.
+
+---
+
 ## The compatibility validator is live, and what it is allowed to conclude (23 August 2026)
 
 **Binding rule:** the app, not the model, owns cooking times. The model is

@@ -162,6 +162,27 @@ class CookModeRecipePayload {
   /// rescue of zero ingredients, which is worse than not counting at all.
   final List<String>? originEnteredIngredients;
 
+  /// Replaces the step list, leaving everything else identical.
+  ///
+  /// Exists for the safety validator's deterministic cue injection
+  /// (`applySafetyInjections`), which rewrites individual steps on the recipe
+  /// that is about to be served. Kept separate from [copyWith] so that a
+  /// safety rewrite is greppable and cannot happen by accident.
+  CookModeRecipePayload copyWithSteps(List<CookModeStepPayload> steps) {
+    return CookModeRecipePayload(
+      title: title,
+      ingredients: ingredients,
+      steps: steps,
+      kitchenGear: kitchenGear,
+      description: description,
+      structuredIngredients: structuredIngredients,
+      basePortions: basePortions,
+      curriculumLessonIds: curriculumLessonIds,
+      origin: origin,
+      originEnteredIngredients: originEnteredIngredients,
+    );
+  }
+
   CookModeRecipePayload copyWith({
     RecipeOrigin? origin,
     List<String>? originEnteredIngredients,
@@ -219,6 +240,22 @@ class CookModeStepPayload {
   /// expected common case, not a rejection. Never null, same reasoning as
   /// [sensoryCue].
   final String techniqueDiagramId;
+
+  /// Returns this step with a different declared [sensoryCue].
+  ///
+  /// The only caller is the safety validator's deterministic injection of the
+  /// signed `juices_run_clear` cue (registry H1). It is deliberately narrow —
+  /// a general-purpose step `copyWith` would make it easy to rewrite a step's
+  /// safety cue from anywhere, which is exactly what H1's guarantee rules out.
+  CookModeStepPayload copyWithSensoryCue(String cue) => CookModeStepPayload(
+        title: title,
+        heat: heat,
+        durationMinutes: durationMinutes,
+        bullets: bullets,
+        ingredientsAdded: ingredientsAdded,
+        sensoryCue: cue,
+        techniqueDiagramId: techniqueDiagramId,
+      );
 }
 
 class OnePanCookingRoadmapScreen extends StatefulWidget {

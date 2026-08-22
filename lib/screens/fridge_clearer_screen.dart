@@ -373,7 +373,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       final variablePrompt = _buildRecipeVariablePrompt(idea, portions);
       final result = await generateValidatedRecipe(
         logSurface: kChefCallSurfaceFridgeClearer,
-        attempt: ({String? correctionNote, required bool isRetry}) =>
+        attempt: ({String? correctionNote, required RecipeRetryKind retryKind}) =>
             _chefService.askChefHarris(
           userQuery: correctionNote == null
               ? variablePrompt
@@ -383,9 +383,11 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
           profile: profile,
           forceJsonObject: true,
           recentDishTitles: recentDishTitles,
-          surface: isRetry
-              ? kChefCallSurfaceFridgeClearerRetry
-              : kChefCallSurfaceFridgeClearer,
+          surface: switch (retryKind) {
+            RecipeRetryKind.first => kChefCallSurfaceFridgeClearer,
+            RecipeRetryKind.compatibility => kChefCallSurfaceFridgeClearerRetry,
+            RecipeRetryKind.safety => kChefCallSurfaceFridgeClearerSafetyRetry,
+          },
         ),
         parse: (raw, unknownKeys) => parseChefRecipeJson(
           raw: raw,

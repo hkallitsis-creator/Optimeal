@@ -43,6 +43,21 @@ const String kChefCallSurfaceFridgeIdeas = 'fridge_ideas';
 const String kChefCallSurfaceFridgeClearerRetry = 'fridge_clearer_retry';
 const String kChefCallSurfaceCustomCreatorRetry = 'custom_creator_retry';
 
+/// Safety-correction retries (2026-08-23), one per recipe surface.
+///
+/// Kept apart from the compatibility retry surfaces above for the same reason
+/// the two validators are kept apart in code: a timing correction and a food
+/// safety correction are different work, and collapsing them into one
+/// `_retry` bucket would make the safety retry rate — the number that matters
+/// for a pre-launch blocker — unreadable from `api_call_cost_log`.
+///
+/// Same as every surface added since 2026-08-21: no edge-function change was
+/// needed, because `ask-chef-harris` stores whatever `surface` string arrives.
+const String kChefCallSurfaceFridgeClearerSafetyRetry =
+    'fridge_clearer_safety_retry';
+const String kChefCallSurfaceCustomCreatorSafetyRetry =
+    'custom_creator_safety_retry';
+
 /// Every value the client may send as `surface`. The edge function does not
 /// validate against this list (it stores whatever string arrives); this
 /// exists so tests can assert the call sites stay in sync.
@@ -50,8 +65,10 @@ const List<String> kChefCallSurfaces = [
   kChefCallSurfaceFridgeClearer,
   kChefCallSurfaceFridgeClearerRetry,
   kChefCallSurfaceFridgeIdeas,
+  kChefCallSurfaceFridgeClearerSafetyRetry,
   kChefCallSurfaceCustomCreator,
   kChefCallSurfaceCustomCreatorRetry,
+  kChefCallSurfaceCustomCreatorSafetyRetry,
   kChefCallSurfaceChefSos,
 ];
 

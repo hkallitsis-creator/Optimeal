@@ -13,6 +13,50 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Safety validator v1, the deterministic layer (roadmap item 1)
+
+Full prompt and report: `docs/sessions/2026-08-23_safety-validator.md`.
+489 tests passing (409 baseline + 80 new), 44 analyze issues (unchanged).
+
+The pre-launch blocker's deterministic half, built from the signed
+`docs/safety_hazard_registry.md`. Eleven active rules plus H12 detection.
+
+- **H1 is a guarantee, not a request.** The signed `juices_run_clear` cue is
+  written onto the last cooking step handling each poultry/pork animal by the
+  app itself — unconditional, idempotent, applied after every correction round
+  of both validators so no regeneration can undo it. New `copyWithSteps` /
+  `copyWithSensoryCue` on the payload classes, both deliberately narrow.
+- **H2–H9 and H11 correct-and-regenerate**, capped at 2, then serve and log —
+  the registry's own signed behaviour. **H12 and H10-on-non-poultry are
+  log-only**, because the registry defines detection but no action for them.
+- **New: `lib/data/safety_ingredient_names.dart`** — the closed poultry/pork
+  vocabulary H1's detection needs, which the registry describes as "drafted
+  separately" and which had never existed. **174 terms, DRAFT, unsigned.**
+- **New: `lib/services/safety_validator.dart`**, `safety_flag_log.dart` (its
+  own 50-entry ring buffer, deliberately not sharing the compatibility log).
+- `kChefCallSurfaces` 6 → 8: `fridge_clearer_safety_retry` and
+  `custom_creator_safety_retry`, so a safety correction is not billed into the
+  same bucket as a timing one. `RecipeRetryKind` replaces the `isRetry` bool.
+- **No migration, no edge-function change.**
+
+Four six-case runs against live dev found three defects that unit tests written
+from the registry text could not have: the cue landing on a *potato* step
+(`chicken` and `chicken thigh` read as two proteins), oven steps being declared
+`off_heat` so H1 skipped the step where a roast finishes — and then an off-heat
+"Finish with Lemon" garnish stealing the anchor because its bullets said "roast
+chicken" — and "Mince the garlic" firing H2 on a cabbage recipe. All three are
+fixed and covered by tests. H5 was also silent on the exact case it exists for,
+because "leftover" was only ever in the ingredient list; it is now evaluated at
+recipe level.
+
+**Open and needing Harris:** the H2 cooked-through line and H8
+vulnerable-groups caution (both `// PLACEHOLDER`, both his to author); the
+174-term name list; the cured ready-to-eat exclusion and duck; and the H12
+bread carve-out, which the build brief described as signed but which appears
+nowhere in the repo.
+
+---
+
 ## 2026-08-23 — Compatibility validator on declared cooking-times keys (option C)
 
 Full prompt and report: `docs/sessions/2026-08-23_compat-validator.md`.

@@ -451,9 +451,9 @@ void main() {
       var call = 0;
       return generateValidatedRecipe(
         logSurface: 'test_surface',
-        attempt: ({String? correctionNote, required bool isRetry}) async {
+        attempt: ({String? correctionNote, required RecipeRetryKind retryKind}) async {
           notesSink?.add(correctionNote);
-          retryFlagsSink?.add(isRetry);
+          retryFlagsSink?.add(retryKind != RecipeRetryKind.first);
           return replies[call++];
         },
         parse: (raw, unknownKeys) => _parse(raw, unknownKeys),

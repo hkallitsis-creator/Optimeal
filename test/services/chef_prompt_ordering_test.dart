@@ -188,25 +188,39 @@ void main() {
   });
 
   group('surface identifiers', () {
-    test('there are exactly six, matching the six live call sites', () {
+    test('there are exactly eight, matching the live call sites and retries', () {
       // Four since the Fridge Clearer went two-stage (2026-08-22): the
       // menu-of-three call and the full-recipe call are separate surfaces, so
       // browsing cost and committing cost can be told apart. Six since the
       // compatibility validator (2026-08-23): each recipe surface's
       // correction retries bill to their own value, so the retry rate is
       // readable straight off api_call_cost_log rather than inferred.
-      expect(kChefCallSurfaces, hasLength(6));
+      // Eight since the safety validator (2026-08-23): a safety correction is
+      // different work from a timing correction and gets its own value, for
+      // the same reason the two validators are separate code.
+      expect(kChefCallSurfaces, hasLength(8));
       expect(
         kChefCallSurfaces,
         containsAll(<String>[
           kChefCallSurfaceFridgeClearer,
           kChefCallSurfaceFridgeClearerRetry,
+          kChefCallSurfaceFridgeClearerSafetyRetry,
           kChefCallSurfaceFridgeIdeas,
           kChefCallSurfaceCustomCreator,
           kChefCallSurfaceCustomCreatorRetry,
+          kChefCallSurfaceCustomCreatorSafetyRetry,
           kChefCallSurfaceChefSos,
         ]),
       );
+    });
+
+    test('the safety retry surfaces are stable strings, distinct from timing', () {
+      expect(kChefCallSurfaceFridgeClearerSafetyRetry, 'fridge_clearer_safety_retry');
+      expect(kChefCallSurfaceCustomCreatorSafetyRetry, 'custom_creator_safety_retry');
+      expect(kChefCallSurfaceFridgeClearerSafetyRetry,
+          isNot(kChefCallSurfaceFridgeClearerRetry));
+      expect(kChefCallSurfaceCustomCreatorSafetyRetry,
+          isNot(kChefCallSurfaceCustomCreatorRetry));
     });
 
     test('values are stable strings — they are stored in a DB column', () {
