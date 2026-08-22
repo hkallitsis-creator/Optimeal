@@ -22,6 +22,8 @@ import 'package:optimeal/config/app_environment.dart';
 import 'package:optimeal/models/user_profile.dart';
 import 'package:optimeal/prompts/recipe_static_prompts.dart';
 import 'package:optimeal/services/chef_recipe_parser.dart';
+import 'package:optimeal/models/fridge_idea.dart';
+import 'package:optimeal/services/allergen_guard.dart';
 import 'package:optimeal/services/chef_service.dart';
 
 void _log(Object? o) {
@@ -170,6 +172,41 @@ void main() {
     }
 
     await Future<void>.delayed(const Duration(seconds: 6));
+
+    // ── STAGE-1 FILTER: what the user would actually be offered ─────────
+    _log('');
+    _log('════════ STAGE-1 AFTER THE FILTER ════════');
+    final parsedIdeas = parseFridgeIdeasJson(ideasRaw ?? '');
+    if (parsedIdeas == null) {
+      _log('  parse failed');
+    } else {
+      final kept = <String>[];
+      final dropped = <String>[];
+      for (final idea in parsedIdeas) {
+        final scope = '${idea.title} ${idea.ingredientsCleared.join(' ')}';
+        final hits = allergensInIdeaText(scope, adversarial.allergies);
+        if (hits.isEmpty) {
+          kept.add(idea.title);
+        } else {
+          dropped.add('${idea.title}  → $hits');
+        }
+      }
+      _log('  KEPT:');
+      for (final k in kept) {
+        _log('    • $k');
+      }
+      _log('  DROPPED:');
+      for (final d in dropped) {
+        _log('    ✕ $d');
+      }
+    }
+
+    // Hand the REAL generated recipe to the Cook Mode render probe, so that
+    // check runs against live output rather than a fixture.
+    if (recipeRaw != null) {
+      File('build/probe_recipe.json').writeAsStringSync(recipeRaw);
+      _log('  wrote build/probe_recipe.json for the Cook Mode render probe');
+    }
 
     // ── 2. Custom: "carbonara" — a dish that IS egg + dairy + pork ───────
     _log('\n════════ RUN 2 — CUSTOM "carbonara" ════════');

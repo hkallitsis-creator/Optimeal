@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/allergen_flag_log.dart';
 import 'package:optimeal/services/allergen_guard.dart';
 import 'package:optimeal/services/compatibility_flag_log.dart';
 import 'package:optimeal/services/cooking_compatibility_validator.dart';
@@ -267,11 +268,15 @@ Future<ValidatedRecipeResult> generateValidatedRecipe({
 
   if (violations.isNotEmpty) {
     // FAIL-OPEN, LOUDLY. Whether this should fail CLOSED instead is argued in
-    // the session report and is PENDING HARRIS — it is deliberately not
-    // decided here. What is not negotiable is that it is never silent.
-    debugPrint('AllergenGuard: SERVING WITH ${violations.length} UNRESOLVED '
-        'VIOLATION(S) after $allergenRetriesUsed retries on $logSurface: '
-        '${violations.map((v) => v.toJson()).toList()}');
+    // docs/DECISIONS.md and is PENDING HARRIS — deliberately not decided
+    // here. What is not negotiable is that it is never silent: fail-open is
+    // only defensible while the log exists.
+    await AllergenFlagLog.record(
+      surface: logSurface,
+      outcome: 'served_with_violations',
+      retriesUsed: allergenRetriesUsed,
+      details: violations.map((v) => v.toJson()).toList(),
+    );
   }
 
   await CompatibilityFlagLog.record(

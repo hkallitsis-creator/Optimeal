@@ -162,7 +162,9 @@ void main() {
 
       expect(find.text('Heat the oil'), findsOneWidget);
       expect(find.text('Medium-high heat'), findsOneWidget);
-      expect(find.text('~3 min'), findsOneWidget);
+      // The "~N min" readout became the tappable timer pill, which is IDLE on
+      // entry and shows whole minutes with nothing counting down.
+      expect(find.text('3 min'), findsOneWidget);
 
       final champagnePills = tester
           .widgetList<Container>(find.byType(Container))

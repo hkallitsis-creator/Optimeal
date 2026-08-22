@@ -510,6 +510,46 @@ request or when a task needs the "why."
   adversarial run the ideas screen offered "Cheesy Potato Skillet" and
   "Spinach Walnut Salad" to a dairy/nut-avoiding profile before stage 2
   produced a clean recipe. Detection exists; the action is Harris's ruling.
+- **The step timer is IDLE until tapped, and never advances the step
+  (2026-08-23, Harris).** `StepTimerPill` (`lib/widgets/step_timer_pill.dart`)
+  + `StepTimerState { idle, running, paused, done }`. It used to auto-start on
+  step entry and auto-advance at zero; **both are gone and a source-scan guard
+  test keeps them gone** (`_resumeTimer` must not return;
+  `_onActiveTimerDone` must contain neither `_advanceToNextStep` nor
+  `_completedSteps`). Idle shows whole minutes with − / + (floor 1 min); tap
+  starts, tap pauses, ± hidden while running and live while paused; **zero =
+  two beeps + one haptic + a slow silent pulse, and the step does not change**.
+  Next clears done; tapping the done pill stops the pulse and stays put. Every
+  step entry goes through `_enterStep`, including jump-to-step — that is what
+  makes "no auto-start, ever" a property of the code. Step 1 and 0-minute steps
+  render no pill. The bottom-bar pause square is the same action as tapping the
+  pill, deliberately, so there is one mental model.
+- **Back from Cook Mode goes to the recipe overview (2026-08-23).**
+  `_backToOverview` → `pushReplacement(AppRoutes.recipe, extra: payload)`.
+  Back used to pop to the generation surface where the recipe no longer
+  existed. **The session stays active**, so the overview's Start cooking is a
+  *resume at the stored step*: `RecipeDetailsScreen` loads the active session,
+  matches it by recipe key, and pushes the `ActiveCookSession` — which carries
+  the payload, the step index, the completed set **and `plannerSlot`**, so slot
+  attribution survives the detour. Complements, does not replace, the standing
+  "Cook Now bypasses the overview" ruling; the home glyph is unchanged.
+- **Type scale (2026-08-23, Harris): bigger where possible.** Cook Mode action
+  line +3 sp, cue sentence +2 sp, detail +1 sp; whisper and meta pills
+  unchanged. App-wide `AppDesignTokens.body` 15 → **16**, changed in the tokens
+  file only. **No screen needed a local override.** The Cook Mode meta row
+  became a `Wrap` — as a `Row` it overflowed 7.6 px at 360 px × textScale 1.3
+  once the timer pill gained ± glyphs.
+- **Fridge Clearer stage-1 ideas honour the profile (2026-08-23).** Prevention
+  was already there and was not enough — a real run offered "Cheesy Spinach
+  Potatoes" and "Potato Walnut Salad" to a dairy/nut-avoiding profile. Now
+  `_generateIdeasWithAllergenFilter` **drops** flagged ideas (never annotates,
+  never shows), and if fewer than three survive runs **exactly one** silent
+  regenerate with the dropped titles excluded. Survivors are shown down to one;
+  **zero is the inline error state**. Drops go to `AllergenFlagLog`, the same
+  log recipes use. The synonym list gained adjectival forms (`cheesy`,
+  `creamy`, `buttery`, `milky`, `nutty`) because whole-word matching meant
+  `cheese` did not catch "Cheesy" — and a dish title is often all an idea has.
+  **The synonym list is now SIGNED.**
 - **Pre-cook merge — Step 1 is mise en place (2026-08-23).** The
   `_IngredientsChecklistCard` / `_IngredientChecklistRow` pre-cook surface,
   its tick state, its `0/N` counter and its **inline servings stepper** are

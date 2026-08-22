@@ -7,6 +7,9 @@ import 'package:provider/provider.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/models/fridge_idea.dart';
 import 'package:optimeal/prompts/recipe_static_prompts.dart';
+import 'package:optimeal/models/user_profile.dart';
+import 'package:optimeal/services/allergen_flag_log.dart';
+import 'package:optimeal/services/allergen_guard.dart';
 import 'package:optimeal/services/chef_recipe_parser.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/cook_session_storage_service.dart';
@@ -228,6 +231,107 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
     ].join('\n');
   }
 
+
+  /// Stage 1, with allergen-flagged ideas dropped before the user sees them.
+  ///
+  /// # Why dropping, and not annotating
+  ///
+  /// The profile block already reaches this call — and on a real run the model
+  /// still offered "Cheesy Potato Skillet" and "Spinach Walnut Salad" to a
+  /// profile avoiding dairy and tree nuts. Stage 2 then produced a clean
+  /// recipe, so nothing unsafe was ever cooked; but the ideas screen is the
+  /// menu, and putting a dish someone cannot eat on their menu is the surface
+  /// working against the profile they filled in.
+  ///
+  /// A flagged idea is therefore **never shown**, annotated or otherwise.
+  ///
+  /// # The three-idea floor, and why it bends
+  ///
+  /// Fewer than three survivors buys exactly **one** silent regenerate, with
+  /// the dropped titles added to the exclusion list so the retry does not
+  /// re-offer them. If that still leaves fewer than three, the survivors are
+  /// shown anyway — one good idea beats an error screen. Zero survivors is
+  /// the error state, because an empty menu with no explanation reads as the
+  /// app being broken.
+  ///
+  /// Returns null on a genuine generation/parse failure, an empty list when
+  /// everything was filtered out, and otherwise whatever survived.
+  Future<List<FridgeIdea>?> _generateIdeasWithAllergenFilter({
+    required UserProfile profile,
+    required int portions,
+    required List<String> recentDishTitles,
+  }) async {
+    final avoided = profile.allergies;
+    final dropped = <String>[];
+
+    Future<List<FridgeIdea>?> attempt(List<String> exclusions) async {
+      final reply = await _chefService.askChefHarris(
+        userQuery: _buildIdeasVariablePrompt(portions),
+        staticPromptBlock: buildFridgeIdeasStaticPrompt(),
+        profile: profile,
+        forceJsonObject: true,
+        recentDishTitles: [...recentDishTitles, ...exclusions],
+        surface: kChefCallSurfaceFridgeIdeas,
+      );
+      final parsed = parseFridgeIdeasJson(reply);
+      if (parsed == null) {
+        debugPrint('FridgeClearer: stage-1 reply unusable. Raw: $reply');
+      }
+      return parsed;
+    }
+
+    List<FridgeIdea> keepSafe(List<FridgeIdea> ideas) {
+      if (avoided.isEmpty) return ideas;
+      final safe = <FridgeIdea>[];
+      for (final idea in ideas) {
+        // Title AND the ingredients the model says the dish uses: "Cheesy
+        // Potato Skillet" is caught by the title, a dish that quietly lists
+        // walnuts is caught by the hints.
+        final scope =
+            '${idea.title} ${idea.ingredientsCleared.join(' ')}';
+        final hits = allergensInIdeaText(scope, avoided);
+        if (hits.isEmpty) {
+          safe.add(idea);
+        } else {
+          dropped.add(idea.title);
+          debugPrint(
+              'FridgeClearer: dropped idea "${idea.title}" — $hits');
+        }
+      }
+      return safe;
+    }
+
+    final first = await attempt(const []);
+    if (first == null) return null;
+    var safe = keepSafe(first);
+
+    if (safe.length < 3 && dropped.isNotEmpty) {
+      // ONE retry, silent to the user. The dropped titles ride the existing
+      // exclusion mechanism rather than a new one.
+      final second = await attempt(List<String>.from(dropped));
+      if (second != null) {
+        final extra = keepSafe(second);
+        final seen = safe.map((i) => i.title.toLowerCase()).toSet();
+        for (final idea in extra) {
+          if (seen.add(idea.title.toLowerCase())) safe.add(idea);
+          if (safe.length >= 3) break;
+        }
+      }
+    }
+
+    if (dropped.isNotEmpty) {
+      unawaited(AllergenFlagLog.record(
+        surface: kChefCallSurfaceFridgeIdeas,
+        outcome: safe.isEmpty ? 'all_ideas_dropped' : 'ideas_dropped',
+        details: [
+          for (final title in dropped) {'idea': title},
+        ],
+      ));
+    }
+
+    return safe.take(3).toList(growable: false);
+  }
+
   Future<void> _generateIdeas() async {
     if (_isGenerating) return;
     final theme = Theme.of(context);
@@ -301,19 +405,20 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
         ...recentCookHistory.map((e) => e.recipe.title),
       ];
 
-      final reply = await _chefService.askChefHarris(
-        userQuery: _buildIdeasVariablePrompt(portions),
-        staticPromptBlock: buildFridgeIdeasStaticPrompt(),
+      // The stage-1 profile block is the PREVENT half: `profile:` is passed
+      // here exactly as stage 2 passes it, so the allergen and diet lines
+      // reach the ideas call in the same static-before-variable position.
+      // That was already true and was not enough — a real run offered
+      // "Cheesy Potato Skillet" and "Spinach Walnut Salad" to a profile
+      // avoiding dairy and tree nuts. Hence the DETECT half below.
+      final ideas = await _generateIdeasWithAllergenFilter(
         profile: profile,
-        forceJsonObject: true,
+        portions: portions,
         recentDishTitles: recentDishTitles,
-        surface: kChefCallSurfaceFridgeIdeas,
       );
       if (!mounted) return;
 
-      final ideas = parseFridgeIdeasJson(reply);
       if (ideas == null) {
-        debugPrint('FridgeClearer: stage-1 reply unusable. Raw: $reply');
         setState(() => _generationError =
             'Couldn\'t come up with ideas right now. Please try again.');
         return;
@@ -325,6 +430,16 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       // as that matters.
       for (final idea in ideas) {
         RecentGenerationsService.instance.record(idea.title);
+      }
+
+      if (ideas.isEmpty) {
+        // Everything the model offered contained something this user cannot
+        // eat, and the one retry did not help. An empty menu with no
+        // explanation reads as the app being broken, so this is the error
+        // state — never an empty ideas screen, never an annotated unsafe card.
+        setState(() => _generationError =
+            "Couldn't find ideas that avoid your allergens. Try different ingredients.");
+        return;
       }
 
       setState(() {

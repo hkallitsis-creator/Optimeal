@@ -13,6 +13,33 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Cook Mode fix round: timer, back routing, type scale, stage-1 allergens
+
+Full prompt and report: `docs/sessions/2026-08-23_cookmode-fixes.md`.
+685 tests passing (657 baseline + 28 new), 40 analyze issues (unchanged).
+
+- **The timer no longer runs the cook.** It used to start by itself on step
+  entry and **advance the step** at zero — neither was in the signed spec. Now
+  idle until tapped, ± adjusters with a one-minute floor, and at zero it beeps
+  twice, buzzes once and pulses quietly **without changing the step**. The pan
+  is the authority; the card's minutes are an estimate. A source-scan guard
+  keeps the auto paths from coming back.
+- **Back from Cook Mode goes to the recipe overview**, not out to the
+  generation surface where the recipe no longer existed. The session stays
+  active, so Start cooking resumes at the stored step — `plannerSlot` and
+  provenance ride along on `ActiveCookSession`.
+- **Type scale up**: Cook Mode action line +3 sp, cue +2 sp, detail +1 sp;
+  `AppDesignTokens.body` 15 → 16 in the tokens file. No screen needed an
+  override. The Cook Mode meta row became a `Wrap` after a real 7.6 px
+  overflow at 360 px × 1.3.
+- **Stage-1 ideas now honour the profile.** Flagged ideas are dropped, one
+  silent regenerate covers a short list, zero survivors is the error state.
+  Verified live: 3 ideas → 2 dropped (dairy, tree nuts) → 1 kept. The synonym
+  list gained adjectival forms, because `cheese` did not catch "Cheesy" and a
+  title is often all an idea has. **Synonym list now SIGNED.**
+
+---
+
 ## 2026-08-23 — Profile redesign + backend wiring verification
 
 Full prompt and report: `docs/sessions/2026-08-23_profile.md`.

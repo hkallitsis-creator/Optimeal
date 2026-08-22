@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:optimeal/models/recipe_scale.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
+import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/services/weekly_planner_intent_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -62,6 +63,32 @@ class _RecipeDetailsScreenState extends State<RecipeDetailsScreen> {
   /// State was never disposed.
   int? _servings;
 
+  /// The paused cook for THIS recipe, if there is one.
+  ///
+  /// Cook Mode's back arrow lands here without ending the session, so Start
+  /// cooking has to mean *resume at the stored step* rather than *restart at
+  /// Step 1*. Matched by recipe key rather than by identity: the payload that
+  /// arrives as go_router `extra` is a different object from the one the
+  /// session persisted, even when it is the same recipe.
+  ActiveCookSession? _resumableSession;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadResumableSession();
+  }
+
+  Future<void> _loadResumableSession() async {
+    final recipe = widget.recipe;
+    if (recipe == null) return;
+    final session = await CookSessionStorageService().loadActiveSession();
+    if (!mounted) return;
+    final matches = session != null &&
+        SavedRecipesService.recipeKeyFor(session.recipe.title) ==
+            SavedRecipesService.recipeKeyFor(recipe.title);
+    setState(() => _resumableSession = matches ? session : null);
+  }
+
   int _resolveServings(CookModeRecipePayload recipe, int? household) =>
       _servings ??
       defaultServingsFor(
@@ -74,6 +101,14 @@ class _RecipeDetailsScreenState extends State<RecipeDetailsScreen> {
       );
 
   void _startCooking(CookModeRecipePayload recipe, int servings) {
+    final resume = _resumableSession;
+    if (resume != null) {
+      // Resume, with everything the session carried — including
+      // `plannerSlot`, so a planner-launched cook that took a detour through
+      // this screen still attributes its slot on completion.
+      context.push(AppRoutes.onePanCookingRoadmap, extra: resume);
+      return;
+    }
     context.push(
       AppRoutes.onePanCookingRoadmap,
       extra: CookModeLaunchRequest(

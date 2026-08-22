@@ -1,12 +1,15 @@
 /// Ingredient names that mean each of the fourteen allergens the Profile
 /// screen offers.
 ///
-/// # STATUS: DRAFT — PENDING HARRIS'S SIGNATURE
+/// # STATUS: SIGNED by Chef Harris, 23 August 2026
 ///
-/// The fourteen keys are not a draft: they are exactly the options
-/// `ProfileScreen` already shows, and they match the EU/CH declarable-allergen
-/// set. **The synonym lists under them are Claude's draft** and are what needs
-/// signing — the full text is in the session report for that purpose.
+/// The fourteen keys are exactly the options `ProfileScreen` shows, and match
+/// the EU/CH declarable-allergen set. The synonym lists were drafted on
+/// 2026-08-23 and signed the same day, including the two calls flagged for
+/// attention: `soy sauce` and `beer` sit under **both** Gluten and their own
+/// allergen (soy sauce is usually wheat-brewed), and **coconut is NOT a tree
+/// nut** — it is not one botanically or under EU rules, though some allergy
+/// guidance treats it as one.
 ///
 /// # Why this exists at all
 ///
@@ -47,12 +50,18 @@ const Map<String, List<String>> kAllergenSynonymsDraft = {
     'pecorino', 'cheddar', 'mozzarella', 'feta', 'ricotta', 'mascarpone',
     'gruyere', 'gruyère', 'emmental', 'raclette', 'yoghurt', 'yogurt',
     'ghee', 'quark', 'creme', 'custard',
+    // Adjectival forms. "Cheesy Potato Skillet" is a real leaked stage-1
+    // title, and whole-word matching means `cheese` does not catch `cheesy` —
+    // the dish name is the only thing the ideas screen shows, so the adjective
+    // is often the ONLY signal there is.
+    'cheesy', 'creamy', 'buttery', 'milky',
   ],
   'Tree Nuts': [
     'almond', 'almonds', 'hazelnut', 'hazelnuts', 'walnut', 'walnuts',
     'pecan', 'pecans', 'cashew', 'cashews', 'pistachio', 'pistachios',
     'macadamia', 'brazil nut', 'brazil nuts', 'pine nut', 'pine nuts',
     'chestnut', 'chestnuts', 'praline', 'marzipan', 'nutella',
+    'nutty',
   ],
   'Peanuts': [
     'peanut', 'peanuts', 'groundnut', 'groundnuts', 'peanut butter',

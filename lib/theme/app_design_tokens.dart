@@ -182,6 +182,10 @@ abstract final class AppDesignTokens {
   // ───────────────────────────────── Text styles ───────────────────────────
   static const TextStyle headline = TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: textCharcoal);
   static const TextStyle subheadline = TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: textCharcoal);
-  static const TextStyle body = TextStyle(fontSize: 15, fontWeight: FontWeight.w400, color: textCharcoal);
+  /// 16, not 15, since 2026-08-23 (Harris, device): bigger where possible.
+  /// Changed HERE rather than per-widget so it is one decision, and so a
+  /// screen that genuinely cannot take it has to say so with a local override
+  /// rather than the token quietly shrinking back.
+  static const TextStyle body = TextStyle(fontSize: 16, fontWeight: FontWeight.w400, color: textCharcoal);
   static final TextStyle caption = TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: textCharcoal.withValues(alpha: 0.7));
 }

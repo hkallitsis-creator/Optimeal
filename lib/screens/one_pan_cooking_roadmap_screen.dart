@@ -21,6 +21,7 @@ import 'package:optimeal/services/planner_cook_attribution_service.dart';
 import 'package:optimeal/models/recipe_scale.dart';
 import 'package:optimeal/services/prep_step_detector.dart';
 import 'package:optimeal/widgets/mise_en_place_card.dart';
+import 'package:optimeal/widgets/step_timer_pill.dart';
 import 'package:optimeal/services/upgrade_nudge_gate.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -382,6 +383,11 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   Set<int>? _completedSteps;
   Timer? _activeTicker;
   Duration _activeRemaining = Duration.zero;
+
+  /// What the step timer is doing. **Idle is the default and every step
+  /// starts there** — see [StepTimerPill] for the ruling. Nothing counts down
+  /// until the user taps, and the step never advances on its own.
+  StepTimerState _timerState = StepTimerState.idle;
 
   // Resolved recipe data (either demo or dynamic payload).
   late final String _recipeTitle;
@@ -1163,53 +1169,98 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       _cookPaused = false;
       _activeStepIndex = 0;
       _activeRemaining = _steps.first.duration;
+      // IDLE. The cook has started; the clock has not. Nothing counts down
+      // until the user taps the pill.
+      _timerState = StepTimerState.idle;
     });
-    _resumeTimer();
+    unawaited(_persistActiveSession());
     _postFrame(_scrollToActiveStep);
   }
 
-  void _resumeTimer() {
+  /// Enters [index] with the timer reset to idle and no ticker running.
+  ///
+  /// Every step entry goes through here, which is what makes "no auto-start,
+  /// ever" a property of the code rather than a promise.
+  void _enterStep(int index) {
+    _activeTicker?.cancel();
+    setState(() {
+      _activeStepIndex = index;
+      _activeRemaining = _steps[index].duration;
+      _timerState = StepTimerState.idle;
+      _cookPaused = false;
+    });
+    unawaited(_persistActiveSession());
+  }
+
+  /// Idle → running · running → paused · paused → running · done → idle.
+  void _onTimerPillTapped() {
     if (!mounted) return;
-    if (_activeStepIndex == null) return;
-    if (_completedSteps?.contains(_activeStepIndex!) ?? false) return;
+    final idx = _activeStepIndex;
+    if (idx == null || !_steps[idx].hasTimer) return;
+
+    switch (_timerState) {
+      case StepTimerState.idle:
+      case StepTimerState.paused:
+        _startTicking();
+      case StepTimerState.running:
+        _pauseTimer();
+      case StepTimerState.done:
+        // Stops the pulse. Deliberately does NOT advance — the whole point of
+        // the done state is that moving on stays the user's decision.
+        setState(() => _timerState = StepTimerState.idle);
+    }
+  }
+
+  /// ±[deltaMinutes], floor one minute. Live whenever the clock is not
+  /// running: the card's minutes are an estimate and the cook can see the pan.
+  void _adjustTimer(int deltaMinutes) {
+    if (!mounted) return;
+    if (_timerState == StepTimerState.running) return;
+    final next = _activeRemaining + Duration(minutes: deltaMinutes);
+    setState(() {
+      _activeRemaining =
+          next < const Duration(minutes: 1) ? const Duration(minutes: 1) : next;
+      if (_timerState == StepTimerState.done) {
+        _timerState = StepTimerState.idle;
+      }
+    });
+    unawaited(_persistActiveSession());
+  }
+
+  /// Starts the countdown from whatever the pill currently shows.
+  ///
+  /// Named `_startTicking`, not `_resumeTimer`: the old method was called on
+  /// every step entry and on every advance, which is exactly the auto-start
+  /// this ruling removed. Nothing calls this except a user tap.
+  void _startTicking() {
+    if (!mounted) return;
+    final idx = _activeStepIndex;
+    if (idx == null) return;
+    if (!_steps[idx].hasTimer) return;
+    if (_completedSteps?.contains(idx) ?? false) return;
 
     _activeTicker?.cancel();
 
-    // Timerless step (currently only the synthesized prep step, see
-    // _buildPrepStep) — mark active/unpaused so the UI reads correctly, but
-    // never start a countdown. The only way forward is the manual
-    // mark-complete action, which already calls _advanceToNextStep()
-    // directly regardless of whether a timer was ever running.
-    if (!_steps[_activeStepIndex!].hasTimer) {
-      _activeRemaining = Duration.zero;
-      if (mounted) setState(() => _cookPaused = false);
-      unawaited(_persistActiveSession());
-      return;
-    }
-
     if (_activeRemaining <= Duration.zero) {
-      _activeRemaining = _steps[_activeStepIndex!].duration;
+      _activeRemaining = _steps[idx].duration;
     }
 
-    if (mounted) setState(() => _cookPaused = false);
+    setState(() {
+      _timerState = StepTimerState.running;
+      _cookPaused = false;
+    });
     unawaited(_persistActiveSession());
-    _activeTicker = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      if (_activeStepIndex == null) {
-        t.cancel();
-        return;
-      }
 
+    _activeTicker = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted || _activeStepIndex == null) {
+        t.cancel();
+        return;
+      }
       if (_activeRemaining <= const Duration(seconds: 1)) {
         t.cancel();
         _activeRemaining = Duration.zero;
-        if (!mounted) return;
         _onActiveTimerDone();
       } else {
-        if (!mounted) return;
         setState(() => _activeRemaining -= const Duration(seconds: 1));
       }
     });
@@ -1218,53 +1269,51 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   void _pauseTimer() {
     if (!mounted) return;
     _activeTicker?.cancel();
-    if (mounted) setState(() => _cookPaused = true);
+    setState(() {
+      _timerState = StepTimerState.paused;
+      _cookPaused = true;
+    });
     unawaited(_persistActiveSession());
   }
 
+  /// The bottom bar's pause square. Deliberately the same action as tapping
+  /// the pill, so there is one mental model for the timer rather than two
+  /// controls that can disagree.
   void _togglePause() {
     if (!_cookStarted) {
       _startCooking();
       return;
     }
-    if (_cookPaused) {
-      _resumeTimer();
-    } else {
-      _pauseTimer();
-    }
+    _onTimerPillTapped();
   }
 
-  void _onActiveTimerDone() {
+  /// Zero. **Announce, then wait.**
+  ///
+  /// Two short beeps and one haptic, then the pill pulses quietly until the
+  /// user acts. What this deliberately no longer does: mark the step
+  /// complete, show a "Moving on…" snackbar, and advance. The pan is the
+  /// authority on doneness, not the estimate printed on the card.
+  ///
+  /// Sound goes through `SystemSound`, which the OS silences under the mute
+  /// switch on its own — there is no reliable cross-platform API to query
+  /// mute state, so this relies on the platform rather than pretending to
+  /// check. Muted therefore means haptic + pulse only, which is the ruling.
+  Future<void> _onActiveTimerDone() async {
     if (!mounted) return;
-    final idx = _activeStepIndex;
-    if (idx == null) return;
+    if (_activeStepIndex == null) return;
+
+    setState(() => _timerState = StepTimerState.done);
+    unawaited(_persistActiveSession());
 
     try {
-      SystemSound.play(SystemSoundType.click);
-      HapticFeedback.lightImpact();
+      await SystemSound.play(SystemSoundType.alert);
+      await HapticFeedback.mediumImpact();
+      await Future<void>.delayed(const Duration(milliseconds: 260));
+      if (!mounted) return;
+      await SystemSound.play(SystemSoundType.alert);
     } catch (e) {
       debugPrint('Timer completion feedback failed: $e');
     }
-
-    setState(() {
-      (_completedSteps ??= <int>{}).add(idx);
-    });
-
-    final theme = Theme.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Step ${idx + 1} complete. Moving on…',
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(color: theme.colorScheme.onInverseSurface),
-        ),
-        backgroundColor: theme.colorScheme.inverseSurface,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
-
-    _advanceToNextStep();
   }
 
   void _advanceToNextStep() {
@@ -1285,12 +1334,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       return;
     }
 
-    setState(() {
-      _activeStepIndex = next;
-      _activeRemaining = _steps[next].duration;
-      _cookPaused = false;
-    });
-    _resumeTimer();
+    _enterStep(next);
     _postFrame(_scrollToActiveStep);
   }
 
@@ -1375,14 +1419,30 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     if (stepIndex < 0 || stepIndex >= _steps.length) return;
     if (!_cookStarted) return;
 
-    _activeTicker?.cancel();
     setState(() {
       _completedSteps = <int>{for (var i = 0; i < stepIndex; i++) i};
-      _activeStepIndex = stepIndex;
-      _activeRemaining = _steps[stepIndex].duration;
-      _cookPaused = false;
     });
-    _resumeTimer();
+    // Jumping lands on the step IDLE, like every other step entry — a jump
+    // must not be a back door to auto-start.
+    _enterStep(stepIndex);
+  }
+
+  /// Back → this recipe's overview, carrying the recipe itself.
+  ///
+  /// `pushReplacement` rather than `push`: the overview replaces Cook Mode in
+  /// the stack, so a round trip cannot leave two Cook Modes behind it. The
+  /// active session is untouched — it is what makes Start cooking a resume.
+  ///
+  /// A recipe-less launch (the demo body) has nothing to show an overview of,
+  /// so that case keeps the old pop.
+  void _backToOverview() {
+    final payload = _payload;
+    if (payload == null) {
+      context.pop(_cookSequenceStarted);
+      return;
+    }
+    unawaited(_persistActiveSession());
+    context.pushReplacement(AppRoutes.recipe, extra: payload);
   }
 
   Future<void> _openSos() async {
@@ -1583,13 +1643,15 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        // Depth-2: back is unchanged (Cook Mode's back-press semantics are
-        // deliberately untouched), with the quiet home glyph beside it now
-        // that there's no bottom nav bar to escape through.
+        // Depth-2: back goes to this recipe's OVERVIEW, not out to whatever
+        // generated it. Back used to pop to the generation surface, where the
+        // recipe no longer existed — the user had to regenerate to get it
+        // back. The session stays active either way, so Start cooking on the
+        // overview resumes at the stored step rather than restarting.
         leadingWidth: kBackWithHomeLeadingWidth,
         leading: BackWithHomeLeading(
           back: IconButton(
-            onPressed: () => context.pop(_cookSequenceStarted),
+            onPressed: _backToOverview,
             icon: Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
@@ -1710,8 +1772,10 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                   ? _buildMiseCard(index)
                   : _FocusedStepCard(
                       step: step,
-                      isPaused: _cookPaused,
+                      timerState: _timerState,
                       remaining: _activeRemaining,
+                      onTimerTap: _onTimerPillTapped,
+                      onTimerAdjust: _adjustTimer,
                       nextStep: index + 1 < _steps.length
                           ? _steps[index + 1]
                           : null,
@@ -2727,15 +2791,19 @@ class _CookProgressBar extends StatelessWidget {
 class _FocusedStepCard extends StatelessWidget {
   const _FocusedStepCard({
     required this.step,
-    required this.isPaused,
+    required this.timerState,
     required this.remaining,
     required this.nextStep,
     required this.onWhisperTap,
+    required this.onTimerTap,
+    required this.onTimerAdjust,
   });
 
   final _CookStep step;
-  final bool isPaused;
+  final StepTimerState timerState;
   final Duration remaining;
+  final VoidCallback onTimerTap;
+  final ValueChanged<int> onTimerAdjust;
 
   /// Null on the last step — and then there is no whisper at all. There is
   /// deliberately no previous-step whisper: the asymmetry is the point, since
@@ -2743,12 +2811,6 @@ class _FocusedStepCard extends StatelessWidget {
   /// do".
   final _CookStep? nextStep;
   final VoidCallback onWhisperTap;
-
-  static String _format(Duration d) {
-    final mins = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final secs = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$mins:$secs';
-  }
 
   static String heatPillLabel(_HeatLevel heat) => switch (heat) {
         _HeatLevel.low => 'Low heat',
@@ -2785,9 +2847,14 @@ class _FocusedStepCard extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 // 1 — the dominant action line. The instruction itself.
+                // +3 sp (Harris, device 2026-08-23): this is the line read at
+                // arm's length with wet hands, and it was the thing most worth
+                // making bigger.
                 Text(
                   step.actionTitle,
                   style: theme.textTheme.headlineSmall?.copyWith(
+                    fontSize:
+                        (theme.textTheme.headlineSmall?.fontSize ?? 24) + 3,
                     fontWeight: FontWeight.w900,
                     height: 1.2,
                     color: AppDesignTokens.textCharcoal,
@@ -2796,33 +2863,26 @@ class _FocusedStepCard extends StatelessWidget {
                 const SizedBox(height: 14),
 
                 // 2 — meta row. Heat is the ONLY warm pill on this card.
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                //
+                // A Wrap, not a Row: at 360 px and textScale 1.3 the heat pill
+                // plus the timer pill (which now carries ± glyphs) overflowed
+                // by 7.6 px. Controls wrap, never clip — kit rule.
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     if (step.hasTimer) ...[
                       _MetaPill(label: heatPillLabel(step.heat), warm: true),
-                      const SizedBox(width: 8),
-                      _MetaPill(
-                          label: '~${step.duration.inMinutes} min',
-                          warm: false),
-                      const SizedBox(width: 10),
-                      // Timer state as quiet text in the same row — not a
-                      // third pill. Promoting it to a chip is tier 3 and
-                      // waits on device evidence.
-                      Flexible(
-                        child: Text(
-                          isPaused
-                              // PLACEHOLDER
-                              ? 'Paused · ${_format(remaining)}'
-                              : _format(remaining),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: AppDesignTokens.textCharcoal
-                                .withValues(alpha: 0.60),
-                          ),
-                        ),
+                      // The timer, now a control rather than a readout: idle
+                      // by default, tap to start, ± to adjust. It replaced
+                      // the "~N min" pill AND the quiet countdown text that
+                      // used to sit beside it — one thing, not two.
+                      StepTimerPill(
+                        state: timerState,
+                        remaining: remaining,
+                        onTap: onTimerTap,
+                        onAdjust: onTimerAdjust,
                       ),
                     ] else
                       const _MetaPill(
@@ -2859,7 +2919,12 @@ class _FocusedStepCard extends StatelessWidget {
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
                         bullet,
+                        // +1 sp. Detail stays demoted relative to the action
+                        // line and the cue — the ordering is the point, not
+                        // the absolute size.
                         style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize:
+                              (theme.textTheme.bodySmall?.fontSize ?? 12) + 1,
                           height: 1.45,
                           color: AppDesignTokens.textCharcoal
                               .withValues(alpha: 0.68),
@@ -3007,7 +3072,10 @@ class _CuePanelState extends State<_CuePanel> {
           const SizedBox(height: 6),
           Text(
             cue.harrisSays,
+            // +2 sp: the cue is the judgement call, and judgement should not
+            // be smaller than procedure.
             style: theme.textTheme.bodyMedium?.copyWith(
+              fontSize: (theme.textTheme.bodyMedium?.fontSize ?? 14) + 2,
               fontWeight: FontWeight.w700,
               height: 1.4,
               color: AppDesignTokens.textCharcoal,

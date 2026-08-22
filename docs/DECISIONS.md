@@ -7,6 +7,103 @@ Read on request, not auto-loaded.
 
 ---
 
+## The step timer is idle until tapped, and never advances the step (23 August 2026)
+
+**Source: Harris, device use.** The timer used to start by itself on step entry
+and **advance the step** when it hit zero. Neither was ever in the signed Cook
+Mode spec — there the timer is quiet text in the meta row, and promoting it at
+all is evidence-gated.
+
+**Binding rules:**
+
+- **IDLE is the default and the resting state.** The pill shows the step's
+  minutes with − / + adjusters (one-minute steps, floor 1) and nothing counts
+  down. **No auto-start on step entry, ever** — including on a jump from the
+  overview sheet, which is the obvious back door.
+- **Tap starts it.** Tap again pauses; the ± stay usable while paused and are
+  hidden while running, because a greyed control mid-cook reads as broken.
+- **Zero announces, then waits.** Two short beeps, one haptic, then a slow
+  silent champagne↔ivory pulse until the user acts. **The step does not
+  change, ever.** Next clears the done state; tapping the done pill stops the
+  pulse and stays put. Sound goes through `SystemSound`, which the OS silences
+  under the mute switch on its own — there is no reliable cross-platform mute
+  query, so muted means haptic + pulse, by relying on the platform rather than
+  pretending to check.
+- Leaving a step cancels a running timer. Step 1 (mise) and zero-minute steps
+  render no pill at all.
+
+**Why this is the right way round:** the minutes on the card are the model's
+estimate, and the pan is the authority. An app that decides when you are done
+cooking something is asserting knowledge it does not have — and worse, it
+removes the moment where the cook looks at the food. The sensory cue is the
+real signal; the timer is a convenience.
+
+A source-scan guard test asserts `_resumeTimer` never returns and that
+`_onActiveTimerDone` contains neither `_advanceToNextStep` nor `_completedSteps`.
+
+---
+
+## Back from Cook Mode goes to the recipe overview (23 August 2026)
+
+**Source: Harris, device use.** Back used to pop to the generation surface,
+where the recipe no longer existed — the user had to regenerate to get it back.
+
+**Binding rule:** Cook Mode's back arrow routes to `RecipeDetailsScreen`
+rendering the current recipe, via `pushReplacement` so a round trip cannot
+stack Cook Modes. **The session stays active**, so the overview's Start cooking
+is a *resume at the stored step*, not a restart at Step 1.
+
+`ActiveCookSession` is the object that carries this: the full recipe payload,
+the step index, the completed set, and `plannerSlot` — which is why a
+planner-launched cook that detours through the overview still attributes its
+slot on completion. The overview matches it by recipe key, because the payload
+arriving as go_router `extra` is a different object from the one the session
+persisted.
+
+**This complements, and does not replace, the standing "Cook Now bypasses the
+overview" ruling.** Generation surfaces still go straight to Cook Mode; what
+changed is only where *back* lands. The home glyph is unchanged.
+
+---
+
+## Type scale: bigger where possible (23 August 2026)
+
+**Source: Harris, device use.** Cook Mode's dominant action line +3 sp, the cue
+sentence +2 sp, detail prose +1 sp. The whisper and the meta pills are
+unchanged — the whisper is deliberately quiet, and that ordering is the point.
+
+App-wide, `AppDesignTokens.body` went 15 → **16**, changed in the tokens file
+rather than per-widget so it is one decision. **No screen needed a local
+override.** One real overflow surfaced and was fixed properly rather than by
+shrinking back: Cook Mode's meta row was a `Row` and overflowed by 7.6 px at
+360 px × textScale 1.3 once the timer pill gained its ± glyphs. It is now a
+`Wrap` — controls wrap, never clip, which was already the kit rule.
+
+---
+
+## Fridge Clearer stage-1 ideas honour the profile (23 August 2026)
+
+**Source: Harris, ruling on the leak found in the profile verification.**
+
+Stage 1 already received the profile block and the model ignored it anyway: a
+run offered "Cheesy Spinach Potatoes" and "Potato Walnut Salad" to a profile
+avoiding dairy and tree nuts. Prevention alone is therefore not enough.
+
+**Binding rule:** flagged ideas are **DROPPED**, never annotated and never
+shown. If fewer than three survive, exactly **one** silent regenerate runs with
+the dropped titles added to the existing exclusion list; whatever survives is
+then shown, down to a minimum of one — one good idea beats an error screen.
+**Zero survivors is the inline error state**, because an empty menu with no
+explanation reads as the app being broken. Every drop is logged to
+`AllergenFlagLog`, the same log recipes use.
+
+**A matching gap this exposed:** whole-word matching meant `cheese` did not
+catch **"Cheesy"**, and a dish title is often the only text an idea has. The
+adjectival forms (`cheesy`, `creamy`, `buttery`, `milky`, `nutty`) are now in
+the synonym list for that reason.
+
+---
+
 ## Allergen enforcement is a prompt constraint AND a deterministic check (23 August 2026)
 
 **Binding rule:** avoided allergens are enforced twice — once by the prompt,
@@ -51,6 +148,15 @@ inherited:
   into a blank error today trades one bad outcome for a different one. Until
   that surface exists, fail-open-with-log is the honest interim, and the log
   is the thing that must never be dropped.
+
+**RULED 2026-08-23 (Harris):** **INTERIM fail-open with a loud log**, exactly as
+argued. Fail-closed is adopted in principle and waits on a signed "couldn't
+build this safely" state, which is persona-batch content. The log
+(`AllergenFlagLog`) is what makes the interim defensible and may not be removed.
+
+**The synonym list is SIGNED (2026-08-23)**, including the two calls flagged
+for attention: `soy sauce` and `beer` appear under **both** Gluten and their own
+allergen, and **coconut is NOT a tree nut**.
 
 **The stage-1 leak, unresolved and reported.** On the same adversarial run,
 the Fridge Clearer's *ideas* screen offered "Cheesy Potato Skillet" and
