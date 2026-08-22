@@ -807,4 +807,226 @@ void main() {
       expect(report.hasCorrectable, isFalse);
     });
   });
+
+  group('whole-word matching (the prefix bug)', () {
+    // _hasAny matched on a word PREFIX until 2026-08-23, so "rarely" tripped
+    // H2's "rare" and "pinkish" tripped "pink". Both are false positives that
+    // spend a correction retry and teach the model to write defensively.
+    test('"rarely" does not fire the rare-doneness trigger', () {
+      final r = _recipe(
+        steps: [
+          _step('Brown the beef mince',
+              bullets: ['this rarely takes longer than eight minutes', 'cooked through']),
+        ],
+      );
+      expect(_findings(r, SafetyRuleId.h2), isEmpty);
+    });
+
+    test('"pinkish" does not fire the pink trigger', () {
+      final r = _recipe(
+        steps: [
+          _step('Brown the beef mince',
+              bullets: ['the shallots turn pinkish at the edges', 'cooked through']),
+        ],
+      );
+      expect(_findings(r, SafetyRuleId.h2), isEmpty);
+    });
+
+    test('"serve rare" still fires', () {
+      final r = _recipe(
+        steps: [_step('Cook the beef mince', bullets: ['serve rare'])],
+      );
+      expect(_findings(r, SafetyRuleId.h2), isNotEmpty);
+    });
+
+    test('"cook until no longer pink" clears the rule', () {
+      final r = _recipe(
+        steps: [_step('Cook the beef mince', bullets: ['cook until no longer pink'])],
+      );
+      expect(_findings(r, SafetyRuleId.h2), isEmpty);
+    });
+
+    test('"Mince the garlic" stays a non-match (regression)', () {
+      expect(mentionsComminutedMeat('mince the garlic'), isFalse);
+      expect(mentionsComminutedMeat('500 g mince'), isTrue);
+    });
+
+    test('inflected exclusion words still match, so exclusions keep working', () {
+      // "chill" lives in an EXCLUSION list. If whole-word matching stopped it
+      // covering "chilled"/"chilling", H5 and H6 would start firing on
+      // correctly-refrigerated recipes.
+      final r = _recipe(
+        steps: [
+          _step('Cool the rice quickly, then keep it chilled', heat: 'off_heat'),
+        ],
+      );
+      expect(_findings(r, SafetyRuleId.h5), isEmpty);
+    });
+  });
+
+  group('compound and veggie exclusions', () {
+    test('chicken stock is not chicken', () {
+      final r = _recipe(
+        title: 'Mushroom risotto',
+        ingredients: ['arborio rice', 'chicken stock', 'mushrooms'],
+        steps: [
+          _step('Toast the rice', minutes: 2),
+          _step('Add the chicken stock a ladle at a time', minutes: 18),
+        ],
+      );
+      expect(_findings(r, SafetyRuleId.h1), isEmpty);
+      expect(applySafetyInjections(r).injections, isEmpty);
+    });
+
+    test('real chicken plus chicken stock still gets exactly one injection', () {
+      final r = _recipe(
+        ingredients: ['chicken thighs', 'chicken stock'],
+        steps: [
+          _step('Sear the chicken thighs', minutes: 8),
+          _step('Add the chicken stock and simmer the chicken thighs', minutes: 20),
+        ],
+      );
+      final out = applySafetyInjections(r);
+      expect(out.injections, hasLength(1));
+      expect(out.injections.single.stepIndex, 1,
+          reason: 'the last step that actually cooks the chicken');
+    });
+
+    test('fish sauce is not fish', () {
+      expect(matchSafetyNames('a splash of fish sauce').where((n) => n.fish), isEmpty);
+      expect(matchSafetyNames('a fillet of fish').where((n) => n.fish), isNotEmpty);
+    });
+
+    test('other compound forms are excluded', () {
+      for (final s in [
+        'chicken broth',
+        'chicken bouillon',
+        'beef gravy',
+        'duck fat',
+        'chicken seasoning',
+        'pork powder',
+        'chicken-flavoured crisps',
+      ]) {
+        expect(mentionsPoultryOrPork(s), isFalse, reason: s);
+      }
+    });
+
+    test('veggie products are not comminuted meat', () {
+      for (final s in [
+        'bean burger',
+        'vegan sausage',
+        'lentil patty',
+        'mushroom meatball',
+        'vegan black bean burger',
+        'plant-based burger',
+      ]) {
+        expect(mentionsComminutedMeat(s), isFalse, reason: s);
+      }
+    });
+
+    test('a bean burger raises no H2, a beef burger does', () {
+      final veggie = _recipe(
+        title: 'Bean burgers',
+        ingredients: ['black beans', 'breadcrumbs'],
+        steps: [_step('Fry the bean burgers', minutes: 8)],
+      );
+      expect(_findings(veggie, SafetyRuleId.h2), isEmpty);
+
+      final beef = _recipe(
+        title: 'Beef burgers',
+        ingredients: ['beef mince'],
+        steps: [_step('Fry the beef burgers', minutes: 8)],
+      );
+      expect(_findings(beef, SafetyRuleId.h2), isNotEmpty);
+    });
+  });
+
+  group('name list ratification (2026-08-23)', () {
+    test('no term is listed twice', () {
+      final seen = <String>{};
+      final dupes = <String>[];
+      for (final n in kSafetyIngredientNamesDraft) {
+        if (!seen.add(n.term)) dupes.add(n.term);
+      }
+      expect(dupes, isEmpty, reason: 'duplicate vocabulary terms: $dupes');
+    });
+
+    test('the Swiss and German additions resolve as signed', () {
+      expect(mentionsPoultryOrPork('poulet'), isTrue);
+      expect(mentionsPoultryOrPork('pouletbrust'), isTrue);
+      expect(mentionsPoultryOrPork('güggeli'), isTrue);
+      expect(mentionsPoultryOrPork('cordon bleu'), isTrue);
+      expect(mentionsPoultryOrPork('geschnetzeltes'), isTrue);
+      expect(mentionsComminutedMeat('hackbraten'), isTrue);
+      expect(mentionsComminutedMeat('fleischkäse'), isTrue);
+
+      // Unqualified Schnitzel is signed to the poultry 74 °C floor.
+      expect(governingProteinClass(proteinClassesIn('schnitzel')),
+          ProteinClass.poultry);
+    });
+
+    test('duck whole muscle is exempt from H1', () {
+      for (final term in [
+        'duck breast',
+        'magret',
+        'duck leg',
+        'duck thigh',
+        'whole duck',
+        'duck confit',
+      ]) {
+        expect(mentionsPoultryOrPork(term), isFalse,
+            reason: '"$term" is signed exempt — served pink is safe');
+      }
+
+      final r = _recipe(
+        title: 'Seared duck breast',
+        ingredients: ['duck breast'],
+        steps: [
+          _step('Sear the duck breast skin side down', minutes: 8),
+          _step('Rest and serve pink', heat: 'off_heat', minutes: 5),
+        ],
+      );
+      expect(_findings(r, SafetyRuleId.h1), isEmpty);
+      expect(_findings(r, SafetyRuleId.h2), isEmpty);
+      expect(applySafetyInjections(r).injections, isEmpty,
+          reason: 'no cue injection anywhere on a duck recipe');
+    });
+
+    test('duck mince is still comminuted, so still H2', () {
+      expect(mentionsComminutedMeat('duck mince'), isTrue);
+      final r = _recipe(
+        ingredients: ['duck mince'],
+        steps: [_step('Brown the duck mince', minutes: 8)],
+      );
+      expect(_findings(r, SafetyRuleId.h2), isNotEmpty,
+          reason: 'comminuted is H2 regardless of species');
+    });
+
+    test('the shrimp group sits at the fish floor, and no bivalve does', () {
+      for (final term in [
+        'shrimp',
+        'prawn',
+        'king prawn',
+        'tiger prawn',
+        'crevette',
+        'scampi',
+        'langoustine',
+      ]) {
+        final hits = matchSafetyNames(term);
+        expect(hits, isNotEmpty, reason: term);
+        expect(hits.any((n) => n.fish), isTrue, reason: term);
+        expect(governingProteinClass(proteinClassesIn(term))!.minimumCelsius, 63,
+            reason: term);
+        // Shrimp are not poultry or pork, so H1 never touches them.
+        expect(hits.any((n) => n.qualifiesForDonenessRule), isFalse,
+            reason: term);
+      }
+
+      // S1 bivalves stay INACTIVE.
+      for (final term in ['mussel', 'clam', 'oyster', 'scallop']) {
+        expect(matchSafetyNames(term), isEmpty,
+            reason: '"$term" is S1 and must stay out of the validator');
+      }
+    });
+  });
 }

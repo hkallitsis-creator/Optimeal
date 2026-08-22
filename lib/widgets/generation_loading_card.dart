@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:optimeal/theme/app_design_tokens.dart';
+import 'package:optimeal/widgets/spoon_bowl_illustration.dart';
 
 /// Which wait this card is covering.
 ///
@@ -181,17 +182,12 @@ class _GenerationLoadingCardState extends State<GenerationLoadingCard>
                 children: [
                   AnimatedBuilder(
                     animation: _controller,
-                    builder: (context, _) => SizedBox(
-                      height: 132,
-                      width: 176,
-                      child: CustomPaint(
-                        painter: _StirringSpoonPainter(
-                          // A fixed phase when motion is reduced, so the
-                          // illustration is composed rather than frozen
-                          // mid-swing.
-                          t: reduceMotion ? 0.12 : _controller.value,
-                        ),
-                      ),
+                    builder: (context, _) => SpoonBowlIllustration(
+                      // A fixed phase when motion is reduced, so the
+                      // illustration is composed rather than frozen mid-swing.
+                      phase: reduceMotion
+                          ? SpoonBowlIllustration.staticPhase
+                          : _controller.value,
                     ),
                   ),
                   const SizedBox(height: AppDesignTokens.spaceMD),
@@ -282,139 +278,3 @@ class _PulsingDots extends StatelessWidget {
 /// fills, no gradients. The spoon **dips behind the far rim** — done purely
 /// with paint order, drawing the spoon before the batter surface while it is
 /// on the far half of its swing and after it while it is near.
-class _StirringSpoonPainter extends CustomPainter {
-  const _StirringSpoonPainter({required this.t});
-
-  /// 0..1 animation phase.
-  final double t;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final line = Paint()
-      ..color = AppDesignTokens.textCharcoal
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final bowlFill = Paint()
-      ..color = AppDesignTokens.ctaTerracotta
-      ..style = PaintingStyle.fill;
-    final batterFill = Paint()
-      ..color = AppDesignTokens.champagneTint
-      ..style = PaintingStyle.fill;
-    final shadowFill = Paint()
-      ..color = AppDesignTokens.sageTeachingPanel
-      ..style = PaintingStyle.fill;
-    final woodFill = Paint()
-      ..color = AppDesignTokens.illustrationWoodTan
-      ..style = PaintingStyle.fill;
-    final woodShade = Paint()
-      ..color = AppDesignTokens.illustrationWoodTanShade
-      ..style = PaintingStyle.fill;
-
-    // Geometry.
-    final cx = size.width * 0.5;
-    final rimY = size.height * 0.52;
-    final rimRx = size.width * 0.30;
-    final rimRy = size.height * 0.09;
-    final bowlDepth = size.height * 0.30;
-
-    // ── Base shadow (sage), sitting under the bowl. ──
-    canvas.drawOval(
-      Rect.fromCenter(
-          center: Offset(cx, rimY + bowlDepth + size.height * 0.06),
-          width: rimRx * 2.05,
-          height: size.height * 0.10),
-      shadowFill,
-    );
-
-    // ── Bowl body: rim ellipse down to a rounded base. ──
-    final bowl = Path()
-      ..moveTo(cx - rimRx, rimY)
-      ..quadraticBezierTo(
-          cx - rimRx * 0.96, rimY + bowlDepth * 1.28, cx, rimY + bowlDepth)
-      ..quadraticBezierTo(
-          cx + rimRx * 0.96, rimY + bowlDepth * 1.28, cx + rimRx, rimY)
-      ..close();
-    canvas.drawPath(bowl, bowlFill);
-
-    // The swing: a smooth there-and-back, not a full spin — a person stirring.
-    final angle = math.sin(t * 2 * math.pi) * 2.4;
-    final headX = cx + math.cos(angle) * rimRx * 0.52;
-    final headY = rimY + math.sin(angle) * rimRy * 0.85;
-    // Far half of the swing: the head is behind the batter surface.
-    final isBehind = math.sin(angle) < 0;
-
-    void drawSpoon() {
-      canvas.save();
-      canvas.translate(headX, headY);
-      // Handle leans away from centre, so the spoon reads as held.
-      canvas.rotate(-0.5 + math.cos(angle) * 0.28);
-
-      final handle = Rect.fromLTWH(-size.width * 0.017, -size.height * 0.46,
-          size.width * 0.034, size.height * 0.46);
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(handle, const Radius.circular(5)), woodFill);
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(handle, const Radius.circular(5)), line);
-
-      final head = Rect.fromCenter(
-          center: Offset.zero,
-          width: size.width * 0.085,
-          height: size.height * 0.13);
-      canvas.drawOval(head, woodFill);
-      // Shading crescent — the only modelling on the whole illustration.
-      canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(head.width * 0.14, head.height * 0.10),
-              width: head.width * 0.62,
-              height: head.height * 0.62),
-          woodShade);
-      canvas.drawOval(head, line);
-      canvas.restore();
-    }
-
-    if (isBehind) drawSpoon();
-
-    // ── Batter surface, drawn over a behind-the-rim spoon. ──
-    final rim = Rect.fromCenter(
-        center: Offset(cx, rimY), width: rimRx * 2, height: rimRy * 2);
-    canvas.drawOval(rim, batterFill);
-
-    // Three pearls riding the surface with the spoon.
-    for (var i = 0; i < 3; i++) {
-      final pearlAngle = angle + 1.5 + i * 1.9;
-      final px = cx + math.cos(pearlAngle) * rimRx * 0.62;
-      final py = rimY + math.sin(pearlAngle) * rimRy * 0.62;
-      final r = size.width * (0.0125 + (i == 1 ? 0.004 : 0));
-      // Two terracotta, one gold. The gold pearl is the ONE place gold appears
-      // outside an earned moment — signed explicitly by this card's spec, and
-      // at 2px it reads as a highlight rather than a badge. Flagged in the
-      // session record.
-      final fill = Paint()
-        ..color = i == 1
-            ? AppDesignTokens.goldEarnedFill
-            : AppDesignTokens.ctaTerracotta
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(Offset(px, py), r, fill);
-      canvas.drawCircle(
-          Offset(px, py),
-          r,
-          Paint()
-            ..color = AppDesignTokens.textCharcoal
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.2);
-    }
-
-    if (!isBehind) drawSpoon();
-
-    // ── Outlines last, so nothing paints over the perimeter. ──
-    canvas.drawPath(bowl, line);
-    canvas.drawOval(rim, line);
-  }
-
-  @override
-  bool shouldRepaint(_StirringSpoonPainter oldDelegate) =>
-      oldDelegate.t != t;
-}

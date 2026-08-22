@@ -9,6 +9,9 @@ import 'package:optimeal/services/cook_session_storage_service.dart';
 import 'package:optimeal/services/data_change_signal.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_sync_coordinator.dart';
+import 'package:optimeal/services/entitlement_service.dart';
+import 'package:optimeal/services/upgrade_nudge_gate.dart';
+import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 import 'package:optimeal/screens/one_pan_cooking_roadmap_screen.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
@@ -104,6 +107,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   StreamSubscription<void>? _ledgerChangesSub;
   StreamSubscription<void>? _cookLogChangesSub;
 
+  /// Guards against [build] queueing a second nudge attempt while the first
+  /// post-frame callback is still resolving its async entitlement check.
+  bool _upgradeNudgeInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -158,6 +165,53 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _loadWeeklyLedger();
       LedgerSyncCoordinator.instance.onAppResume();
     }
+  }
+
+  /// Presents the post-cook upgrade nudge that Cook Mode scheduled, once the
+  /// user is actually here.
+  ///
+  /// **Checked from [build], not from a navigation callback, and that is
+  /// deliberate.** The post-cook exit is `context.pop()` + `context.go('/')`
+  /// with a modal still attached, which this screen already knows does not
+  /// produce a `didPop` and therefore never reaches [didPopNext] — the same
+  /// mechanism that made the rescue strip stale in August. A write-driven
+  /// signal is no good either: `AppDataChanges.cookLog` fires at the *top* of
+  /// the post-cook sequence, while Cook Mode is still on screen, which is
+  /// exactly when this sheet must not appear.
+  ///
+  /// So: check every frame, cheaply, and only act when the cook path has
+  /// actually closed. [UpgradeNudgeGate.consumePendingPostCookNudge] is
+  /// one-shot, so a rebuild storm cannot show the sheet twice, and leaving it
+  /// unconsumed while a cook is still active means a nudge is deferred rather
+  /// than swallowed.
+  void _maybeShowPendingUpgradeNudge() {
+    if (!UpgradeNudgeGate.hasPendingPostCookNudge) return;
+    if (UpgradeNudgeGate.isCookPathActive) return;
+    if (_upgradeNudgeInFlight) return;
+    _upgradeNudgeInFlight = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (!mounted) return;
+        if (UpgradeNudgeGate.isCookPathActive) return;
+        if (!UpgradeNudgeGate.consumePendingPostCookNudge()) return;
+
+        final isPro = await EntitlementService.instance.isPro();
+        if (!mounted || isPro) return;
+        await UpgradePromptSheet.show(
+          context,
+          // SIGNED-CONTENT PLACEHOLDER — sales copy is authoring-batch work.
+          // What is gone on purpose: the "Nice cooking!" celebration framing.
+          // The app congratulating you as the opening line of a sales pitch
+          // is the thing that made this sheet read badly.
+          title: 'Unlimited recipes with Pro',
+          message:
+              'Pro removes the weekly generation limit and unlocks the custom recipe creator.',
+        );
+      } finally {
+        _upgradeNudgeInFlight = false;
+      }
+    });
   }
 
   /// Handles the fridge nudge notification's "AI generator" action, which
@@ -243,6 +297,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
   @override
   Widget build(BuildContext context) {
+    _maybeShowPendingUpgradeNudge();
     final profile = context.watch<UserProfileController>().profile;
 
     final displayName = profile.displayName.trim().isEmpty

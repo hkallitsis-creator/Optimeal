@@ -474,6 +474,50 @@ request or when a task needs the "why."
   generations and is excluded from `flutter test` by having no `_test.dart`
   suffix. Full reasoning: `docs/DECISIONS.md` and
   `docs/sessions/2026-08-23_safety-validator.md`.
+- **Share card and the branding gate (2026-08-23).** `PostCookShareCardSheet`
+  (`lib/widgets/post_cook_share_card.dart`) is the only surface that leaves the
+  device. **No app name, wordmark, logo or link may appear on it, in the shared
+  text, or in the exported file's name, until CH+EU trademark clearance** —
+  standing rule. It shipped violating this three ways (an `OPTIMEAL` wordmark
+  and leaf logo on the image, `#OptiMeal` in the share text, and an
+  `optimeal_recap_*.png` filename); all three are gone and the layout keeps an
+  **empty branding slot** for the day clearance lands.
+  `test/widgets/share_card_branding_guard_test.dart` fails on any string
+  matching `/optimeal|empyria|instinkt/i` in the render tree and is
+  **permanent** — never weaken it to make a change pass.
+  Styled to spec: canvas sage (`backgroundSage`) with a thin gold border,
+  photo slot reserved but empty (no camera in v1), dish name large, the signed
+  story line, gold rescue chip (`goldEarnedBadgeTint`/`goldEarnedOnLight`) and
+  neutral ivory technique chip. **Technique names are nouns and are never
+  conjugated** — the old template produced "learned to sautéing"; the signed
+  pattern is `techniqueChipLabel()` → "sautéing, learned properly". A
+  didn't-count cook still shares, with no rescue chip and no story line.
+- **A sales sheet never interrupts a cook (2026-08-23).** `UpgradeNudgeGate`
+  (`lib/services/upgrade_nudge_gate.dart`) holds two process-global facts: a
+  cook path is active, and a post-cook nudge is owed. `UpgradePromptSheet.show`
+  **refuses outright** while `isCookPathActive` — the guard lives in the one
+  place all three call sites already pass through, not in the callers.
+  Cook Mode opens the gate in `initState` and closes it in `dispose` (dispose,
+  so an abandoned cook cannot leave it shut). The post-cook nudge used to be
+  presented from inside Cook Mode's completion sequence **before the verdict
+  sheet**; it now only calls `schedulePostCookNudge()`, and
+  `HomeDashboardScreen` presents it — checked from `build`, because the
+  post-cook exit fires no `didPopNext` and `AppDataChanges.cookLog` fires too
+  early. The sheet is a **plain kit sheet**: no star glyph, no "Nice cooking!"
+  headline. CTA stays terracotta — gold never goes on a sale.
+  The two cap gates (Fridge Clearer weekly, Custom creator lifetime) were left
+  where they are: they fire before a cook starts, not during one.
+- **One spoon-bowl illustration, two surfaces (2026-08-23).**
+  `SpoonBowlIllustration` (`lib/widgets/spoon_bowl_illustration.dart`) is
+  shared by the generation loading card (animated) and onboarding slide 1
+  (static, at `SpoonBowlIllustration.staticPhase`). It was drawn twice and the
+  copies drifted — onboarding rendered as a detached dome plus a floating
+  spoon. `SpoonBowlGeometry` is split out as pure arithmetic so the
+  containment rule is **tested, not eyeballed**: the paddle's orbit is derived
+  from the rim by the closed form `k ≤ 1 - hypot(u, v)`, so it cannot leave
+  the rim ellipse at any phase or any size. Insetting each axis independently
+  does **not** work — it fails on the diagonals. The bowl is one cubic, not
+  two quadratics meeting at a cusp (that cusp was the notch seen on device).
 - **Ingredient data** is structured consistently (`{name, amount, unit}`)
   everywhere it matters (Fridge Clearer, Custom AI Recipe Creator, Weekly
   Planner). `structuredIngredients`/`basePortions` round-trip correctly
@@ -668,6 +712,7 @@ introduced anywhere.
 - When a fix touches a Supabase Edge Function, give exact code plus explicit deployment steps and confirm the deploy actually happened — never assume it's live until confirmed via `supabase functions list` (check `version`/`updated_at`) or Harris's own confirmation.
 - When something seems like it "should already be fixed" per this document but live behavior contradicts it, verify the actual current source first — don't assume regression, and don't assume the documented fix is stale either. Check before concluding either way. (This exact convention is what caught the Pluralization Audit and the Design Polish backgroundColor batch both already being silently completed — see `docs/CHANGELOG.md`, 2026-08-17.)
 - Prefer running `flutter analyze` and any available tests after changes.
+- **Building and installing to a real device (learned 23 Aug, cost a wasted test round).** `flutter install` does **NOT** build — it pushes whatever APK already exists in `build/app/outputs/flutter-apk/`, silently, however stale. Running it alone once installed a build that was 16 commits old and looked like a pile of regressions. **The correct pair is always `flutter build apk --release` first, then `flutter install --release -d <deviceId>`.** Pass `-d` explicitly: with four devices attached (phone, Windows, Chrome, Edge) the bare command prompts and hangs a non-interactive shell. Note also that `flutter install` **uninstalls the old version first**, which wipes app data — SharedPreferences, the onboarding flag, and the anonymous Supabase session, so the next launch mints a **new `auth.uid()`** and prior dev data (saved recipes, planner rows, ledger events) is orphaned rather than gone.
 - **Live-testing convention**: run a single `flutter run -d chrome --web-port=8765` in the background, have Harris test in that one tab. After code changes, kill the process (`netstat -ano | findstr ":8765"` → `taskkill //PID <pid> //F`) and relaunch fresh on the same port rather than hot-reloading. Keep it to one running instance, same port, always — a second instance on a different port has caused real confusion (Harris testing a stale tab, wrongly concluding a fix hadn't landed).
 - No browser automation (`claude-in-chrome`) was available as of the last check — if it becomes available, that's strictly better for anything visual, but check rather than assuming it's still unavailable by default.
 - Six Swiss-worded strings in onboarding and the paywall are deliberate and locale-dependent. They are not a bug. Do not "fix" them. Full context is in `docs/CHANGELOG.md`.

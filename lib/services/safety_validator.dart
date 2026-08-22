@@ -245,11 +245,38 @@ String _recipeText(CookModeRecipePayload r) {
   return parts.join(' ').toLowerCase();
 }
 
+final Map<String, RegExp> _needleCache = {};
+
+/// Whole-word matcher for the rules' trigger vocabularies.
+///
+/// **This used to match on a word PREFIX**, which is a bad way for a safety
+/// rule to be wrong: `rare` fired on "rarely", `pink` fired on "pinkish", and
+/// `rest` fired on "restaurant". Every one of those is a false positive that
+/// spends a correction retry and teaches the model to write defensively.
+///
+/// Now: whole-word, plus regular English inflection, plus the trailing-`e`
+/// elision that `bake`→`baking` and `leave`→`leaving` need. So `chill` still
+/// covers "chilled" and "chilling" — which matters, because `chill` appears
+/// in an *exclusion* list, and an exclusion that silently stopped matching
+/// would turn H5 and H6 into false-positive machines rather than quiet ones.
+///
+/// Irregular forms are not covered ("left" for "leave"). Where a rule needs
+/// one, it goes in that rule's list as its own entry.
+RegExp _needlePattern(String needle) => _needleCache.putIfAbsent(needle, () {
+      final escaped = RegExp.escape(needle);
+      final alternatives = <String>[escaped];
+      if (needle.endsWith('e')) {
+        alternatives.add(RegExp.escape(needle.substring(0, needle.length - 1)));
+      }
+      return RegExp(
+        '\\b(?:${alternatives.join('|')})(?:s|es|d|ed|ing)?\\b',
+        caseSensitive: false,
+      );
+    });
+
 bool _hasAny(String text, List<String> needles) {
   for (final n in needles) {
-    if (RegExp('\\b${RegExp.escape(n)}', caseSensitive: false).hasMatch(text)) {
-      return true;
-    }
+    if (_needlePattern(n).hasMatch(text)) return true;
   }
   return false;
 }
@@ -723,7 +750,17 @@ const List<String> _roomTemperatureHolding = [
   'cool completely',
 ];
 
-const List<String> _fridgeLanguage = ['fridge', 'refrigerat', 'chill', 'cold store'];
+// 'refrigerat' was a bare stem, which only worked because the old matcher was
+// prefix-based. Whole-word matching needs the real words, and 'refrigerator'
+// is not an inflection of 'refrigerate' so it is listed separately.
+const List<String> _fridgeLanguage = [
+  'fridge',
+  'refrigerate',
+  'refrigerator',
+  'refrigeration',
+  'chill',
+  'cold store',
+];
 
 const List<String> _pipingHotLanguage = [
   'piping hot',
@@ -1149,15 +1186,20 @@ void _checkH11(CookModeRecipePayload recipe, List<SafetyFinding> findings) {
 // recorded as open item 4. It is also generation-prompt behaviour — what the
 // persona should *say* — rather than a post-generation check.
 //
-// So this is **detection and logging only**. No user-facing action, no
-// correction, no injection. The proposed enforcement is in the session report
-// for Harris to rule on.
+// So this is **detection and logging only**, and the signed ruling confirms it
+// stays that way: "this rule lands on the persona/prompt side; the
+// deterministic layer is LOG-ONLY verification that the prompt behaved."
+// No user-facing action, no correction, no injection. The substitution
+// behaviour and the "Quick X" note are persona/authoring-batch work and are
+// deliberately not implemented here.
 //
-// The bread carve-out below is **UNSIGNED**. It appears nowhere in the
-// registry or in `docs/DECISIONS.md`; it came from the build brief. Yeast-risen
-// dough is fermentation by any technical reading, and without the carve-out
-// every focaccia would trip this rule. It is implemented because H12 is
-// log-only and therefore cannot reach a user, and it is flagged for signature.
+// The bread carve-out below is **SIGNED** (Harris, 2026-08-21 ruling, recorded
+// in docs/DECISIONS.md on 2026-08-23): sourdough and bread baking are out of
+// scope entirely, because grain leavening is not a fermentation hazard. It was
+// built ahead of that record reaching the repo and was flagged as unsigned at
+// the time; the ruling has since been committed and the two agree.
+//
+// In scope, per the same ruling: vegetable, dairy, soy and beverage ferments.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const List<String> _fermentationLanguage = [
@@ -1175,7 +1217,7 @@ const List<String> _fermentationLanguage = [
   'tempeh',
 ];
 
-/// UNSIGNED carve-out — see the block comment above.
+/// SIGNED carve-out (2026-08-21 ruling) — see the block comment above.
 const List<String> kFermentationBreadCarveOutDraft = [
   'sourdough',
   'starter',

@@ -2,15 +2,34 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:optimeal/nav.dart';
+import 'package:optimeal/services/upgrade_nudge_gate.dart';
 import 'package:optimeal/theme.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/app_bottom_sheet.dart';
 
-/// Shared upgrade-to-Pro nudge, used at the three moments defined in
-/// CLAUDE.md's "Monetization / paywall tier structure": post-cook
-/// celebration, the Fridge Clearer weekly cap, and (once built) the Smart
-/// Suggestions locked preview. People upgrade when they feel successful or
-/// see real value, not when they feel blocked — keep copy warm, not scoldy.
+/// Shared upgrade-to-Pro nudge, used at the moments defined in CLAUDE.md's
+/// "Monetization / paywall tier structure": the post-cook moment, the Fridge
+/// Clearer weekly cap, and (once built) the Smart Suggestions locked preview.
+///
+/// # This is a plain kit sheet, not a celebration
+///
+/// It shipped styled as one — a star glyph over a "Nice cooking!" headline —
+/// and fired mid-cook, which made a sales interstitial look like the app
+/// congratulating you. The celebration styling is gone: ivory surface,
+/// standard sheet chrome, no glyph, no congratulatory headline.
+///
+/// The CTA stays **terracotta**. Terracotta is "act now" and this is a sales
+/// CTA; gold is the earned family and never goes on a sale. That is a signed
+/// decision and is not the thing that was wrong here.
+///
+/// # It refuses to appear during a cook
+///
+/// [show] returns without presenting anything while
+/// [UpgradeNudgeGate.isCookPathActive] — a sales sheet must never interrupt
+/// the path from pre-cook to the post-cook verdict. The guard lives here, in
+/// the one place every caller already goes through, rather than in each
+/// caller, because a guard the caller has to remember is one the next caller
+/// forgets.
 class UpgradePromptSheet extends StatelessWidget {
   const UpgradePromptSheet({super.key, required this.title, required this.message, this.ctaLabel = 'Upgrade to Pro'});
 
@@ -18,7 +37,9 @@ class UpgradePromptSheet extends StatelessWidget {
   final String message;
   final String ctaLabel;
 
-  static Future<void> show(BuildContext context, {required String title, required String message, String ctaLabel = 'Upgrade to Pro'}) {
+  static Future<void> show(BuildContext context, {required String title, required String message, String ctaLabel = 'Upgrade to Pro'}) async {
+    // Never over an active cook. See the class doc.
+    if (UpgradeNudgeGate.isCookPathActive) return;
     return AppBottomSheet.show(
       context: context,
       backgroundColor: AppDesignTokens.surfaceIvory,
@@ -39,26 +60,11 @@ class UpgradePromptSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Container(
-                  height: 38,
-                  width: 38,
-                  decoration: BoxDecoration(
-                    color: AppDesignTokens.champagneTint,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppDesignTokens.ctaTerracotta.withValues(alpha: 0.18)),
-                  ),
-                  child: const Icon(Icons.star_rounded, color: AppDesignTokens.ctaTerracotta, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
-                  ),
-                ),
-              ],
+            // No glyph. A star over a sales headline reads as the app
+            // congratulating the user for being asked to pay.
+            Text(
+              title,
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900, color: AppDesignTokens.textCharcoal),
             ),
             const SizedBox(height: 12),
             Text(

@@ -1,14 +1,29 @@
 /// Closed ingredient-name vocabulary for the safety validator's deterministic
 /// layer (roadmap item 1, `docs/safety_hazard_registry.md`).
 ///
-/// # STATUS: DRAFT — NOT SIGNED
+/// # STATUS: SIGNED by Chef Harris, 23 August 2026 — fully signed, nothing pending
 ///
 /// H1's detection line on the signed registry reads *"Identification via a
 /// closed poultry/pork name list (drafted separately for review)"*. That list
 /// was never in the repo — the 2026-08-22 transcription recorded its absence
-/// as open item 6. **This file is that draft, written by Claude, and it is not
-/// signed content.** Every list below is Harris's to strike, extend or reword;
-/// the full text goes in the session report for exactly that purpose.
+/// as open item 6. It was drafted on 2026-08-23 and **ratified the same day**;
+/// see `docs/DECISIONS.md`.
+///
+/// Signed with the list: the cured ready-to-eat exclusion from H1, the
+/// poultry-mince 74 °C tie-break, the bread carve-out, and the veggie-product
+/// exclusion. The Swiss/German additions are signed **strike-only** — present
+/// unless struck, rather than awaiting positive confirmation.
+///
+/// Also signed 2026-08-23, closing the last two open lines:
+///
+///  1. **Duck whole muscle is EXEMPT from H1 and from H2's pink language** —
+///     breast, magret, leg, thigh, whole duck, confit. Served pink is safe;
+///     doneness on duck is technique, not hazard. **Duck mince stays in the
+///     comminuted group** and is still H2. Marked with [donenessExempt].
+///  2. **The shrimp group sits at the fish 63 °C floor**, whole or minced:
+///     shrimp, prawn, king prawn, tiger prawn, crevette, scampi, langoustine.
+///     Bivalves stay INACTIVE — none of these terms is on the S1 someday list,
+///     which the source-scan guard verifies rather than assumes.
 ///
 /// What this file must never contain is a **threshold**. The four temperatures
 /// in [ProteinClass] are transcribed from the signed H3 table and nothing else
@@ -31,10 +46,9 @@
 /// thickest part … no pink flesh") is meaningless for a lardon and would read
 /// as nonsense to the user.
 ///
-/// So they are **excluded from H1 qualification** and reported separately.
-/// This is a scope decision, not a safety threshold, and it is DRAFT like
-/// everything else here. It is called out first in the session report because
-/// it is the one exclusion that silences a rule rather than narrowing it.
+/// So they are **excluded from H1 qualification**. SIGNED 2026-08-23. It is
+/// the one exclusion that silences a rule rather than narrowing it, which is
+/// why it was ratified by name rather than as part of the list.
 library;
 
 import 'package:flutter/foundation.dart';
@@ -95,6 +109,8 @@ class SafetyIngredientName {
     this.fish = false,
     this.curedReadyToEat = false,
     this.notFollowedBy = const [],
+    this.notPrecededBy = const [],
+    this.donenessExempt = false,
   });
 
   /// Lowercase match term. Matched whole-word with an optional trailing s/es.
@@ -112,6 +128,18 @@ class SafetyIngredientName {
   /// Cured and ready to eat — excluded from H1. See the library doc.
   final bool curedReadyToEat;
 
+  /// Excluded from H1 despite being poultry or pork. SIGNED 2026-08-23 for
+  /// **duck whole muscle only**: served pink is safe, and doneness on duck is
+  /// technique rather than hazard.
+  ///
+  /// Distinct from [curedReadyToEat], which is about a product that is never
+  /// cooked at all. This is about a cut that is cooked and is correctly served
+  /// short of the poultry doneness cue.
+  ///
+  /// Duck **mince** carries none of this — it is comminuted, and comminuted is
+  /// H2's rule regardless of species.
+  final bool donenessExempt;
+
   /// Words that, immediately after [term], mean this is not the ingredient.
   ///
   /// Exists for exactly one entry: **`mince`**, which in a recipe is as often
@@ -121,6 +149,15 @@ class SafetyIngredientName {
   /// A negative lookahead on the verb's usual objects separates the two
   /// readings deterministically, and leaves "500 g mince" matching.
   final List<String> notFollowedBy;
+
+  /// Words that, within two words BEFORE [term], mean this is not meat.
+  ///
+  /// SIGNED 2026-08-23. A bean burger, a lentil patty and a vegan sausage are
+  /// not comminuted meat, and H2 firing on them would demand a
+  /// cooked-through-no-pink instruction for a dish that has no pink to worry
+  /// about. Two words of window covers "vegan black bean burger" without
+  /// reaching back into an unrelated clause.
+  final List<String> notPrecededBy;
 
   /// Which signed H3 classes this name falls under. A name can carry two:
   /// chicken mince is poultry (74 °C) and comminuted (71 °C) at the same time.
@@ -133,19 +170,71 @@ class SafetyIngredientName {
 
   /// True when H1's doneness rule applies to this name.
   bool get qualifiesForDonenessRule =>
-      (poultry || pork) && !curedReadyToEat;
+      (poultry || pork) && !curedReadyToEat && !donenessExempt;
 
   @override
   String toString() => term;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE DRAFT LISTS
+// THE LISTS  (signed 2026-08-23; the `Draft` in the constant names is kept so
+// the ratification is a one-line status change rather than a rename touching
+// every call site)
 //
-// Grouped so each group can be struck or kept on its own. Generous with
-// synonyms, cuts and dish names on purpose: a missed name is a missed safety
-// check, whereas a spurious name costs at most one unnecessary cue.
+// Grouped so each group can be struck on its own. Generous with synonyms, cuts
+// and dish names on purpose: a missed name is a missed safety check, whereas a
+// spurious name costs at most one unnecessary cue.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Words that, immediately after an animal name, mean the dish contains that
+/// animal's *flavour*, not its flesh. SIGNED 2026-08-23.
+///
+/// A risotto made with chicken stock has no chicken in it, and H1 injecting
+/// "cut into the thickest part" into it would be nonsense. Applied to every
+/// poultry, pork and fish entry.
+///
+/// `sauce` is here as a **suffix exclusion only** — it neutralises "fish
+/// sauce", which is the point. The shrimp group is in the vocabulary (signed
+/// 2026-08-23) but **no bivalve term is**: mussels, clams, oysters and
+/// scallops are S1 on the someday list and stay INACTIVE, which the
+/// source-scan guard checks.
+const List<String> kAnimalCompoundExclusions = [
+  'stock',
+  'broth',
+  'bouillon',
+  'gravy',
+  'fat',
+  'sauce',
+  'flavoured',
+  'flavored',
+  'seasoning',
+  'powder',
+];
+
+/// Words that, within two words before a burger/patty/meatball/sausage, mean
+/// it is not meat. SIGNED 2026-08-23.
+const List<String> kVeggieProductExclusions = [
+  'veggie',
+  'vegetarian',
+  'vegan',
+  'plant',
+  'plant-based',
+  'bean',
+  'lentil',
+  'chickpea',
+  'tofu',
+  'mushroom',
+  'halloumi',
+  'falafel',
+];
+
+/// The comminuted forms the veggie exclusion applies to.
+const List<String> kVeggieProductForms = [
+  'burger',
+  'patty',
+  'meatball',
+  'sausage',
+];
 
 /// Poultry, whole muscle. H1 applies; H3 class = poultry (74 °C).
 const List<SafetyIngredientName> kPoultryWholeMuscleDraft = [
@@ -174,11 +263,14 @@ const List<SafetyIngredientName> kPoultryWholeMuscleDraft = [
   SafetyIngredientName('turkey crown', poultry: true),
   SafetyIngredientName('turkey thigh', poultry: true),
   SafetyIngredientName('turkey leg', poultry: true),
-  SafetyIngredientName('duck', poultry: true),
-  SafetyIngredientName('duck breast', poultry: true),
-  SafetyIngredientName('magret', poultry: true),
-  SafetyIngredientName('duck leg', poultry: true),
-  SafetyIngredientName('duck thigh', poultry: true),
+  SafetyIngredientName('duck', poultry: true, donenessExempt: true),
+  SafetyIngredientName('duck breast', poultry: true, donenessExempt: true),
+  SafetyIngredientName('magret', poultry: true, donenessExempt: true),
+  SafetyIngredientName('duck leg', poultry: true, donenessExempt: true),
+  SafetyIngredientName('duck thigh', poultry: true, donenessExempt: true),
+  SafetyIngredientName('whole duck', poultry: true, donenessExempt: true),
+  SafetyIngredientName('duck confit', poultry: true, donenessExempt: true),
+  SafetyIngredientName('confit de canard', poultry: true, donenessExempt: true),
   SafetyIngredientName('goose', poultry: true),
   SafetyIngredientName('goose breast', poultry: true),
   SafetyIngredientName('guinea fowl', poultry: true),
@@ -187,6 +279,17 @@ const List<SafetyIngredientName> kPoultryWholeMuscleDraft = [
   SafetyIngredientName('partridge', poultry: true),
   SafetyIngredientName('pigeon', poultry: true),
   SafetyIngredientName('squab', poultry: true),
+
+  // ── Swiss / German, signed 2026-08-23 (strike-only review) ──────────────
+  SafetyIngredientName('poulet', poultry: true),
+  SafetyIngredientName('pouletbrust', poultry: true),
+  SafetyIngredientName('pouletschenkel', poultry: true),
+  SafetyIngredientName('güggeli', poultry: true),
+  SafetyIngredientName('gueggeli', poultry: true),
+  // Unqualified "Schnitzel" is signed to H1 with the poultry 74 °C floor —
+  // the higher of the plausible readings, chosen deliberately because the
+  // word alone does not say which animal it is.
+  SafetyIngredientName('schnitzel', poultry: true),
 ];
 
 /// Poultry, comminuted. H1 and H2 both apply; H3 classes = poultry (74 °C)
@@ -240,6 +343,17 @@ const List<SafetyIngredientName> kPorkWholeMuscleDraft = [
   SafetyIngredientName('gammon', pork: true),
   SafetyIngredientName('suckling pig', pork: true),
   SafetyIngredientName('schweinsbraten', pork: true),
+
+  // ── Swiss / German, signed 2026-08-23 (strike-only review) ──────────────
+  // Cordon bleu is stuffed by definition, so it also trips H10 — which is
+  // already keyed off "cordon bleu" in the stuffed/rolled trigger list.
+  SafetyIngredientName('cordon bleu', pork: true),
+  // Geschnetzeltes is signed as whole-muscle H1. AMBIGUITY, recorded rather
+  // than resolved: the dish is veal as often as pork or chicken, and H1 only
+  // covers poultry and pork, so it is filed as pork to make the rule fire at
+  // all. That gives it the 63 °C + rest floor. If Harris wants the veal
+  // reading it needs its own line.
+  SafetyIngredientName('geschnetzeltes', pork: true),
 ];
 
 /// Pork and mixed-species comminuted, plus sausage.
@@ -294,6 +408,11 @@ const List<SafetyIngredientName> kMincedAndSausageDraft = [
   SafetyIngredientName('bolognese', comminuted: true),
   SafetyIngredientName('ragu', comminuted: true),
   SafetyIngredientName('chili con carne', comminuted: true),
+
+  // ── Swiss / German, signed 2026-08-23 (strike-only review) ──────────────
+  SafetyIngredientName('hackbraten', comminuted: true),
+  SafetyIngredientName('fleischkäse', comminuted: true),
+  SafetyIngredientName('fleischkaese', comminuted: true),
 ];
 
 /// Cured, ready to eat, **excluded from H1**. Present in the vocabulary so
@@ -354,6 +473,17 @@ const List<SafetyIngredientName> kFishDraft = [
   SafetyIngredientName('herring', fish: true),
   SafetyIngredientName('felchen', fish: true),
   SafetyIngredientName('egli', fish: true),
+
+  // ── Shrimp group, signed 2026-08-23: the fish 63 °C floor, whole or
+  // minced. Bivalves are NOT here — they are S1 on the someday list and stay
+  // INACTIVE.
+  SafetyIngredientName('shrimp', fish: true),
+  SafetyIngredientName('prawn', fish: true),
+  SafetyIngredientName('king prawn', fish: true),
+  SafetyIngredientName('tiger prawn', fish: true),
+  SafetyIngredientName('crevette', fish: true),
+  SafetyIngredientName('scampi', fish: true),
+  SafetyIngredientName('langoustine', fish: true),
 ];
 
 /// The whole closed vocabulary, in one list.
@@ -373,15 +503,44 @@ final List<SafetyIngredientName> kSafetyIngredientNamesDraft =
 
 final Map<String, RegExp> _patternCache = {};
 
+/// Exclusions that apply to an entry by virtue of what it is, rather than
+/// being written out on every one of the 170-odd entries.
+List<String> _effectiveNotFollowedBy(SafetyIngredientName e) => [
+      ...e.notFollowedBy,
+      if (e.poultry || e.pork || e.fish) ...kAnimalCompoundExclusions,
+    ];
+
+List<String> _effectiveNotPrecededBy(SafetyIngredientName e) => [
+      ...e.notPrecededBy,
+      if (e.comminuted && kVeggieProductForms.any(e.term.contains))
+        ...kVeggieProductExclusions,
+    ];
+
 RegExp _patternFor(SafetyIngredientName entry) =>
     _patternCache.putIfAbsent(entry.term, () {
       final escaped = RegExp.escape(entry.term);
+      final before = _effectiveNotPrecededBy(entry);
+      final after = _effectiveNotFollowedBy(entry);
+
+      final buffer = StringBuffer();
+      if (before.isNotEmpty) {
+        // Up to three words of lookbehind, so "vegan burger" and "vegan black
+        // bean burger" both exclude while an unrelated earlier clause does not.
+        final alts = before.map(RegExp.escape).join('|');
+        const gap = r'[\s-]';
+        const word = r'\w{1,20}';
+        buffer.write('(?<!' r'\b' '(?:$alts)' r'\b' '$gap)');
+        buffer.write('(?<!' r'\b' '(?:$alts)' r'\b' '$gap$word$gap)');
+        buffer.write('(?<!' r'\b' '(?:$alts)' r'\b' '$gap$word$gap$word$gap)');
+      }
       // Optional trailing s/es so "chicken thighs" matches "chicken thigh".
       // Whole-word on both ends: this is what keeps "cod" out of "cooked".
-      final buffer = StringBuffer('\\b$escaped(?:es|s)?\\b');
-      if (entry.notFollowedBy.isNotEmpty) {
-        final alts = entry.notFollowedBy.map(RegExp.escape).join('|');
-        buffer.write('(?!\\s+(?:$alts)\\b)');
+      buffer.write(r'\b' '$escaped' r'(?:es|s)?\b');
+      if (after.isNotEmpty) {
+        final alts = after.map(RegExp.escape).join('|');
+        // [\s-]+ rather than \s+: "chicken-flavoured" is the same exclusion
+        // as "chicken flavoured", and hyphenation is a writing choice.
+        buffer.write(r'(?![\s-]+(?:' '$alts' r')\b)');
       }
       return RegExp(buffer.toString(), caseSensitive: false);
     });

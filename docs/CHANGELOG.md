@@ -13,6 +13,60 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Design QA polish round + safety matcher tightening + H12 ruling
+
+Full prompt and report: `docs/sessions/2026-08-23_design-qa-polish.md`.
+528 tests passing (489 baseline + 39 new), 44 analyze issues (unchanged).
+
+A fix round against signed specs — no new features, no redesign.
+
+- **Share card (PRIORITY).** Removed the `OPTIMEAL` wordmark, the leaf logo,
+  the `#OptiMeal` share-text hashtag and the `optimeal_recap_*.png` filename —
+  four separate violations of the standing "no public branding before CH+EU
+  trademark clearance" rule, on the one surface that leaves the device. The
+  branding slot stays in the layout, empty. Restyled to spec: canvas sage with
+  a thin gold border, reserved photo slot, dish name, signed story line, gold
+  rescue chip and neutral technique chip. Fixed the template that produced
+  **"learned to sautéing"** — technique names are nouns and are never
+  conjugated. New permanent guard test on `/optimeal|empyria|instinkt/i`.
+- **Upgrade sheet.** It fired from inside Cook Mode's completion sequence
+  *before* the verdict sheet — a celebration-styled sales interstitial on top
+  of an unfinished cook. New `UpgradeNudgeGate`: Cook Mode schedules, Home
+  presents, and `UpgradePromptSheet.show` refuses outright while a cook path is
+  active. Restyled to a plain kit sheet — no star glyph, no "Nice cooking!".
+  CTA stays terracotta. The two cap gates were left alone: they fire before a
+  cook, not during one.
+- **Safety matcher.** `_hasAny` matched on a word **prefix**, so "rarely"
+  tripped `rare` and "pinkish" tripped `pink`. Now whole-word with regular
+  inflection and trailing-`e` elision, so exclusion words like `chill` still
+  cover "chilled"/"chilling" — an exclusion that silently stopped matching
+  would have turned H5 and H6 into false-positive machines.
+- **Name list ratified and extended.** Header DRAFT → SIGNED. Added animal
+  compound exclusions (chicken **stock** is not chicken), the veggie-product
+  exclusion (a bean burger is not H2), the Swiss/German additions, and both
+  formerly-pending rulings: **duck whole muscle is exempt from H1/H2** (duck
+  mince is not), and the **shrimp group sits at the fish 63 °C floor**.
+  Bivalves stay INACTIVE. **No duplicate terms existed** — the reported
+  `sausage` duplicate was a false alarm (second hit was `_donenessFamilyRoots`);
+  a permanent duplicate-guard test was added instead.
+- **H12 ruling committed** to `docs/DECISIONS.md`, dated 2026-08-21. The bread
+  carve-out is no longer marked unsigned. Log-only stays log-only; the prompt
+  line was deliberately not added (persona batch).
+- **One spoon-bowl illustration.** Extracted `SpoonBowlIllustration`, shared by
+  the loading card (animated) and onboarding slide 1 (static); deleted the
+  drifted second copy. Two real geometry bugs fixed: the bowl was two
+  quadratics meeting at a **cusp** (the notch seen on device), and the paddle's
+  travel exceeded the rim. The orbit is now derived from the rim by a closed
+  form so containment holds at every phase and size — insetting each axis
+  independently does not work, it fails on the diagonals.
+- **Stage-1 freshness verified, no change needed.** No memoization exists;
+  back → "Let's Cook" always re-calls. Two real dev runs on identical chips
+  returned different sets. **But variety is weak** — 2 of 3 were near-duplicate
+  dishes, because stage 1 passes no `recentDishTitles` (stage 2 does). Flagged,
+  not fixed: it is a behaviour change and the brief said verify only.
+
+---
+
 ## 2026-08-23 — Safety validator v1, the deterministic layer (roadmap item 1)
 
 Full prompt and report: `docs/sessions/2026-08-23_safety-validator.md`.

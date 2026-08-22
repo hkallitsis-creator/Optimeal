@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:optimeal/theme/app_design_tokens.dart';
+import 'package:optimeal/widgets/spoon_bowl_illustration.dart';
 
 /// The four small in-slide visuals for onboarding.
 ///
@@ -22,98 +23,15 @@ class SpoonAndBowlIllustration extends StatelessWidget {
   final double size;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) => SpoonBowlIllustration(
+        // Static on purpose: onboarding previews are not animated, and a
+        // frozen mid-stir pose reads as composed rather than stopped.
+        phase: SpoonBowlIllustration.staticPhase,
         height: size,
         width: size * 1.4,
-        child: const CustomPaint(painter: _SpoonAndBowlPainter()),
       );
 }
 
-class _SpoonAndBowlPainter extends CustomPainter {
-  const _SpoonAndBowlPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final line = Paint()
-      ..color = AppDesignTokens.textCharcoal
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final bowlFill = Paint()
-      ..color = AppDesignTokens.ctaTerracotta
-      ..style = PaintingStyle.fill;
-    // Wood tan, shared with the generation loading card's stirring spoon
-    // (2026-08-22). This used champagne when the token did not exist yet; the
-    // two illustrations are meant to read as kin, and now they do.
-    final spoonFill = Paint()
-      ..color = AppDesignTokens.illustrationWoodTan
-      ..style = PaintingStyle.fill;
-    final spoonShade = Paint()
-      ..color = AppDesignTokens.illustrationWoodTanShade
-      ..style = PaintingStyle.fill;
-
-    // ── Bowl: a rounded half-ellipse sitting on a small foot. ──
-    final bowlRect = Rect.fromLTWH(
-        size.width * 0.06, size.height * 0.34, size.width * 0.52, size.height * 0.46);
-    final bowl = Path()
-      ..moveTo(bowlRect.left, bowlRect.top)
-      ..lineTo(bowlRect.right, bowlRect.top)
-      ..arcToPoint(
-        Offset(bowlRect.left, bowlRect.top),
-        radius: Radius.elliptical(bowlRect.width * 0.5, bowlRect.height),
-        clockwise: false,
-      )
-      ..close();
-    canvas.drawPath(bowl, bowlFill);
-    canvas.drawPath(bowl, line);
-
-    // Rim, drawn over the fill so the bowl reads as open rather than solid.
-    canvas.drawLine(Offset(bowlRect.left - 3, bowlRect.top),
-        Offset(bowlRect.right + 3, bowlRect.top), line);
-
-    // Foot.
-    final footY = bowlRect.bottom + size.height * 0.06;
-    canvas.drawLine(Offset(bowlRect.center.dx - bowlRect.width * 0.16, footY),
-        Offset(bowlRect.center.dx + bowlRect.width * 0.16, footY), line);
-
-    // Steam — three short strokes above the rim, the only "it's cooking" cue.
-    for (var i = 0; i < 3; i++) {
-      final x = bowlRect.left + bowlRect.width * (0.28 + i * 0.22);
-      final top = bowlRect.top - size.height * (0.24 - i % 2 * 0.06);
-      canvas.drawLine(
-          Offset(x, bowlRect.top - size.height * 0.08), Offset(x, top), line);
-    }
-
-    // ── Spoon: an elliptical head with a straight handle, angled behind. ──
-    canvas.save();
-    canvas.translate(size.width * 0.74, size.height * 0.52);
-    canvas.rotate(-0.42);
-
-    final head = Rect.fromCenter(
-        center: Offset.zero, width: size.width * 0.17, height: size.height * 0.30);
-    canvas.drawOval(head, spoonFill);
-    canvas.drawOval(
-        Rect.fromCenter(
-            center: Offset(head.width * 0.14, head.height * 0.10),
-            width: head.width * 0.62,
-            height: head.height * 0.62),
-        spoonShade);
-    canvas.drawOval(head, line);
-
-    final handle = Rect.fromLTWH(-size.width * 0.028, head.bottom - 2,
-        size.width * 0.056, size.height * 0.42);
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(handle, const Radius.circular(6)), spoonFill);
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(handle, const Radius.circular(6)), line);
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_SpoonAndBowlPainter oldDelegate) => false;
-}
 
 /// Slide 2 — fridge glyph, same diagram family.
 class FridgeIllustration extends StatelessWidget {

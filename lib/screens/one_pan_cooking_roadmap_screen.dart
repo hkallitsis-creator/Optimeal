@@ -13,12 +13,12 @@ import 'package:optimeal/models/recipe_origin.dart';
 import 'package:optimeal/nav.dart';
 import 'package:optimeal/services/chef_service.dart';
 import 'package:optimeal/services/confidence_climb_service.dart';
-import 'package:optimeal/services/entitlement_service.dart';
 import 'package:optimeal/services/fridge_nudge_service.dart';
 import 'package:optimeal/services/fridge_clearer_entry_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_verdict.dart';
 import 'package:optimeal/services/planner_cook_attribution_service.dart';
+import 'package:optimeal/services/upgrade_nudge_gate.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
 import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
@@ -31,7 +31,6 @@ import 'package:optimeal/widgets/diagram_sheet.dart';
 import 'package:optimeal/widgets/ledger_verdict_sheet.dart';
 import 'package:optimeal/widgets/home_glyph_button.dart';
 import 'package:optimeal/widgets/post_cook_share_card.dart';
-import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 import 'package:optimeal/widgets/waste_ledger_celebration_sheet.dart';
 import 'package:optimeal/widgets/what_you_learned_sheet.dart';
 import 'package:optimeal/models/technique_lesson.dart' as models;
@@ -442,6 +441,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Closes the door on sales sheets for as long as this screen is mounted:
+    // pre-cook through post-cook verdict is one uninterruptible path.
+    UpgradeNudgeGate.enterCookPath();
     _completedSteps = <int>{};
 
     final payload = widget.resumeSession?.recipe ?? widget.recipe;
@@ -689,6 +691,10 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // In dispose rather than only on the happy exit, so an abandoned cook —
+    // back button, app kill, a route replaced out from under us — cannot
+    // leave the gate shut for the rest of the session.
+    UpgradeNudgeGate.exitCookPath();
     _activeTicker?.cancel();
     _scrollController.dispose();
     super.dispose();
@@ -995,6 +1001,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (ctx) => SafeArea(
           child: PostCookShareCardSheet(
+            dishName: _recipeTitle,
             ingredientsRescued: LedgerService.computeRescuedIngredients(
               enteredIngredients: enteredIngredients,
               cookedIngredients: _ingredients,
@@ -1004,20 +1011,19 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
         ),
       );
 
-      // Post-cook upgrade nudge — one of the three sanctioned upgrade
-      // moments (see CLAUDE.md "Monetization / paywall tier structure").
-      // Shown after both celebration sheets close, never inserted into
-      // them, so Cook Mode + Waste Ledger stay untouched by monetization.
+      // Post-cook upgrade nudge — SCHEDULED here, SHOWN by Home.
+      //
+      // It used to be presented right here, which put a sales sheet between
+      // the share card and the verdict: an interstitial on top of a cook the
+      // user had not finished reading the result of. A sales sheet must never
+      // interrupt the path from pre-cook to verdict, so this now only records
+      // that a nudge is owed; `HomeDashboardScreen` presents it once the
+      // verdict's exit CTA has actually landed the user on Home.
+      //
+      // The entitlement check moves with it, so it is evaluated at the moment
+      // of showing rather than two sheets earlier.
       if (!mounted) return;
-      final isPro = await EntitlementService.instance.isPro();
-      if (mounted && !isPro) {
-        await UpgradePromptSheet.show(
-          context,
-          title: 'Nice cooking!',
-          message:
-              'Upgrade to Pro for unlimited AI recipes, Custom AI Recipe Creator, and more — right when you\'re on a roll.',
-        );
-      }
+      UpgradeNudgeGate.schedulePostCookNudge();
 
       // Verdict sheet — the definitive last screen (device-test round F3).
       // Shown only now, after every other post-cook sheet has already run,

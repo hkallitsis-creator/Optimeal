@@ -7,6 +7,99 @@ Read on request, not auto-loaded.
 
 ---
 
+## H12 Fermentation — the ruling (21 August 2026)
+
+Source: strategy chat, signed by Harris. **Recorded here on 2026-08-23**; it
+was cited in the safety-validator brief before it had ever been committed,
+which is why that build shipped its bread carve-out marked "unsigned". The
+ruling and the code agree; only the record was missing.
+
+> **H12 Fermentation.** Recipe generation: substitute where a sensible
+> non-fermented version genuinely exists (Chef Harris's judgment, NOT a
+> hardcoded substitution table; vegetable ferments qualify: quick kimchi,
+> quick sauerkraut, quick pickle). Name the result "Quick X" (e.g. "Quick
+> kimchi"), not "kimchi-style quick pickle". Substitute without a lecture but
+> carry one short note (note wording is signed content — Harris authors).
+> Where no honest substitute exists (miso, tempeh, kombucha): decline with
+> explanation, never invent a fake equivalent. Chef SOS chat: fermentation
+> answered as knowledge, not instruction — informational yes, actionable no.
+> Carve-out: sourdough and bread baking are OUT of scope entirely; grain
+> leavening is not a fermentation hazard. EXEMPT by name: sourdough, starter,
+> levain, poolish, biga, focaccia, pizza dough. IN SCOPE: vegetable, dairy,
+> soy, and beverage ferments. Enforcement: this rule lands on the
+> persona/prompt side; the deterministic layer is LOG-ONLY verification that
+> the prompt behaved. The "Quick X" note and the fermentation explanation are
+> in the Chef Harris authoring batch.
+
+**What this means for code, and what it deliberately does not.** The
+deterministic layer stays **log-only** — that is the ruling's own words, not a
+gap. The substitution behaviour, the "Quick X" naming and the short note are
+persona/prompt work in the authoring batch, and **the prompt line was not
+added as part of the 2026-08-23 design-QA round**. The bread carve-out in
+`kFermentationBreadCarveOutDraft` is now signed and its comment says so.
+
+---
+
+## The poultry/pork/fish name list is ratified (23 August 2026)
+
+**Binding rule:** `lib/data/safety_ingredient_names.dart` is **SIGNED**, not
+draft, and **nothing in it is pending**. H1's detection depends on it entirely,
+so this closes the largest open item from the safety validator build.
+
+Signed with the list:
+
+- **The cured ready-to-eat exclusion from H1.** Bacon, pancetta, guanciale,
+  prosciutto, chorizo, cervelat and the rest are pork, and are excluded from
+  the doneness rule anyway. This is the one exclusion that silences a rule
+  rather than narrowing it, which is why it was ratified by name.
+- **The poultry-mince 74 °C tie-break.** Chicken mince is poultry and
+  comminuted at once; the higher signed minimum governs. No new number.
+- **The bread carve-out** — see the H12 entry above.
+- **The veggie-product exclusion**: `burger`, `patty`, `meatball` or `sausage`
+  preceded within two words by veggie / vegetarian / vegan / plant / bean /
+  lentil / chickpea / tofu / mushroom / halloumi / falafel is **not**
+  comminuted meat. A bean burger has no pink to worry about.
+- **The animal-compound exclusion**: an animal name immediately followed by
+  stock, broth, bouillon, gravy, fat, sauce, flavoured/flavored, seasoning or
+  powder is not that animal. A risotto made with chicken stock contains no
+  chicken, and H1 injecting "cut into the thickest part" into it is nonsense.
+  `sauce` is a **suffix exclusion only** — it neutralises "fish sauce", which
+  is the point. **No shellfish term appears anywhere in the file**, which is
+  also what keeps the S1 someday-list guard passing.
+- **Swiss and German additions, signed strike-only** (present unless struck,
+  rather than awaiting positive confirmation): Poulet, Pouletbrust,
+  Pouletschenkel, Güggeli → poultry whole-muscle; Cordon bleu → pork
+  whole-muscle, and it trips H10 as well since it is stuffed by definition;
+  Geschnetzeltes → whole-muscle H1; Hackbraten and Fleischkäse → comminuted;
+  unqualified **Schnitzel** → H1 at the poultry 74 °C floor, the higher of the
+  plausible readings, because the word alone does not say which animal it is.
+
+**The last two open lines were signed the same day**, so nothing in this file
+is pending:
+
+1. **Duck whole muscle is EXEMPT from H1 and from H2's pink-language check** —
+   breast, magret, leg, thigh, whole duck, confit. Served pink is safe, and
+   doneness on duck is technique, not hazard. Implemented as
+   `SafetyIngredientName.donenessExempt`, deliberately a separate flag from
+   `curedReadyToEat`: one is a product never cooked at all, the other is a cut
+   that is cooked and correctly served short of the poultry cue. **Duck mince
+   is unaffected and remains H2** — comminuted is comminuted regardless of
+   species. No duck-leg texture cue was added; that is sensory-vocabulary and
+   persona content, logged elsewhere.
+2. **The shrimp group sits at the fish 63 °C floor**, whole or minced: shrimp,
+   prawn, king prawn, tiger prawn, crevette, scampi, langoustine. They are
+   fish-class, so H1 never touches them. **Bivalves stay INACTIVE** — S1 on
+   the someday list. None of the seven terms appears on that list, which the
+   source-scan guard verifies rather than assumes; the scan list itself was
+   not edited.
+
+**Ambiguity recorded rather than resolved:** *Geschnetzeltes* is veal as often
+as pork or chicken, and H1 covers only poultry and pork. It is filed as pork so
+the rule fires at all, which also gives it the 63 °C + 3-minute-rest floor. If
+the veal reading is wanted it needs its own line.
+
+---
+
 ## Safety validator v1 is live — the deterministic layer (23 August 2026)
 
 **Binding rule:** food safety and cooking-time compatibility are **two
