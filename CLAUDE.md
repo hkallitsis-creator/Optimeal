@@ -474,6 +474,31 @@ request or when a task needs the "why."
   generations and is excluded from `flutter test` by having no `_test.dart`
   suffix. Full reasoning: `docs/DECISIONS.md` and
   `docs/sessions/2026-08-23_safety-validator.md`.
+- **Pre-cook merge — Step 1 is mise en place (2026-08-23).** The
+  `_IngredientsChecklistCard` / `_IngredientChecklistRow` pre-cook surface,
+  its tick state, its `0/N` counter and its **inline servings stepper** are
+  **DELETED**, along with `_checkedIngredientIndices`, `_ingredientKeys` and
+  `_changePortions`. Cook Mode's first card is now `MiseEnPlaceCard`
+  (`lib/widgets/mise_en_place_card.dart`), rendered by one builder
+  (`_buildMiseCard`) used by both the pre-cook list and the focused body.
+  Composition: number chip + title → **"No heat yet"** + **read-only
+  "Serves N"** pills → one sage teaching line (**no cue panel** — prep has no
+  sensory cue and the cue contract is untouched) → **NEEDS THE KNIFE** rows
+  (`IngredientRow`, reused from the overview build) → **JUST HAVE IT OUT** as
+  one compact `·`-joined row → next-step whisper. **It is a read, not a task**
+  — nothing tickable, and no "confirm you've prepped" interaction may return.
+  **The card carries no CTA**: the spec's Step 1 CTA is the bottom bar's Next,
+  relabelled, so the one-terracotta-CTA rule holds.
+  **Dedup**: `lib/services/prep_step_detector.dart` replaces a generated first
+  prep step with the synthesized one — never two. Only the FIRST step is ever
+  a candidate and a cooking verb anywhere disqualifies it, because a false
+  positive deletes real cooking. If none is detected, Step 1 is inserted (+1).
+  **`_steps` is the one source of truth** after dedup; progress bar, whisper,
+  overview sheet, jump-to-step, cooked-set rewrite and the SOS marker all
+  index it. Step 1 is **excluded from the SOS prompt payload** and carries no
+  timer, heat, cue, compat or safety check.
+  **There is no `ChecklistScreen` route and never was** — the checklist was a
+  card. A test forbids one appearing.
 - **Recipe overview — redesigned 2026-08-23.** `RecipeDetailsScreen`
   (`lib/screens/recipe_details_screen.dart`) + `RecipeOverviewBody` /
   `RecipeOverviewBottomBar` (`lib/widgets/recipe_overview_body.dart`). The

@@ -18,9 +18,11 @@ import 'package:optimeal/services/fridge_clearer_entry_service.dart';
 import 'package:optimeal/services/ledger_service.dart';
 import 'package:optimeal/services/ledger_verdict.dart';
 import 'package:optimeal/services/planner_cook_attribution_service.dart';
+import 'package:optimeal/models/recipe_scale.dart';
+import 'package:optimeal/services/prep_step_detector.dart';
+import 'package:optimeal/widgets/mise_en_place_card.dart';
 import 'package:optimeal/services/upgrade_nudge_gate.dart';
 import 'package:optimeal/services/saved_recipes_service.dart';
-import 'package:optimeal/state/ingredient_prep_controller.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
 import 'package:optimeal/theme/app_design_tokens.dart';
@@ -369,6 +371,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
 
   /// Identifies this cook for [UpgradeNudgeGate]. See [initState].
   late final String _cookNudgeToken;
+
   bool _cookPaused = false;
   int? _activeStepIndex;
 
@@ -416,17 +419,6 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     }).toList(growable: false);
   }
 
-  /// Stable per-ingredient identity for prepped-state tracking: the
-  /// ingredient's name when structured (so checking it off survives a
-  /// portion change, which rewrites [_ingredients]'s scaled display
-  /// strings), or the static display string itself otherwise (which never
-  /// changes, since the portion stepper is hidden without structured data).
-  List<String> get _ingredientKeys {
-    final structured = _baseStructuredIngredients;
-    if (structured == null) return _staticIngredients;
-    return structured.map((ing) => ing.name).toList(growable: false);
-  }
-
   /// Per-ingredient cut, index-aligned with [_ingredients] (both are built
   /// from the same [_baseStructuredIngredients] list, in the same order —
   /// portion scaling changes amounts, never order or count). Null for
@@ -439,19 +431,6 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       return List<String?>.filled(_ingredients.length, null);
     }
     return structured.map((ing) => ing.cut).toList(growable: false);
-  }
-
-  /// Ingredient indices the user has checked off while prepping.
-  ///
-  /// This is derived from the shared [IngredientPrepController] so it syncs
-  /// across Cook Mode + Weekly Planner.
-  Set<int> _checkedIngredientIndices(IngredientPrepController controller) {
-    final out = <int>{};
-    final keys = _ingredientKeys;
-    for (var i = 0; i < keys.length; i++) {
-      if (controller.isPrepped(keys[i])) out.add(i);
-    }
-    return out;
   }
 
   late final List<_CookStep> _steps;
@@ -577,7 +556,30 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
               ),
             ]
           : resolvedSteps;
-      _steps = [_buildPrepStep(), ...rawSteps];
+
+      // DEDUP: the model routinely emits its own prep step, and the app has
+      // always prepended a synthesized one — so device builds showed BOTH,
+      // back to back, saying the same thing. The generated one is replaced,
+      // never appended to. Only the FIRST step is ever a candidate; see
+      // `prep_step_detector.dart` for why that limit is deliberate.
+      final generatedPrepStep = rawSteps.isNotEmpty &&
+              looksLikeGeneratedPrepStep(
+                title: rawSteps.first.actionTitle,
+                bullets: rawSteps.first.bullets,
+                ingredientNames: (payload.structuredIngredients ?? const [])
+                    .map((i) => i.name)
+                    .toList(growable: false),
+              )
+          ? rawSteps.first
+          : null;
+      if (generatedPrepStep != null) {
+        debugPrint('CookMode: replaced generated prep step '
+            '"${generatedPrepStep.actionTitle}" with the synthesized mise step.');
+      }
+
+      final cookingSteps =
+          generatedPrepStep == null ? rawSteps : rawSteps.sublist(1);
+      _steps = [_buildPrepStep(), ...cookingSteps];
     }
 
     _estimatedCookTime =
@@ -638,20 +640,24 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     }
     if (entries.isEmpty) {
       return const _CookStep(
-        actionTitle: 'Prepare Your Ingredients',
+        // SIGNED-CONTENT PLACEHOLDER
+        actionTitle: 'Set up your board',
         heat: _HeatLevel.offHeat,
         duration: Duration.zero,
         hasTimer: false,
+        isMiseEnPlace: true,
         bullets: [
           'Get your ingredients and tools ready before you start cooking.'
         ],
       );
     }
     return _CookStep(
-      actionTitle: 'Prepare Your Ingredients',
+      // SIGNED-CONTENT PLACEHOLDER
+      actionTitle: 'Set up your board',
       heat: _HeatLevel.offHeat,
       duration: Duration.zero,
       hasTimer: false,
+      isMiseEnPlace: true,
       bullets: entries.map((e) => e.name).toList(growable: false),
       bulletCuts: entries.map((e) => e.cut).toList(growable: false),
     );
@@ -1288,14 +1294,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     _postFrame(_scrollToActiveStep);
   }
 
-  void _changePortions(int delta) {
-    if (!mounted) return;
-    final current = _currentPortions ?? _basePortions;
-    final next = (current + delta).clamp(1, 12);
-    if (next == current) return;
-    setState(() => _currentPortions = next);
-    unawaited(_persistActiveSession());
-  }
+  // _changePortions was the pre-cook checklist's inline stepper. Deleted with
+  // that surface: the servings adjuster's only home is the recipe overview,
+  // and its value arrives frozen on CookModeLaunchRequest.servings.
 
   void _toggleStepComplete(int stepIndex) {
     if (!mounted) return;
@@ -1436,11 +1437,19 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     }
     b.writeln();
     b.writeln('Steps:');
+    // The synthesized mise step is EXCLUDED from the payload. It is a read,
+    // not a cooking step — it has no heat and no duration, and describing it
+    // to the model as "1. Set up your board — off heat, ~0 min" would present
+    // a client-side UI affordance as part of the recipe. Numbering restarts
+    // from the first real cooking step for the same reason.
+    var n = 0;
     for (var i = 0; i < _steps.length; i++) {
       final s = _steps[i];
+      if (s.isMiseEnPlace) continue;
+      n++;
       final marker = _activeStepIndex == i ? ' ← USER IS ON THIS STEP NOW' : '';
       b.writeln(
-          '${i + 1}. ${s.actionTitle} — ${_heatLabelText(s.heat)}, ~${s.duration.inMinutes} min$marker');
+          '$n. ${s.actionTitle} — ${_heatLabelText(s.heat)}, ~${s.duration.inMinutes} min$marker');
       for (final bullet in s.bullets) {
         b.writeln('   - $bullet');
       }
@@ -1642,6 +1651,12 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                   },
                 )
               : _FocusedCookBottomBar(
+                  nextLabel: (_activeStepIndex != null &&
+                          _steps[_activeStepIndex!].isMiseEnPlace)
+                      // SIGNED-CONTENT PLACEHOLDER
+                      ? "Board's clear — heat goes on"
+                      // SIGNED-CONTENT PLACEHOLDER
+                      : 'Next step',
                   isPaused: _cookPaused,
                   onPausePressed: () => _postFrame(_togglePause),
                   onNextPressed: () => _postFrame(() {
@@ -1691,14 +1706,17 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
               physics: const AlwaysScrollableScrollPhysics(
                   parent: BouncingScrollPhysics()),
-              child: _FocusedStepCard(
-                step: step,
-                isPaused: _cookPaused,
-                remaining: _activeRemaining,
-                nextStep:
-                    index + 1 < _steps.length ? _steps[index + 1] : null,
-                onWhisperTap: () => _postFrame(_openOverview),
-              ),
+              child: step.isMiseEnPlace
+                  ? _buildMiseCard(index)
+                  : _FocusedStepCard(
+                      step: step,
+                      isPaused: _cookPaused,
+                      remaining: _activeRemaining,
+                      nextStep: index + 1 < _steps.length
+                          ? _steps[index + 1]
+                          : null,
+                      onWhisperTap: () => _postFrame(_openOverview),
+                    ),
             ),
           ),
         ],
@@ -1710,8 +1728,6 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   /// pre-cook moment merge is a separate queued build; this body is its
   /// subject, not this one's.
   Widget _buildPreCookBody() {
-    final prepController = context.watch<IngredientPrepController>();
-
     return SafeArea(
         bottom: false,
         child: CustomScrollView(
@@ -1730,23 +1746,6 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                       kitchenGear: _kitchenGear,
                     ),
                     const SizedBox(height: 14),
-                    _IngredientsChecklistCard(
-                      ingredients: _ingredients,
-                      cuts: _ingredientCuts,
-                      checked: _checkedIngredientIndices(prepController),
-                      onToggle: (i) =>
-                          prepController.togglePrepped(_ingredientKeys[i]),
-                      portions: _baseStructuredIngredients == null
-                          ? null
-                          : (_currentPortions ?? _basePortions),
-                      onIncreasePortions: _baseStructuredIngredients == null
-                          ? null
-                          : () => _changePortions(1),
-                      onDecreasePortions: _baseStructuredIngredients == null
-                          ? null
-                          : () => _changePortions(-1),
-                    ),
-                    const SizedBox(height: 14),
                     _StartCookingCard(
                       started: _cookStarted,
                       // Called directly (device-test round F6) — see the
@@ -1756,20 +1755,23 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                     ),
                     const SizedBox(height: 14),
                     for (var i = 0; i < _steps.length; i++) ...[
-                      _CookStepCard(
-                        key: _stepKeys[i],
-                        stepNumber: i + 1,
-                        step: _steps[i],
-                        scienceNote: widget.recipe == null
-                            ? _scienceNoteForDemoStep(i)
-                            : null,
-                        isActive: _activeStepIndex == i,
-                        isCompleted: _completedSteps?.contains(i) ?? false,
-                        remaining: _remainingForStep(i),
-                        cookStarted: _cookStarted,
-                        onToggleCompleted: () =>
-                            _postFrame(() => _toggleStepComplete(i)),
-                      ),
+                      if (_steps[i].isMiseEnPlace)
+                        Container(key: _stepKeys[i], child: _buildMiseCard(i))
+                      else
+                        _CookStepCard(
+                          key: _stepKeys[i],
+                          stepNumber: i + 1,
+                          step: _steps[i],
+                          scienceNote: widget.recipe == null
+                              ? _scienceNoteForDemoStep(i)
+                              : null,
+                          isActive: _activeStepIndex == i,
+                          isCompleted: _completedSteps?.contains(i) ?? false,
+                          remaining: _remainingForStep(i),
+                          cookStarted: _cookStarted,
+                          onToggleCompleted: () =>
+                              _postFrame(() => _toggleStepComplete(i)),
+                        ),
                       const SizedBox(height: 12),
                     ],
                     const _FlavorCheckpointCard(),
@@ -1780,6 +1782,40 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
             ),
           ],
         ));
+  }
+
+  /// Step 1's surface. One builder, used by both bodies, so the pre-cook list
+  /// and the focused cook cannot drift into two different mise steps.
+  ///
+  /// Servings precedence mirrors the recipe overview exactly (R6): the value
+  /// frozen at launch when the overview supplied one, otherwise the profile
+  /// household **if the user actually set it**, otherwise the recipe's own
+  /// base. Generation surfaces and the planner Cook button bypass the overview
+  /// and pass null, which is why the fallback has to exist at all.
+  Widget _buildMiseCard(int index) {
+    final profile = context.watch<UserProfileController>().profile;
+    final household = profile.onboarded ? profile.householdServings : null;
+    final servings = _currentPortions ??
+        defaultServingsFor(
+          profileHouseholdServings: household,
+          recipeBasePortions: _baseStructuredIngredients == null
+              ? null
+              : _basePortions,
+        );
+
+    final nextIndex = index + 1;
+    return MiseEnPlaceCard(
+      stepNumber: index + 1,
+      title: _steps[index].actionTitle,
+      servings: servings,
+      structuredIngredients: _baseStructuredIngredients,
+      basePortions: _baseStructuredIngredients == null ? null : _basePortions,
+      fallbackIngredients: _staticIngredients,
+      steps: widget.recipe?.steps ?? const [],
+      nextStepTitle:
+          nextIndex < _steps.length ? _steps[nextIndex].actionTitle : null,
+      onWhisperTap: () => _postFrame(_openOverview),
+    );
   }
 
   models.CulinaryMatrixCard? _scienceNoteForDemoStep(int stepIndex) {
@@ -1845,7 +1881,8 @@ class _CookStep {
       this.sensoryCue = SensoryCueVocabulary.noCueKey,
       this.hasTimer = true,
       this.techniqueDiagramId = noTechniqueDiagramKey,
-      this.cutDiagramKey});
+      this.cutDiagramKey,
+      this.isMiseEnPlace = false});
 
   final String actionTitle;
   final _HeatLevel heat;
@@ -1882,6 +1919,13 @@ class _CookStep {
   /// diagrammed cut — the common case, since only 'julienne' has an asset
   /// in this pilot phase.
   final String? cutDiagramKey;
+
+  /// True only for the client-synthesized mise-en-place step.
+  ///
+  /// It is a **read, not a task**: no timer, no heat, no sensory cue, no
+  /// compat or safety check, and it never reaches a prompt payload. It renders
+  /// through [MiseEnPlaceCard] rather than the ordinary step card.
+  final bool isMiseEnPlace;
 }
 
 class _CookModeHeader extends StatelessWidget {
@@ -2035,313 +2079,7 @@ class _GearChip extends StatelessWidget {
   }
 }
 
-class _IngredientsChecklistCard extends StatelessWidget {
-  const _IngredientsChecklistCard({
-    required this.ingredients,
-    required this.cuts,
-    required this.checked,
-    required this.onToggle,
-    this.portions,
-    this.onIncreasePortions,
-    this.onDecreasePortions,
-  });
 
-  final List<String> ingredients;
-
-  /// Index-aligned with [ingredients]. A null entry means no cut is
-  /// recorded for that ingredient (missing field, older recipe, or no
-  /// structured data at all) — that row renders exactly as it did before
-  /// this field existed, no label, no reserved space.
-  final List<String?> cuts;
-  final Set<int> checked;
-  final ValueChanged<int> onToggle;
-
-  /// When non-null (along with the two callbacks below), shows a live +/-
-  /// portion stepper above the checklist. Null for recipes without
-  /// structured ingredient data (demo recipe, older cached recipes).
-  final int? portions;
-  final VoidCallback? onIncreasePortions;
-  final VoidCallback? onDecreasePortions;
-
-  ({String name, String? note}) _splitIngredient(String raw) {
-    final t = raw.trim();
-    if (t.isEmpty) return (name: raw, note: null);
-
-    // Prefer a trailing parenthetical: "300g Potatoes (cubed)".
-    final open = t.lastIndexOf('(');
-    final close = t.endsWith(')') ? t.length - 1 : -1;
-    if (open != -1 && close != -1 && close > open + 1) {
-      final name = t.substring(0, open).trim();
-      final note = t.substring(open + 1, close).trim();
-      if (name.isNotEmpty && note.isNotEmpty) return (name: name, note: note);
-    }
-
-    // Common separators: em dash, hyphen, colon.
-    for (final sep in const [' — ', ' - ', ': ']) {
-      final i = t.indexOf(sep);
-      if (i > 0 && i < t.length - sep.length) {
-        final name = t.substring(0, i).trim();
-        final note = t.substring(i + sep.length).trim();
-        if (name.isNotEmpty && note.isNotEmpty) return (name: name, note: note);
-      }
-    }
-
-    return (name: t, note: null);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                      color: theme.colorScheme.tertiary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(14)),
-                  child: Icon(Icons.checklist_rounded,
-                      color: theme.colorScheme.tertiary),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Ingredients Checklist',
-                          style: theme.textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w900)),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Check items off as you prep.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.35),
-                      ),
-                    ],
-                  ),
-                ),
-                if (ingredients.isNotEmpty)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.tertiary.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                          color: theme.colorScheme.tertiary
-                              .withValues(alpha: 0.18)),
-                    ),
-                    child: Text(
-                      '${checked.length}/${ingredients.length}',
-                      style: theme.textTheme.labelLarge
-                          ?.copyWith(fontWeight: FontWeight.w900),
-                    ),
-                  ),
-              ],
-            ),
-            if (portions != null &&
-                onIncreasePortions != null &&
-                onDecreasePortions != null) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Text('Servings',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: theme.colorScheme.onSurfaceVariant)),
-                  const Spacer(),
-                  IconButton(
-                    onPressed: onDecreasePortions,
-                    icon: const Icon(Icons.remove_circle_outline),
-                    color: theme.colorScheme.tertiary,
-                    tooltip: 'Fewer servings',
-                  ),
-                  Text('$portions',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w900)),
-                  IconButton(
-                    onPressed: onIncreasePortions,
-                    icon: const Icon(Icons.add_circle_outline),
-                    color: theme.colorScheme.tertiary,
-                    tooltip: 'More servings',
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 12),
-            if (ingredients.isEmpty)
-              Text('No ingredients listed for this recipe.',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant))
-            else
-              Column(
-                children: [
-                  for (var i = 0; i < ingredients.length; i++) ...[
-                    _IngredientChecklistRow(
-                      ingredient: ingredients[i],
-                      split: _splitIngredient(ingredients[i]),
-                      cut: i < cuts.length ? cuts[i] : null,
-                      checked: checked.contains(i),
-                      onToggle: () => onToggle(i),
-                    ),
-                    if (i != ingredients.length - 1) const SizedBox(height: 10),
-                  ],
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _IngredientChecklistRow extends StatelessWidget {
-  const _IngredientChecklistRow(
-      {required this.ingredient,
-      required this.split,
-      required this.cut,
-      required this.checked,
-      required this.onToggle});
-
-  final String ingredient;
-  final ({String name, String? note}) split;
-
-  /// Null renders this row exactly as it did before the cut field
-  /// existed — no label, no reserved space for one. `'none'` is real,
-  /// deliberate structured data (kept in the model and in storage) but is
-  /// also suppressed from rendering — every ingredient in the schema now
-  /// carries a cut, so pantry staples (salt, oil, stock) and whole items
-  /// (eggs, cheese) all come back as `'none'`, and a row of grey "none"
-  /// pills would tell the user nothing.
-  final String? cut;
-  final bool checked;
-  final VoidCallback onToggle;
-
-  void _showCutDefinition(BuildContext context, String cut) {
-    AppBottomSheet.show<void>(
-      context: context,
-      backgroundColor: AppDesignTokens.surfaceIvory,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => SafeArea(child: _CutDefinitionSheet(cut: cut)),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    final border = checked
-        ? theme.colorScheme.tertiary.withValues(alpha: 0.28)
-        : theme.colorScheme.outline.withValues(alpha: 0.14);
-    final bg = checked
-        ? theme.colorScheme.tertiary.withValues(alpha: 0.06)
-        : theme.colorScheme.surface;
-    final titleColor = checked
-        ? theme.colorScheme.onSurface.withValues(alpha: 0.55)
-        : theme.colorScheme.onSurface;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onToggle,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: border),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: Checkbox(
-                  value: checked,
-                  onChanged: (_) => onToggle(),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6)),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    split.name,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        color: titleColor,
-                        decoration:
-                            checked ? TextDecoration.lineThrough : null),
-                  ),
-                  if (split.note != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      split.note!,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.3),
-                    ),
-                  ],
-                  if (cut != null && cut != 'none') ...[
-                    const SizedBox(height: 4),
-                    InkWell(
-                      onTap: () => _showCutDefinition(context, cut!),
-                      borderRadius: BorderRadius.circular(999),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.tertiary
-                              .withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                              color: theme.colorScheme.tertiary
-                                  .withValues(alpha: 0.20)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              ingredientCutLabel(cut!),
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                  color: theme.colorScheme.tertiary),
-                            ),
-                            const SizedBox(width: 3),
-                            Icon(Icons.info_outline_rounded,
-                                size: 12, color: theme.colorScheme.tertiary),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 /// Reached by tapping an ingredient's cut label — shows the one-line,
 /// beginner-actionable definition from [ingredientCutDefinitions]. Never
@@ -2414,7 +2152,8 @@ class _CutDefinitionSheet extends StatelessWidget {
 
 /// Renders a step's declared sensory cue (harrisSays, always visible) with
 /// the ifNotReady/ifOvershot remedies behind a tappable reveal, in the same
-/// tap-to-open-sheet style as [_IngredientChecklistRow]'s cut pill. Renders
+/// tap-to-open-sheet style as the mise step's ingredient-row cut pill
+/// ([IngredientRow]). Renders
 /// nothing if the key isn't in [SensoryCueVocabulary.entries] (defensive —
 /// [CookModeStepPayload.sensoryCue] should already be a valid key or
 /// [SensoryCueVocabulary.noCueKey] by the time it reaches here, but this
@@ -3474,12 +3213,18 @@ class _FocusedCookBottomBar extends StatelessWidget {
     required this.onPausePressed,
     required this.onNextPressed,
     required this.onAskChefPressed,
+    required this.nextLabel,
   });
 
   final bool isPaused;
   final VoidCallback onPausePressed;
   final VoidCallback onNextPressed;
   final VoidCallback onAskChefPressed;
+
+  /// The CTA's text. Step 1 (mise en place) relabels it — the spec's CTA for
+  /// that step IS this button, not a second one inside the card, so the
+  /// one-terracotta-CTA rule holds.
+  final String nextLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -3534,11 +3279,14 @@ class _FocusedCookBottomBar extends StatelessWidget {
                           borderRadius: BorderRadius.circular(
                               AppDesignTokens.radiusButton)),
                     ),
-                    child: const Text(
-                      // PLACEHOLDER
-                      'Next step',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                    child: Text(
+                      // SIGNED-CONTENT PLACEHOLDER
+                      nextLabel,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w900, fontSize: 16),
                     ),
                   ),
                 ),
@@ -4125,7 +3873,7 @@ class _BulletLine extends StatelessWidget {
   final String text;
 
   /// Optional cut for this bullet's ingredient (see [_CookStep.bulletCuts])
-  /// — renders as the same tappable pill [_IngredientChecklistRow] uses.
+  /// — renders as the same tappable pill [IngredientRow] uses.
   /// Null or `'none'` renders nothing extra, same suppression rule as the
   /// checklist row.
   final String? cut;

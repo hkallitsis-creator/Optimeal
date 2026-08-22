@@ -7,6 +7,46 @@ Read on request, not auto-loaded.
 
 ---
 
+## Step 1 is mise en place, and there is only ever one prep step (23 August 2026)
+
+**Binding rule 1 — the dedup.** Cook Mode prepends a client-synthesized
+mise-en-place step to every recipe. Generations *also* routinely emit their own
+prep step, and nothing removed it, so device builds showed both back to back
+saying the same thing. The generated one is now **replaced**, never appended to.
+
+The heuristic (`lib/services/prep_step_detector.dart`) is deliberately
+asymmetric, because **a false positive deletes a real cooking step** and that is
+far worse than a duplicate prep step. So: only the **first** step is ever a
+candidate — step 2 onward is never deduped, whatever it says — and a cooking
+verb *anywhere* in the step disqualifies it even under a prep-ish title, because
+"Prep and sear the chicken" is a cooking step with a misleading name and
+deleting it would delete the sear. Absent an explicit prep title, the fallback
+is much stricter: no cooking verb AND every bullet names a real ingredient of
+this recipe.
+
+Verified on real dev output both ways: a Fridge Clearer generation opening with
+"Preheat Oven" was correctly **not** deduped (5 → 6 displayed), and a Custom
+generation opening with "Prepare Ingredients" was (6 → 6 displayed).
+
+**Binding rule 2 — Step 1 is a read, not a task.** No ticks, no strikethrough,
+no counter, no timer, no heat pill, no sensory cue. **No "confirm you've
+prepped" interaction may be reintroduced in any form.** It is exempt from the
+compatibility and safety validators, and it is excluded from the SOS prompt
+payload — it is not a cooking step and must not be described to the model as
+one.
+
+**Binding rule 3 — the servings adjuster is gone from Cook Mode entirely.** Its
+only home is the recipe overview. Step 1 shows a **read-only** pill. The value
+arrives frozen on `CookModeLaunchRequest.servings`; when that is null — the
+generation surfaces and the planner Cook button bypass the overview — it falls
+back to the same precedence the overview uses.
+
+**The step list has one source of truth**, `_steps`, after dedup. The progress
+bar, the whisper, the overview sheet's both panes, jump-to-step, the cooked-set
+rewrite and the SOS current-step marker all index it, so they cannot disagree.
+
+---
+
 ## Cut pills resolve client-side; no schema and no prompt change (23 August 2026)
 
 **Binding rule:** the cut diagram on an ingredient row is resolved in the app,

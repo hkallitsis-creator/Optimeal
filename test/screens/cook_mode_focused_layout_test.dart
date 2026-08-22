@@ -94,10 +94,11 @@ Future<void> _pumpCooking(WidgetTester tester,
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-/// Advances past the synthesized, timerless "Prepare Your Ingredients" step
-/// that Cook Mode prepends to every recipe.
+/// Advances past the synthesized, timerless mise-en-place step that Cook Mode
+/// prepends to every recipe. Its CTA is the bottom bar's Next, relabelled.
 Future<void> _nextStep(WidgetTester tester) async {
-  await tester.tap(find.text('Next step'));
+  final mise = find.text("Board's clear — heat goes on");
+  await tester.tap(mise.evaluate().isNotEmpty ? mise : find.text('Next step'));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
@@ -122,14 +123,15 @@ void main() {
 
       // One step card only — the old all-steps list is gone, so a later
       // step's title must not be on screen as a card.
-      expect(find.text('Prepare Your Ingredients'), findsOneWidget);
+      // Step 1 is the mise card — no longer an ordinary step card.
+      expect(find.text('Set up your board'), findsOneWidget);
       expect(find.text('Boil the pasta'), findsNothing);
 
-      // Whisper.
-      expect(find.text('NEXT'), findsOneWidget);
+      // Whisper (the mise card carries its own).
+      expect(find.textContaining('Next · '), findsOneWidget);
 
-      // Bottom bar.
-      expect(find.text('Next step'), findsOneWidget);
+      // Bottom bar — relabelled on Step 1.
+      expect(find.text("Board's clear — heat goes on"), findsOneWidget);
       expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
       expect(find.textContaining('Stuck?'), findsOneWidget);
     });
@@ -178,8 +180,9 @@ void main() {
     testWidgets('names the step that is actually next', (tester) async {
       await _pumpCooking(tester);
 
-      // On the prep step, next is step 1 of the recipe proper.
-      expect(find.text('Heat the oil'), findsOneWidget,
+      // On the mise step, next is step 1 of the recipe proper. The mise
+      // card's whisper prefixes it, so match on the combined line.
+      expect(find.text('Next · Heat the oil'), findsOneWidget,
           reason: 'shown only as the whisper line, not as a card');
 
       await _nextStep(tester);
@@ -189,7 +192,7 @@ void main() {
     testWidgets('tapping it opens the overview sheet', (tester) async {
       await _pumpCooking(tester);
 
-      await tester.tap(find.text('NEXT'));
+      await tester.tap(find.text('Next · Heat the oil'));
       await tester.pumpAndSettle();
 
       expect(find.text('All steps'), findsOneWidget);
@@ -272,7 +275,7 @@ void main() {
 
       expect(find.text('All steps'), findsOneWidget);
       for (final title in [
-        'Prepare Your Ingredients',
+        'Set up your board',
         'Heat the oil',
         'Boil the pasta',
         'Plate it up',

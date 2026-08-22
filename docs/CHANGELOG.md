@@ -13,6 +13,37 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Pre-cook merge: Step 1 = mise en place
+
+Full prompt and report: `docs/sessions/2026-08-23_precook-merge.md`.
+623 tests passing (593 baseline + 30 new), 44 analyze issues (unchanged).
+
+- **The checklist surface is deleted.** `_IngredientsChecklistCard`,
+  `_IngredientChecklistRow`, the tick state, the `0/N` counter and the inline
+  servings stepper are gone, along with `_checkedIngredientIndices`,
+  `_ingredientKeys` and `_changePortions`. Cook Mode's first card is now
+  `MiseEnPlaceCard`.
+- **Step 1 is a read, not a task.** Number chip + title, "No heat yet" and a
+  **read-only** "Serves N" pill, one sage teaching line (no cue panel — prep
+  has no sensory cue), NEEDS THE KNIFE rows, JUST HAVE IT OUT as one compact
+  row, and the next-step whisper. Nothing tickable.
+- **Never two prep steps.** `prep_step_detector.dart` replaces a generated
+  first prep step with the synthesized one. Deliberately asymmetric: only the
+  first step is a candidate and a cooking verb anywhere disqualifies it,
+  because a false positive would delete real cooking. Both branches hit on
+  real dev output — "Preheat Oven" correctly kept, "Prepare Ingredients"
+  correctly replaced.
+- **The card carries no CTA** — the spec's Step 1 CTA is the bottom bar's Next,
+  relabelled, so the one-terracotta-CTA rule holds.
+- **Step 1 is excluded from the SOS prompt payload** and step numbering there
+  restarts from the first real cooking step.
+- `IngredientRow` and the scale helpers are **reused** from the overview build;
+  no second row widget and no second scale holder were created.
+- There is **no `ChecklistScreen` route and never was** — the checklist was a
+  card. A test now forbids one appearing.
+
+---
+
 ## 2026-08-23 — Recipe overview redesign
 
 Full prompt and report: `docs/sessions/2026-08-23_recipe-overview.md`.
