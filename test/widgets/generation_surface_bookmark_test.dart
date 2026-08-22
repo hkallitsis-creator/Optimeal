@@ -86,8 +86,8 @@ void main() {
       await tester.pumpWidget(sheet(_service(FakeSavedRecipesBackend())));
       await tester.pumpAndSettle();
 
-      expect(find.text('🔥 Cook Now'), findsOneWidget);
-      expect(find.text('📅 Plan for Day'), findsOneWidget);
+      expect(find.text('Cook Now'), findsOneWidget);
+      expect(find.text('Plan for Day'), findsOneWidget);
     });
   });
 }

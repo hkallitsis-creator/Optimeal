@@ -124,6 +124,40 @@ void main() {
     });
   });
 
+  group('system back does what the arrow does', () {
+    test('a PopScope routes it through the same handler', () {
+      final code = File('lib/screens/one_pan_cooking_roadmap_screen.dart')
+          .readAsStringSync();
+
+      expect(code.contains('return PopScope('), isTrue);
+      // canPop is true ONLY for the recipe-less demo body, which has no
+      // overview to go to.
+      expect(code.contains('canPop: _payload == null'), isTrue);
+
+      final start = code.indexOf('return PopScope(');
+      final block = code.substring(start, start + 400);
+      expect(block.contains('_backToOverview()'), isTrue,
+          reason: 'system back and the arrow must not disagree');
+      expect(block.contains('if (didPop) return;'), isTrue,
+          reason: 'no double-pop');
+    });
+
+    testWidgets('system back from a step lands on the overview route',
+        (tester) async {
+      // The route push is what is asserted: pumping the destination needs a
+      // router, and RecipeDetailsScreen needs a live Supabase client.
+      final code = File('lib/screens/one_pan_cooking_roadmap_screen.dart')
+          .readAsStringSync();
+      final start = code.indexOf('void _backToOverview()');
+      final body = code.substring(start, start + 700);
+
+      expect(body.contains('AppRoutes.recipe'), isTrue);
+      expect(body.contains('_persistActiveSession()'), isTrue,
+          reason: 'the session — and its step index — is kept, not ended');
+      expect(body.contains('clearActiveSession'), isFalse);
+    });
+  });
+
   group('Part 3 — type scale', () {
     test('the body token went up, once, in the tokens file', () {
       final tokens =

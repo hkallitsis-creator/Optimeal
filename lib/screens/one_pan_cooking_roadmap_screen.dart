@@ -1638,7 +1638,21 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
+    // System back does exactly what the back ARROW does: to the recipe
+    // overview, session kept. Ruled by Harris 2026-08-23, superseding the
+    // older note that Cook Mode's back-press semantics were deliberately
+    // untouched — that note predated the overview existing as a destination,
+    // and leaving the two backs disagreeing is worse than either behaviour.
+    //
+    // `canPop` is true only for the recipe-less demo body, which has no
+    // overview to go to and keeps the ordinary pop.
+    return PopScope(
+      canPop: _payload == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _backToOverview();
+      },
+      child: Scaffold(
       backgroundColor: AppDesignTokens.backgroundSage,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -1729,6 +1743,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
                   onAskChefPressed: () => _postFrame(_openSos),
                 )),
       body: _isFocusedCook ? _buildFocusedBody() : _buildPreCookBody(),
+      ),
     );
   }
 

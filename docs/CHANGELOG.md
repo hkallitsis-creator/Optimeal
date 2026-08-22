@@ -13,6 +13,29 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Custom Recipe Creator sheet + system back
+
+Full prompt and report: `docs/sessions/2026-08-23_custom-creator.md`.
+703 tests passing (685 baseline + 18 new), 40 analyze issues (unchanged).
+
+- **The sheet is one thought long now.** Gone: the explainer paragraph, the
+  sparkle chip, bolt-icon chips, the four-line textarea, and `✨` in the CTA.
+  In: one quiet 52px field, quick-fill chips that write **editable** text (and
+  release their highlight the moment you edit), one terracotta CTA, and **no
+  servings control** — the profile default flows in silently.
+- **Generating swaps in place** for the waiting card, with the typed craving as
+  the subject line. No route push, no stacked sheet.
+- **No emoji in any CTA, app-wide**, now a house rule with a guard test. Four
+  hits fixed. Deliberately scoped to CTAs — Chef SOS's quick-prompt chips keep
+  their food emoji, and the guard asserts that boundary.
+- **System back in Cook Mode now does what the arrow does**, completing the
+  back-to-overview work. This supersedes the older "deliberately untouched"
+  note, which predated the overview existing as a destination.
+- **R3 answered:** dismissing during generation lets the request continue; it is
+  fully `mounted`-guarded, so nothing leaks — but the call is still billed.
+
+---
+
 ## 2026-08-23 — Cook Mode fix round: timer, back routing, type scale, stage-1 allergens
 
 Full prompt and report: `docs/sessions/2026-08-23_cookmode-fixes.md`.

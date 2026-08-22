@@ -127,7 +127,7 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                     ),
                     icon: Icon(Icons.local_fire_department_rounded, color: scheme.onTertiary),
-                    label: Text('🔥 Cook Now', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900)),
+                    label: Text('Cook Now', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900)),
                   ),
                 ),
               ),
@@ -142,7 +142,7 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
                         isScrollControlled: false,
                         showDragHandle: true,
                         backgroundColor: AppDesignTokens.surfaceIvory,
-                        builder: (ctx) => const SafeArea(child: WeekdayPickerSheet(title: '📅 Plan for which day?')),
+                        builder: (ctx) => const SafeArea(child: WeekdayPickerSheet(title: 'Plan for which day?')),
                       );
                       if (dayIndex == null || !context.mounted) return;
                       WeeklyPlannerIntentService.instance.queueAddMeal(dayIndex: dayIndex, recipe: recipe, source: sourceLabel);
@@ -159,7 +159,7 @@ class GeneratedRecipeActionsSheet extends StatelessWidget {
                     ).copyWith(
                       overlayColor: const WidgetStatePropertyAll(Colors.transparent),
                     ),
-                    child: Text('📅 Plan for Day', style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900, color: scheme.tertiary)),
+                    child: Text('Plan for Day', style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900, color: scheme.tertiary)),
                   ),
                 ),
               ),

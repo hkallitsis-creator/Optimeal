@@ -29,8 +29,9 @@ request or when a task needs the "why."
   adds the quiet home glyph beside it via
   `lib/widgets/home_glyph_button.dart` (`HomeGlyphButton`,
   `BackWithHomeLeading`, `kBackWithHomeLeadingWidth` — the default 56dp
-  leading slot fits only one button). Applied to Cook Mode (glyph only; its
-  back-press semantics are untouched), recipe details, and the Weekly
+  leading slot fits only one button). Applied to Cook Mode (glyph only; **its
+  back-press semantics were SUPERSEDED 2026-08-23** — system back now routes to
+  the recipe overview, same as the arrow), recipe details, and the Weekly
   Planner's Fridge Clearer picker. `FridgeClearerScreen` serves both depths
   off `returnCookModePayload`: from Home it's depth-1 and back goes Home; as
   the planner's picker it's depth-2 and back pops to the planner it owes a
@@ -510,6 +511,39 @@ request or when a task needs the "why."
   adversarial run the ideas screen offered "Cheesy Potato Skillet" and
   "Spinach Walnut Salad" to a dairy/nut-avoiding profile before stage 2
   produced a clean recipe. Detection exists; the action is Harris's ruling.
+- **Custom Recipe Creator sheet — redesigned 2026-08-23.**
+  `CustomAiRecipeCreatorSheet`. **Cut**: the explainer paragraph (the field's
+  placeholder carries it), the sparkle chip beside the title, bolt icons on
+  chips, the four-line textarea, and `✨` in the CTA. **One quiet 52px field**,
+  **max-4 quick-fill chips that WRITE editable text into it** (not filters, not
+  submits — champagne while the field still holds exactly what the chip wrote,
+  quiet the moment the user edits), one terracotta **"Generate recipe"**, and
+  **no servings control at all** — the profile default flows in silently and the
+  adjuster lives on the recipe overview.
+  Generating **swaps the sheet content in place** for `GenerationLoadingCard`
+  (`writingRecipe`, **typed craving as the subject line**) — no route push, no
+  stacked sheet. Failure is a quiet card and the retry **relabels the same
+  single CTA**, with the typed text untouched.
+  **Dismissing during generation lets the request continue**; every path after
+  the await is `mounted`-guarded so nothing leaks into a disposed widget. The
+  call is still billed and still counts against the cap.
+  **Completion still routes to the Cook/Save/Plan actions sheet**, unchanged —
+  the spec said "recipe overview" but "Cook Now bypasses the overview" is
+  already signed, so the ruling kept the existing route. Mismatch is recorded
+  in `docs/DECISIONS.md` for design chat.
+- **No emoji inside a CTA label, app-wide (2026-08-23).** House rule, enforced
+  by `test/theme/cta_emoji_guard_test.dart`, which scans every
+  `FilledButton`/`ElevatedButton`/`TextButton`/`OutlinedButton` label in
+  `lib/`. **Scoped to CTAs deliberately** — Chef SOS's quick-prompt chips keep
+  their food emoji, and the guard asserts that boundary so it reads as a
+  decision rather than an oversight. Fixed on landing: `✨ Generate Recipe`,
+  `🔥 Cook Now`, `📅 Plan for Day`, `📅 Plan for which day?`.
+- **System back in Cook Mode = the back arrow (2026-08-23, Harris).**
+  A `PopScope` routes the system gesture through `_backToOverview`, so back and
+  the arrow cannot disagree. `canPop` is true only for the recipe-less demo
+  body. **This supersedes the older note that Cook Mode's back-press semantics
+  were "deliberately untouched"** — that note predated the overview existing as
+  a destination.
 - **The step timer is IDLE until tapped, and never advances the step
   (2026-08-23, Harris).** `StepTimerPill` (`lib/widgets/step_timer_pill.dart`)
   + `StepTimerState { idle, running, paused, done }`. It used to auto-start on

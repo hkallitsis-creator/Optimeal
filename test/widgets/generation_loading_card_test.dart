@@ -189,8 +189,12 @@ void main() {
 
     test('Custom recipe creation mounts it in writing-recipe mode', () {
       final s = source('lib/widgets/custom_ai_recipe_creator_sheet.dart');
-      expect(s,
-          contains('GenerationLoadingCard(stage: GenerationStage.writingRecipe)'));
+      expect(s, contains('GenerationLoadingCard('));
+      expect(s, contains('GenerationStage.writingRecipe'));
+      // The sheet now also passes the typed craving as the subject line, per
+      // the signed stage-2 pattern — the user sees their own words while they
+      // wait, not a generic "writing your recipe".
+      expect(s, contains('subject: _controller.text.trim().isEmpty'));
     });
 
     test('the planner paths are the same two surfaces, not a third', () {

@@ -7,6 +7,71 @@ Read on request, not auto-loaded.
 
 ---
 
+## No emoji inside a CTA label — house rule (23 August 2026)
+
+**Binding rule:** no emoji in the label of any `FilledButton`,
+`ElevatedButton`, `TextButton` or `OutlinedButton`, anywhere in `lib/`.
+Enforced by `test/theme/cta_emoji_guard_test.dart`.
+
+A CTA is the one thing on a screen that has to read as a decision. An emoji in
+it makes the button look like a toy next to the rest of the kit, and makes the
+label's meaning depend on a glyph that renders differently on every platform
+and not at all in some accessibility contexts.
+
+**Scoped to CTAs, deliberately.** Chef SOS's quick-prompt chips carry food
+emoji ("🔥 Not browning / no colour") and stay: a scannable list of symptoms is
+not a button that commits you to something. Widening the guard to all of `lib/`
+would fail on 34 of those and force a change nobody asked for. The boundary is
+itself asserted, so a future reader finds out it was deliberate.
+
+Hits fixed when this landed: `✨ Generate Recipe` (custom creator),
+`🔥 Cook Now` and `📅 Plan for Day` (generated-recipe actions sheet), and the
+`📅 Plan for which day?` sheet title beside them.
+
+---
+
+## System back in Cook Mode does what the back arrow does (23 August 2026)
+
+**Source: Harris.** This **supersedes** the older CLAUDE.md note that Cook
+Mode's back-press semantics were "deliberately untouched" — that note predated
+the recipe overview existing as a destination at all, and leaving the arrow and
+the system gesture disagreeing is worse than either behaviour on its own.
+
+**Binding rule:** system back (`PopScope`, including predictive back) routes to
+the current recipe's overview with the session kept, exactly as the arrow does.
+`canPop` is true only for the recipe-less demo body, which has no overview to
+go to. `if (didPop) return;` guards against a double-pop.
+
+---
+
+## The Custom Recipe Creator sheet stays one thought long (23 August 2026)
+
+**Binding rule:** the sheet asks one question and offers one action. No
+servings control — the profile's "usually cooking for" flows into generation
+silently, and the adjuster is reachable afterwards on the recipe overview.
+
+Quick-fill chips **fill the field with editable text**; they are not filters and
+not submits. The filled-from chip wears champagne only while the field still
+holds exactly what it wrote, and goes quiet the moment the user edits — a chip
+must not keep claiming text it no longer owns.
+
+Generation **swaps the sheet content in place** for the waiting card, with the
+typed craving as the subject line. No route push and no second sheet during the
+wait; sheets never stack.
+
+**Dismissal during generation lets the request CONTINUE** (see the report):
+nothing cancels the in-flight call, and every path after the `await` is behind
+`if (!mounted) return;`, so the result is discarded rather than leaking into a
+disposed widget. Left as-is per the ruling. The consequence worth knowing: a
+dismissed generation is still billed and still counts against the free-tier cap.
+
+**Spec-vs-ruling mismatch, recorded not resolved:** the spec says completion
+routes "to recipe overview"; the ruling says keep the existing route, which is
+the Cook/Save/Plan actions sheet, because "Cook Now bypasses the overview" is
+already signed. The existing route was kept. Design chat owns the mismatch.
+
+---
+
 ## The step timer is idle until tapped, and never advances the step (23 August 2026)
 
 **Source: Harris, device use.** The timer used to start by itself on step entry

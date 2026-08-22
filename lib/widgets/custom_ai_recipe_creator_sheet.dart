@@ -11,6 +11,7 @@ import 'package:optimeal/services/usage_cap_service.dart';
 import 'package:optimeal/services/validated_recipe_generation.dart';
 import 'package:optimeal/state/user_profile_controller.dart';
 import 'package:optimeal/theme.dart';
+import 'package:optimeal/theme/app_design_tokens.dart';
 import 'package:optimeal/widgets/generation_loading_card.dart';
 import 'package:optimeal/widgets/upgrade_prompt_sheet.dart';
 import 'package:flutter/foundation.dart';
@@ -42,14 +43,21 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
   final _chefService = ChefService();
   final _controller = TextEditingController();
 
+  final _focusNode = FocusNode();
+
   bool _isGenerating = false;
   String? _error;
+
+  /// Which quick-fill chip wrote the current field text, if any. Cleared the
+  /// moment the user edits — the chip stops claiming text it no longer owns.
+  String? _activeChip;
 
   static const _chips = <String>['Quick Pasta', 'High Protein', 'Cozy Comfort', 'Under 20 Mins'];
 
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -63,7 +71,11 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
     };
     _controller.text = v;
     _controller.selection = TextSelection.collapsed(offset: v.length);
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _activeChip = label;
+    });
+    _focusNode.requestFocus();
   }
 
 
@@ -210,17 +222,23 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-    final subtitle = widget.subtitle ?? 'Type a dish, craving, or diet — I\'ll generate a precise Cook Mode recipe.';
 
-    // The wait takes over the whole sheet rather than sitting inside the CTA
-    // as a spinner. A custom recipe is a full generation — the same 7-10s the
-    // Fridge Clearer's stage 2 takes — so it gets the same card, in the same
-    // mode. No ingredients are passed: this surface takes free text and has no
-    // structured list to name.
+    // The wait takes over the whole sheet IN PLACE — no route push, no second
+    // sheet. A custom recipe is a full generation, the same 7-10s the Fridge
+    // Clearer's stage 2 takes, so it gets the same card in the same mode.
+    //
+    // The typed craving is the subject line, per the signed stage-2 pattern:
+    // the user should see their own words while they wait, not a generic
+    // "writing your recipe".
     if (_isGenerating) {
-      return const SizedBox(
+      return SizedBox(
         height: 420,
-        child: GenerationLoadingCard(stage: GenerationStage.writingRecipe),
+        child: GenerationLoadingCard(
+          stage: GenerationStage.writingRecipe,
+          subject: _controller.text.trim().isEmpty
+              ? null
+              : _controller.text.trim(),
+        ),
       );
     }
 
@@ -234,97 +252,196 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 1 — title alone. The sparkle chip that used to sit beside it is
+            // gone; so is the explainer paragraph under it, which the field's
+            // placeholder now carries.
             Row(
               children: [
-                Container(
-                  height: 38,
-                  width: 38,
-                  decoration: BoxDecoration(
-                    color: scheme.tertiary.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: scheme.tertiary.withValues(alpha: 0.18)),
-                  ),
-                  child: Icon(Icons.auto_awesome_rounded, color: scheme.tertiary, size: 20),
-                ),
-                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     widget.title,
-                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                    style: theme.textTheme.titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w900),
                   ),
                 ),
                 IconButton(
-                  onPressed: _isGenerating ? null : () => context.pop(),
-                  icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
-                  style: const ButtonStyle(overlayColor: WidgetStatePropertyAll(Colors.transparent)),
+                  onPressed: () => context.pop(),
+                  icon: Icon(Icons.close_rounded,
+                      color: AppDesignTokens.textCharcoal
+                          .withValues(alpha: 0.60)),
+                  style: const ButtonStyle(
+                      overlayColor: WidgetStatePropertyAll(Colors.transparent)),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            Text(subtitle, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant, height: 1.35)),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _controller,
-              minLines: 1,
-              maxLines: 4,
-              textInputAction: TextInputAction.go,
-              onSubmitted: (_) => _generate(),
-              decoration: InputDecoration(
-                hintText: 'e.g., keto rösti bowl, spicy veggie noodles, dairy-free comfort soup…',
-                filled: true,
-                fillColor: LightModeColors.lightWarmCreamTint,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: scheme.outline.withValues(alpha: 0.18))),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: scheme.outline.withValues(alpha: 0.18))),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: scheme.tertiary.withValues(alpha: 0.60), width: 1.4)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            const SizedBox(height: 12),
+
+            // 2 — one quiet field, one line. A craving is a phrase, not an
+            // essay; the old four-line textarea invited a paragraph.
+            SizedBox(
+              height: 52,
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                maxLines: 1,
+                textInputAction: TextInputAction.go,
+                onSubmitted: (_) => _generate(),
+                onChanged: (_) {
+                  // Editing after a chip fill means the text is the user's
+                  // now, so the chip stops claiming it.
+                  if (_activeChip != null) setState(() => _activeChip = null);
+                  if (_error != null) setState(() => _error = null);
+                },
+                decoration: InputDecoration(
+                  // SIGNED-CONTENT PLACEHOLDER
+                  hintText: 'Any dish, craving, or diet…',
+                  filled: true,
+                  fillColor: AppDesignTokens.quietRowSurface,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                          color: AppDesignTokens.textCharcoal
+                              .withValues(alpha: 0.14))),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                          color: AppDesignTokens.textCharcoal
+                              .withValues(alpha: 0.14))),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                          color: AppDesignTokens.ctaTerracotta
+                              .withValues(alpha: 0.55),
+                          width: 1.4)),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                ),
               ),
             ),
             const SizedBox(height: 12),
+
+            // 3 — quick fills. Tapping one WRITES INTO the field; it is not a
+            // filter and not a submit, and the text stays editable.
             Wrap(
-              spacing: 10,
-              runSpacing: 10,
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 for (final c in _chips)
-                  ActionChip(
-                    onPressed: _isGenerating ? null : () => _fillChip(c),
-                    label: Text(c, style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900)),
-                    avatar: Icon(Icons.bolt_rounded, size: 18, color: scheme.tertiary),
-                    backgroundColor: LightModeColors.lightWarmCreamTint,
-                    side: BorderSide(color: scheme.outline.withValues(alpha: 0.14)),
+                  _QuickFillChip(
+                    label: c,
+                    selected: _activeChip == c,
+                    onTap: () => _fillChip(c),
                   ),
               ],
             ),
+
             if (_error != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: scheme.errorContainer.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: scheme.error.withValues(alpha: 0.22)),
-                ),
-                child: Text(_error!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onErrorContainer, fontWeight: FontWeight.w800)),
-              ),
+              const SizedBox(height: 14),
+              _CreatorErrorCard(message: _error!),
             ],
+
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               height: AppSizing.primaryButtonHeight,
               child: FilledButton(
-                onPressed: _isGenerating ? null : _generate,
+                onPressed: _generate,
                 style: FilledButton.styleFrom(
-                  backgroundColor: scheme.tertiary,
+                  backgroundColor: AppDesignTokens.ctaTerracotta,
                   foregroundColor: scheme.onTertiary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18)),
                 ),
                 child: Text(
-                  '✨ Generate Recipe',
-                  style: theme.textTheme.labelLarge?.copyWith(color: scheme.onTertiary, fontWeight: FontWeight.w900),
+                  // SIGNED-CONTENT PLACEHOLDER. No emoji — emoji in a CTA is
+                  // a kit violation, and there is a guard test on it now.
+                  _error == null ? 'Generate recipe' : 'Try again',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.onTertiary, fontWeight: FontWeight.w900),
                 ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A quick fill, not a filter. Champagne while the field still holds exactly
+/// what this chip wrote; quiet the moment the user edits it.
+class _QuickFillChip extends StatelessWidget {
+  const _QuickFillChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: selected
+          ? AppDesignTokens.champagneTint
+          : AppDesignTokens.quietRowSurface,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: selected
+                ? null
+                : Border.all(
+                    color:
+                        AppDesignTokens.textCharcoal.withValues(alpha: 0.14)),
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              color: selected
+                  ? AppDesignTokens.terracottaOnLight
+                  : AppDesignTokens.textCharcoal.withValues(alpha: 0.80),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The failure state: a quiet card, not a red alarm. The retry is the sheet's
+/// existing terracotta CTA relabelled, so there is still exactly one, and the
+/// typed text is untouched underneath.
+class _CreatorErrorCard extends StatelessWidget {
+  const _CreatorErrorCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppDesignTokens.quietRowSurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: AppDesignTokens.textCharcoal.withValues(alpha: 0.12)),
+      ),
+      child: Text(
+        message,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: AppDesignTokens.textCharcoal.withValues(alpha: 0.80),
+          height: 1.35,
         ),
       ),
     );

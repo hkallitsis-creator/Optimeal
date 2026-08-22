@@ -404,8 +404,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byType(GeneratedRecipeActionsSheet), findsOneWidget);
-      expect(find.text('🔥 Cook Now'), findsOneWidget);
-      expect(find.text('📅 Plan for Day'), findsOneWidget);
+      expect(find.text('Cook Now'), findsOneWidget);
+      expect(find.text('Plan for Day'), findsOneWidget);
     });
 
     testWidgets('the stage-2 recipe carries full rescue provenance',
