@@ -7,6 +7,48 @@ Read on request, not auto-loaded.
 
 ---
 
+## Every regenerate re-enters the full validator chain (23 August 2026)
+
+Source: the pre-vacation insurance bundle, closing `docs/audit_2026-08-23.md`
+M-4 (with M-3's gateway retry and M-6's client half in the same build).
+
+**Binding rule:** any regeneration — a compatibility correction, a safety
+correction, an allergen correction — produces a whole new recipe, and a new
+recipe is judged by **every** validator, not only the one that asked for it.
+An accepted regenerate re-enters the chain from the top: compat → safety →
+allergen → the deterministic H1 injection, still applied last of all, in
+every branch. Before this, the three layers ran as settle-completely
+sequential loops, so an allergen retry's output could carry a fresh H2
+violation that was re-detected, logged, and served with no correction round.
+
+**Retry budgets stay per-validator** — 2 each, and a regenerate triggered by
+one validator never refunds another — so the worst case is unchanged:
+**7 model calls per recipe** (1 + 2 + 2 + 2), **9 per Fridge Clearer intent**
+(stage 1 + its one silent allergen regenerate). Priority when several layers
+have findings at once is also unchanged: compat first, safety second,
+allergen has the final say nearest to serving. A correction round that fails
+outright (no reply, unparseable) closes its layer for that generation — after
+a hard failure, immediately re-firing the same layer's remaining budget is
+more likely to burn a billed call than to help; a round that parses but comes
+back worse only spends the budget point.
+
+**With it, transport insurance:** one client-side retry, 1500 ms later, on an
+HTTP 502/503/504 from `ask-chef-harris` (never on 4xx) — idempotent because
+nothing is written before the model call returns: caps increment once per
+user intent in the screens, and the cost row is written server-side only
+after a successful OpenAI response. Worst-case HTTP requests are therefore
+double the billed counts; billed calls do not change.
+
+**The `max_tokens` raise is edge-gated and NOT live.** The deployed function
+hardcodes 1200 and returns no `finish_reason`; a real 8-step-traybake request
+measured `completion_tokens: 1200/1200` with unclosed JSON. The client
+already sends `maxTokens: 2000` on the recipe surfaces (ideas stage
+deliberately not, ~155-token completions) and logs `finish_reason: "length"`
+to `GenerationTruncationLog` — both dormant until the redeploy, whose exact
+diff is in `docs/sessions/2026-08-23_insurance-bundle.md`.
+
+---
+
 ## Never two overviews of one recipe on the stack; the overview re-reads the session on signal (23 August 2026)
 
 Source: the post-audit fix round, closing `docs/audit_2026-08-23.md` H-1, H-2,

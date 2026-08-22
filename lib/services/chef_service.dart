@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:optimeal/models/user_profile.dart';
+import 'package:optimeal/services/generation_truncation_log.dart';
 import 'package:optimeal/chef_curiculum_techniques.dart';
 import 'package:optimeal/chef_curiculum_reference.dart';
 import 'package:optimeal/chef_curiculum_lookups.dart';
@@ -19,6 +22,17 @@ import 'package:optimeal/data/sensory_cue_vocabulary.dart';
 /// Home hub rework deleted it on 2026-08-20.)
 const String kChefCallSurfaceFridgeClearer = 'fridge_clearer';
 const String kChefCallSurfaceCustomCreator = 'custom_creator';
+
+/// The token budget full-recipe generations ask for (audit M-6: real
+/// completions measured 803–1,020 tokens against the deployed 1,200 cap —
+/// ~15% headroom, and a long recipe truncates mid-JSON into a silent "try
+/// again"). Ideas-stage calls deliberately do NOT send this: their
+/// completions measure ~155 tokens, so 1,200 is already generous there.
+///
+/// DORMANT until the ask-chef-harris redeploy — the deployed function
+/// hardcodes 1200 and ignores the field (see the payload comment in
+/// [ChefService.askChefHarris]).
+const int kRecipeGenerationMaxTokens = 2000;
 const String kChefCallSurfaceChefSos = 'chef_sos';
 
 /// Stage 1 of the two-stage Fridge Clearer flow (2026-08-22): the small
@@ -85,11 +99,52 @@ const List<String> kChefCallSurfaces = [
   kChefCallSurfaceChefSos,
 ];
 
+/// The transport under [ChefService.askChefHarris]: takes the request body,
+/// returns what the edge function's response body decoded to. Injectable so
+/// the gateway-retry and finish_reason handling are testable without a live
+/// Supabase client; null means the real `functions.invoke`.
+typedef ChefTransport = Future<dynamic> Function(Map<String, dynamic> payload);
+
 /// Service for "Ask Chef Harris" AI help.
 ///
 /// Uses Dreamflow's OpenAI proxy (configured via build-time env vars).
 class ChefService {
-  ChefService();
+  ChefService({ChefTransport? transport}) : _transport = transport;
+
+  final ChefTransport? _transport;
+
+  /// One retry, 1500 ms later, on a gateway failure (HTTP 502/503/504) —
+  /// the shape the safety-validator live probe measured on dev when retry
+  /// loops fired calls back to back ("Upstream AI request failed", audit
+  /// M-3). Anything else — 4xx included — is never retried: a request the
+  /// server understood and refused will be refused again, and retrying a
+  /// billed success would double-spend.
+  ///
+  /// Retrying here is idempotent by construction: nothing is written before
+  /// the model call returns — `UsageCapService.increment` fires once per
+  /// user intent in the SCREENS (before the whole generation, not per call;
+  /// a source guard pins that this file never touches it), and the cost log
+  /// is written server-side only after a successful OpenAI response, which a
+  /// 502 by definition did not have.
+  @visibleForTesting
+  static Future<T> invokeWithGatewayRetry<T>(
+    Future<T> Function() call, {
+    Future<void> Function(Duration)? wait,
+  }) async {
+    try {
+      return await call();
+    } on FunctionException catch (e) {
+      final status = e.status;
+      if (status != 502 && status != 503 && status != 504) rethrow;
+      await (wait ?? _defaultWait)(kGatewayRetryDelay);
+      return call();
+    }
+  }
+
+  static Future<void> _defaultWait(Duration d) => Future<void>.delayed(d);
+
+  /// The single pause between a gateway failure and its one retry.
+  static const Duration kGatewayRetryDelay = Duration(milliseconds: 1500);
 
   /// Every curriculum drawer key a generated recipe may declare as what it
   /// teaches — sourced directly from the drawer maps below, so this list
@@ -958,6 +1013,7 @@ class ChefService {
     List<({bool isUser, String text})>? conversationHistory,
     String? staticPromptBlock,
     String? surface,
+    int? maxTokens,
   }) async {
     if (userQuery.trim().isEmpty) {
       return 'Tell me what’s happening in the pan and I’ll jump in. Happy cooking! — Chef Harris';
@@ -981,6 +1037,12 @@ class ChefService {
       'temperature': forceJsonObject ? 0.25 : 0.6,
       'forceJsonObject': forceJsonObject,
       if (surface != null) 'surface': surface,
+      // DORMANT until the ask-chef-harris redeploy: the deployed function
+      // hardcodes max_tokens: 1200 and ignores this field entirely (verified
+      // 2026-08-23 — an effective clamp; the raise is edge-gated and the
+      // exact function diff is in docs/sessions/2026-08-23_insurance-bundle.md).
+      // Sent anyway so the client is ready the moment the function is.
+      if (maxTokens != null) 'maxTokens': maxTokens,
     };
 
     // staticPrefixChars is the useful number now: system prompt + static
@@ -996,19 +1058,43 @@ class ChefService {
     );
 
     try {
-      final res = await Supabase.instance.client.functions
-          .invoke('ask-chef-harris', body: payload);
-      final data = res.data;
+      // One gateway retry (502/503/504 → wait → same payload once), then the
+      // existing error path. See invokeWithGatewayRetry for why this is
+      // idempotent.
+      final data = await invokeWithGatewayRetry(() async {
+        final t = _transport;
+        if (t != null) return t(payload);
+        final res = await Supabase.instance.client.functions
+            .invoke('ask-chef-harris', body: payload);
+        return res.data;
+      });
 
       String? content;
       Map? usage;
       String? model;
+      String? finishReason;
       if (data is Map) {
         content = data['content']?.toString();
         usage = data['usage'] is Map ? data['usage'] as Map : null;
         model = data['model']?.toString();
+        finishReason = data['finish_reason']?.toString();
       } else if (data is String) {
         content = data;
+      }
+
+      // DORMANT until the ask-chef-harris redeploy: the deployed function
+      // does not return finish_reason yet. When it does, a "length" here
+      // means the reply hit max_tokens and the JSON is truncated — log it
+      // loudly with the surface, and let the content fall through: truncated
+      // JSON fails the parser, which is exactly the parse-failure path the
+      // orchestrator's existing retry/error handling already covers. Nothing
+      // garbled ever reaches Cook Mode.
+      if (finishReason == 'length') {
+        unawaited(GenerationTruncationLog.record(
+          surface: surface,
+          contentChars: content?.length ?? 0,
+          usage: usage,
+        ));
       }
 
       _logEstimatedCost(

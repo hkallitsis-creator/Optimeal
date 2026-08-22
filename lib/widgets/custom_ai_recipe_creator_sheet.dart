@@ -172,6 +172,7 @@ class _CustomAiRecipeCreatorSheetState extends State<CustomAiRecipeCreatorSheet>
           forceJsonObject: true,
           recentDishTitles: recentDishTitles,
           excludeDishFormats: false,
+          maxTokens: kRecipeGenerationMaxTokens,
           surface: switch (retryKind) {
             RecipeRetryKind.first => kChefCallSurfaceCustomCreator,
             RecipeRetryKind.compatibility => kChefCallSurfaceCustomCreatorRetry,

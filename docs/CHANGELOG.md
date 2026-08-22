@@ -13,6 +13,52 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Pre-vacation insurance bundle: token headroom, 502 retry, full chain on every regenerate (M-3, M-4, M-6)
+
+The genuinely last code change before the vacation tag.
+
+- **Chain re-entry (M-4, the substantive one).**
+  `generateValidatedRecipe` rewritten from three settle-completely loops into
+  one chain: any accepted regenerate re-enters from the top (compat → safety
+  → allergen → H1 injection last, every branch). Budgets stay per-validator
+  (2 each), no refunds — **worst case unchanged: 7 billed calls per recipe,
+  9 per Fridge Clearer intent**. A correction round that fails outright
+  closes its layer (the old loops' behaviour, kept deliberately); a
+  parsed-but-worse round only spends the budget point. Proven by test: an
+  allergen-corrected recipe carrying a fresh H2 gets the H2 correction round
+  (`[first, allergen, safety]`), and the H1 cue lands on allergen-branch
+  output too.
+- **Gateway retry (M-3).** `ChefService.invokeWithGatewayRetry`: one retry
+  after 1500 ms on HTTP 502/503/504 from `ask-chef-harris`, same payload;
+  4xx never retried. Idempotent by construction — caps increment once per
+  intent in the screens (source-pinned: `chef_service.dart` touches neither
+  `UsageCapService` nor the cost log), and the server writes the cost row
+  only after OpenAI succeeded. Worst-case HTTP requests double the billed
+  counts (14/18); billed calls unchanged. Injectable `ChefTransport` seam
+  added for tests.
+- **Token headroom (M-6) — client half only; the edge function CLAMPS.**
+  `supabase/functions/ask-chef-harris/index.ts` hardcodes `max_tokens: 1200`,
+  ignores any client value, and returns no `finish_reason` — reported and
+  STOPPED on per the brief (no edge deploys). Live proof the raise is
+  needed: the "8-step one-pan chicken and vegetable traybake with a pan
+  sauce" probe (`test/manual/long_recipe_probe.dart`) came back
+  `prompt=7700 (3968 cached) · completion=1200/1200 · JSON does not close`.
+  The client now sends `maxTokens: 2000` on both recipe surfaces
+  (`kRecipeGenerationMaxTokens`; the ideas stage deliberately not — ~155
+  completion tokens against 1200) and logs `finish_reason: "length"` to the
+  new `GenerationTruncationLog` (own 50-entry ring buffer), letting the
+  truncated content fall through to the parser's existing failure path.
+  **Both dormant until the redeploy**; the exact function diff is in the
+  session doc. Untouched per the brief: timer, routing, servings, profile,
+  paywall, prompt wording.
+
+Tests **724 passing** (711 + 13 new in
+`test/services/insurance_bundle_test.dart`); analyze **40**; palette guard
+green. Tag `vacation-2026-08` moved. Session record:
+`docs/sessions/2026-08-23_insurance-bundle.md`.
+
+---
+
 ## 2026-08-23 — Post-audit fix: back round trip (H-1, H-2) + servings fallbacks (M-1, M-2)
 
 The last code change before the vacation tag; closes the audit's two HIGH and

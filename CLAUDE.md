@@ -390,10 +390,28 @@ request or when a task needs the "why."
   into the same bucket as a timing one, and then an `_allergen_retry` twin
   (`fridge_clearer_allergen_retry`, `custom_creator_allergen_retry`) with the
   allergen guard. They are not separate call sites — the same two sites send a
-  different `surface` depending on `RecipeRetryKind`. **Worst case per recipe
-  is 7 model calls** (1 first + 2 compat + 2 safety + 2 allergen retries), and
+  different `surface` depending on `RecipeRetryKind`. **Every regenerate
+  re-enters the full validator chain from the top** (compat → safety →
+  allergen → H1 injection last; insurance bundle 2026-08-23, closing audit
+  M-4) — budgets stay per-validator (2 each), nothing is refunded, so the
+  **worst case is unchanged: 7 model calls per recipe** (1 + 2 + 2 + 2), and
   a Fridge Clearer intent can add up to 2 stage-1 calls (the silent allergen
-  regenerate) — 9 total. See `docs/audit_2026-08-23.md` M-3. Message assembly lives in the separately
+  regenerate) — **9 total**. **Gateway retry (audit M-3):** the client
+  retries a 502/503/504 from `ask-chef-harris` exactly once after 1500 ms
+  (`ChefService.invokeWithGatewayRetry`; 4xx never retried; idempotent — caps
+  increment once per intent in the screens, the cost row is written
+  server-side only on OpenAI success), so worst-case **HTTP** requests are
+  double the billed counts (14 / 18) while billed calls stay 7 / 9.
+  **Token headroom (audit M-6) is HALF-done, edge-gated:** recipe surfaces
+  send `maxTokens: kRecipeGenerationMaxTokens` (2000; ideas stage deliberately
+  not — its completions measure ~155) and the client logs
+  `finish_reason == "length"` to `GenerationTruncationLog` — but the
+  **deployed function hardcodes `max_tokens: 1200`, ignores the field, and
+  returns no `finish_reason`** (verified live 2026-08-23: the 8-step-traybake
+  probe came back `completion_tokens: 1200/1200`, JSON not closed). Both
+  client paths are dormant until the redeploy; the exact function diff is in
+  `docs/sessions/2026-08-23_insurance-bundle.md` — deploy it explicitly
+  post-vacation, never assume it's live. Message assembly lives in the separately
   testable `ChefService.buildUserMessage`, whose **write order is
   load-bearing for prompt caching** (see Open Roadmap item 15 before
   changing it); callers with byte-identical schema text pass it as
@@ -526,11 +544,12 @@ request or when a task needs the "why."
   (`AllergenFlagLog`, which may never be removed); fail-closed is adopted in
   principle and waits on a signed "couldn't build this safely" state
   (persona-batch content). The stage-1 ideas leak this build detected was
-  closed the same day — see the stage-1 entry below. One undocumented
-  interaction worth knowing (`docs/audit_2026-08-23.md` M-4): an
-  allergen-retry recipe gets no further safety *correction* round — new
-  H2–H11 findings on it are re-detected and logged, then served; H1's
-  injection is applied after everything and is never skipped.
+  closed the same day — see the stage-1 entry below. The M-4 interaction
+  (an allergen retry's output skipping the safety correction round) was
+  **closed by the 2026-08-23 insurance bundle**: every regenerate re-enters
+  the full chain from the top, so a fresh H2 on an allergen-corrected recipe
+  gets its correction round; H1's injection is applied after everything and
+  is never skipped.
 - **Custom Recipe Creator sheet — redesigned 2026-08-23.**
   `CustomAiRecipeCreatorSheet`. **Cut**: the explainer paragraph (the field's
   placeholder carries it), the sparkle chip beside the title, bolt icons on
@@ -932,11 +951,13 @@ introduced anywhere.
   verification pass over `224ba24`). **H-1, H-2, M-1 and M-2 were FIXED the
   same day** by the post-audit fix build (pop-vs-replace back routing +
   `OverviewRouteRegistry`, the overview's cookLog subscription, the locked
-  stepper, `resolveCookModeServings`). Still open, deliberately, for
-  post-vacation: four MEDIUM (7-calls-per-recipe worst case + edge-function
-  502s under bursts; allergen retries skip the safety correction round; stale
-  paywall copy; `max_tokens: 1200` headroom) and six LOW. Start there when
-  picking up work.
+  stepper, `resolveCookModeServings`); **M-3 and M-4 by the insurance bundle**
+  (gateway retry + documented worst-case counts; chain re-entry on every
+  regenerate); **M-6 half-fixed** — the client sends the raise and handles
+  `finish_reason`, but the deployed function clamps at 1200 and the
+  **edge redeploy is owed** (diff in the insurance-bundle session doc).
+  Still open for post-vacation: M-5 (stale paywall copy), the edge redeploy,
+  and six LOW. Start there when picking up work.
 - **`docs/DECISIONS.md` and `docs/CHANGELOG.md` exist alongside this file.** DECISIONS.md holds binding product/architecture decisions and their reasoning (not descriptions of current code). CHANGELOG.md holds completed work and full session history, newest first. Neither is auto-loaded — read on request or when a task needs history/reasoning this file deliberately omits to stay small.
 - **CLAUDE.md is authoritative for Roadmap item numbering.** If Harris refers to an item by a number that doesn't match what's actually here, stop and ask — don't guess which item was meant.
 - **Locate code by content/class name, not filename** — the Dreamflow-export filename-shuffling issue was checked and is NOT present in this repo, but this remains the safer default if it's ever in doubt again.

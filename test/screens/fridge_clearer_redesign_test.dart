@@ -51,6 +51,7 @@ class _FakeChefService extends ChefService {
     List<({bool isUser, String text})>? conversationHistory,
     String? staticPromptBlock,
     String? surface,
+    int? maxTokens,
   }) async {
     surfaces.add(surface ?? '<null>');
     userQueries.add(userQuery);

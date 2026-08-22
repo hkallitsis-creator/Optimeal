@@ -96,19 +96,32 @@ const int kMaxCompatibilityRetries = 2;
 /// Allergen corrections, same cap as the other two layers.
 const int kMaxAllergenRetries = 2;
 
-/// Generate → validate (timing) → correct → validate (safety) → correct →
-/// inject → serve.
+/// Generate → the full chain (compat → safety → allergen) → deterministic H1
+/// injection last → serve.
 ///
-/// # Ordering, and why it is this way round
+/// # Every regenerate re-enters the chain from the top
 ///
-/// Compatibility runs first and settles completely; safety then judges **the
-/// recipe that is actually going to be served**. If safety ran first, a
-/// compatibility retry afterwards would produce a different recipe that no
-/// safety rule had ever seen, and the injected cue would be lost with the
-/// discarded draft.
+/// Any regeneration — a compatibility correction, a safety correction, an
+/// allergen correction — produces a **whole new recipe**, and a new recipe is
+/// judged by every validator, not only the one that asked for it. Before the
+/// 2026-08-23 insurance bundle the three layers ran as sequential
+/// settle-completely loops, so an allergen retry's output re-entered nothing:
+/// a new H2 violation on it was re-detected for the log and then served with
+/// no correction round (audit M-4). Now an accepted regenerate loops back to
+/// the top of the chain, and each layer corrects what it finds for as long as
+/// its own budget lasts.
+///
+/// Retry budgets stay **per-validator** ([kMaxCompatibilityRetries] /
+/// [kMaxSafetyRetries] / [kMaxAllergenRetries], 2 each) and a regenerate
+/// triggered by one validator does not refund the others — so the worst case
+/// is unchanged: 1 + 2 + 2 + 2 = **7 model calls per recipe**. Priority when
+/// several layers have findings at once is unchanged too: compat first,
+/// safety second, allergen last-word — the layer whose failure is an allergic
+/// reaction corrects nearest to serving, so nothing can re-break a correction
+/// it won.
 ///
 /// The deterministic injection is applied **last of all**, after every
-/// correction round of both layers, so nothing downstream can undo it. That
+/// correction round of every layer, so nothing downstream can undo it. That
 /// is the concrete meaning of "injection must survive any retry".
 ///
 /// # Two different philosophies in one function
@@ -123,10 +136,11 @@ const int kMaxAllergenRetries = 2;
 /// recorded in `docs/safety_hazard_registry.md`, not a relaxation invented
 /// here.
 ///
-/// A retry that fails to generate or fails to parse does NOT discard the
-/// recipe we already have, in either half. Losing a servable recipe to a
-/// failed correction attempt would be strictly worse than serving the flagged
-/// one, which is the same reasoning the caps themselves rest on.
+/// A retry that fails to generate, fails to parse, or comes back worse does
+/// NOT discard the recipe we already have, in any layer — it only spends
+/// that layer's budget. Losing a servable recipe to a failed correction
+/// attempt would be strictly worse than serving the flagged one, which is
+/// the same reasoning the caps themselves rest on.
 Future<ValidatedRecipeResult> generateValidatedRecipe({
   required RecipeGenerationAttempt attempt,
   required RecipeAttemptParser parse,
@@ -136,118 +150,138 @@ Future<ValidatedRecipeResult> generateValidatedRecipe({
   int maxAllergenRetries = kMaxAllergenRetries,
   List<String> avoidedAllergens = const [],
 }) async {
-  CookModeRecipePayload? best;
-  var bestReport = const CompatibilityReport.clean();
+  // ── First generation. A failure here is the caller's existing error path.
+  final firstRaw = await attempt(
+    correctionNote: null,
+    retryKind: RecipeRetryKind.first,
+  );
+  if (firstRaw == null || firstRaw.trim().isEmpty) {
+    return const ValidatedRecipeResult(
+      recipe: null,
+      report: CompatibilityReport.clean(),
+      retriesUsed: 0,
+      servedWithFlags: false,
+    );
+  }
+  var unknownKeys = <String>[];
+  var best = await parse(firstRaw, unknownKeys);
+  if (best == null) {
+    return const ValidatedRecipeResult(
+      recipe: null,
+      report: CompatibilityReport.clean(),
+      retriesUsed: 0,
+      servedWithFlags: false,
+    );
+  }
+
   var retriesUsed = 0;
-
-  for (var i = 0; i <= maxRetries; i++) {
-    final isRetry = i > 0;
-    if (isRetry) retriesUsed = i;
-
-    final raw = await attempt(
-      correctionNote: isRetry ? bestReport.buildCorrectionNote() : null,
-      retryKind: isRetry ? RecipeRetryKind.compatibility : RecipeRetryKind.first,
-    );
-
-    if (raw == null || raw.trim().isEmpty) {
-      if (best != null) break; // keep what we have
-      // First attempt produced nothing at all: that is a generation failure,
-      // not a validation outcome, and is the caller's existing error path.
-      return const ValidatedRecipeResult(
-        recipe: null,
-        report: CompatibilityReport.clean(),
-        retriesUsed: 0,
-        servedWithFlags: false,
-      );
-    }
-
-    final unknownKeys = <String>[];
-    final parsed = await parse(raw, unknownKeys);
-    if (parsed == null) {
-      if (best != null) break; // a failed correction never costs us a recipe
-      return const ValidatedRecipeResult(
-        recipe: null,
-        report: CompatibilityReport.clean(),
-        retriesUsed: 0,
-        servedWithFlags: false,
-      );
-    }
-
-    final report = validateCookingCompatibility(parsed, unknownKeys: unknownKeys);
-
-    // A retry is only worth keeping if it is actually better. The model can
-    // "correct" itself into a worse recipe, and there is no reason to prefer
-    // the newer one when it is.
-    if (best == null || report.flags.length < bestReport.flags.length) {
-      best = parsed;
-      bestReport = report;
-    }
-
-    if (bestReport.isClean) break;
-  }
-
-  // ── Safety layer, on the recipe that survived the compatibility half ─────
   var safetyRetriesUsed = 0;
-  var safetyReport = validateRecipeSafety(best!);
+  var allergenRetriesUsed = 0;
+  var bestReport = validateCookingCompatibility(best, unknownKeys: unknownKeys);
+  var safetyReport = validateRecipeSafety(best);
+  var violations =
+      findAllergenViolations(recipe: best, avoided: avoidedAllergens);
 
-  for (var i = 1; i <= maxSafetyRetries && safetyReport.hasCorrectable; i++) {
-    final raw = await attempt(
-      correctionNote: safetyReport.buildCorrectionNote(),
-      retryKind: RecipeRetryKind.safety,
-    );
-    if (raw == null || raw.trim().isEmpty) break;
+  // A correction round that fails outright (no reply, or unparseable) closes
+  // its layer for this generation — same as the pre-re-entry loops, where a
+  // failed retry broke the layer's loop: after a hard failure, immediately
+  // firing the layer's remaining budget at the same model is more likely to
+  // burn a billed call than to help. A round that parses but comes back
+  // WORSE only spends the budget point; the layer may try again.
+  var compatClosed = false;
+  var safetyClosed = false;
+  var allergenClosed = false;
 
-    final unknownKeys = <String>[];
-    final parsed = await parse(raw, unknownKeys);
-    if (parsed == null) break;
-
-    safetyRetriesUsed = i;
-    final candidate = validateRecipeSafety(parsed);
-
-    // Safety findings outrank timing flags: a correction that fixes a hazard
-    // and costs a band is the trade the registry already made by choosing
-    // correction over blocking.
-    if (candidate.correctable.length < safetyReport.correctable.length) {
-      best = parsed;
-      safetyReport = candidate;
-      bestReport = validateCookingCompatibility(parsed, unknownKeys: unknownKeys);
+  /// One correction round for whichever layer speaks first. Returns true when
+  /// a candidate was ACCEPTED (strictly better on the asking layer's own
+  /// measure) — the caller then re-enters the chain from the top.
+  Future<bool> correctionRound({
+    required String note,
+    required RecipeRetryKind kind,
+    required void Function() close,
+    required bool Function(
+            CookModeRecipePayload candidate, List<String> candidateKeys)
+        accept,
+  }) async {
+    final raw = await attempt(correctionNote: note, retryKind: kind);
+    if (raw == null || raw.trim().isEmpty) {
+      close();
+      return false;
     }
-
-    if (!safetyReport.hasCorrectable) break;
+    final candidateKeys = <String>[];
+    final parsed = await parse(raw, candidateKeys);
+    if (parsed == null) {
+      close();
+      return false;
+    }
+    if (!accept(parsed, candidateKeys)) return false;
+    best = parsed;
+    unknownKeys = candidateKeys;
+    return true;
   }
 
-  // ── Allergen guard, on the recipe that survived both validators ─────────
-  //
-  // Third and last, because it is the only layer whose failure is an allergic
-  // reaction: it gets the final say on what is served, and a correction it
-  // wins is not allowed to be re-broken by a later timing retry.
-  var allergenRetriesUsed = 0;
-  var violations =
-      findAllergenViolations(recipe: best!, avoided: avoidedAllergens);
-
-  for (var i = 1; i <= maxAllergenRetries && violations.isNotEmpty; i++) {
-    final raw = await attempt(
-      correctionNote: buildAllergenCorrectionNote(violations),
-      retryKind: RecipeRetryKind.allergen,
-    );
-    if (raw == null || raw.trim().isEmpty) break;
-
-    final unknownKeys = <String>[];
-    final parsed = await parse(raw, unknownKeys);
-    if (parsed == null) break;
-
-    allergenRetriesUsed = i;
-    final candidate =
-        findAllergenViolations(recipe: parsed, avoided: avoidedAllergens);
-
-    // Allergens outrank timing and every other correction: a recipe with
-    // fewer of them is better even if it is worse in every other way.
-    if (candidate.length < violations.length) {
-      best = parsed;
-      violations = candidate;
-      bestReport = validateCookingCompatibility(parsed, unknownKeys: unknownKeys);
+  // ── The chain. Every iteration below either breaks (nothing correctable,
+  // or every relevant budget spent) or has consumed exactly one budget
+  // point, so it terminates in at most 2+2+2 correction rounds. A `continue`
+  // after an accepted candidate is the re-entry: the new recipe faces every
+  // layer again, top first.
+  while (true) {
+    // 1 — compatibility (advisory, silent fail-open).
+    bestReport = validateCookingCompatibility(best!, unknownKeys: unknownKeys);
+    if (!bestReport.isClean && retriesUsed < maxRetries && !compatClosed) {
+      retriesUsed++;
+      await correctionRound(
+        note: bestReport.buildCorrectionNote(),
+        kind: RecipeRetryKind.compatibility,
+        close: () => compatClosed = true,
+        // Only a strictly better recipe is kept — the model can "correct"
+        // itself into a worse one.
+        accept: (candidate, keys) =>
+            validateCookingCompatibility(candidate, unknownKeys: keys)
+                .flags
+                .length <
+            bestReport.flags.length,
+      );
+      continue;
     }
-    if (violations.isEmpty) break;
+
+    // 2 — safety (correct-and-regenerate per the signed registry).
+    safetyReport = validateRecipeSafety(best!);
+    if (safetyReport.hasCorrectable &&
+        safetyRetriesUsed < maxSafetyRetries &&
+        !safetyClosed) {
+      safetyRetriesUsed++;
+      await correctionRound(
+        note: safetyReport.buildCorrectionNote(),
+        kind: RecipeRetryKind.safety,
+        close: () => safetyClosed = true,
+        accept: (candidate, _) =>
+            validateRecipeSafety(candidate).correctable.length <
+            safetyReport.correctable.length,
+      );
+      continue;
+    }
+
+    // 3 — allergens (the final say on what is served).
+    violations = findAllergenViolations(recipe: best!, avoided: avoidedAllergens);
+    if (violations.isNotEmpty &&
+        allergenRetriesUsed < maxAllergenRetries &&
+        !allergenClosed) {
+      allergenRetriesUsed++;
+      await correctionRound(
+        note: buildAllergenCorrectionNote(violations),
+        kind: RecipeRetryKind.allergen,
+        close: () => allergenClosed = true,
+        accept: (candidate, _) =>
+            findAllergenViolations(
+                    recipe: candidate, avoided: avoidedAllergens)
+                .length <
+            violations.length,
+      );
+      continue;
+    }
+
+    break;
   }
 
   // ── The guarantee. Applied last, unconditionally, to what is served ──────
@@ -256,7 +290,7 @@ Future<ValidatedRecipeResult> generateValidatedRecipe({
 
   // Re-read the served recipe so the report describes it rather than the
   // draft that preceded injection, and carry the applied injections.
-  final finalFindings = validateRecipeSafety(best);
+  final finalFindings = validateRecipeSafety(best!);
   safetyReport = SafetyReport(
     findings: finalFindings.findings,
     injections: injected.injections,

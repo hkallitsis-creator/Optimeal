@@ -528,6 +528,7 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
           profile: profile,
           forceJsonObject: true,
           recentDishTitles: recentDishTitles,
+          maxTokens: kRecipeGenerationMaxTokens,
           surface: switch (retryKind) {
             RecipeRetryKind.first => kChefCallSurfaceFridgeClearer,
             RecipeRetryKind.compatibility => kChefCallSurfaceFridgeClearerRetry,
