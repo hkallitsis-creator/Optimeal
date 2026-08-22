@@ -344,6 +344,9 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
 
   // Cook session state (single source of truth)
   bool _cookStarted = false;
+
+  /// Identifies this cook for [UpgradeNudgeGate]. See [initState].
+  late final String _cookNudgeToken;
   bool _cookPaused = false;
   int? _activeStepIndex;
 
@@ -444,6 +447,10 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
     // Closes the door on sales sheets for as long as this screen is mounted:
     // pre-cook through post-cook verdict is one uninterruptible path.
     UpgradeNudgeGate.enterCookPath();
+    // Minted once per Cook Mode session and never regenerated, so however
+    // many times the completion sequence runs, this cook can only ever owe
+    // one upgrade nudge.
+    _cookNudgeToken = 'cook_${DateTime.now().microsecondsSinceEpoch}';
     _completedSteps = <int>{};
 
     final payload = widget.resumeSession?.recipe ?? widget.recipe;
@@ -1023,7 +1030,7 @@ class _OnePanCookingRoadmapScreenState extends State<OnePanCookingRoadmapScreen>
       // The entitlement check moves with it, so it is evaluated at the moment
       // of showing rather than two sheets earlier.
       if (!mounted) return;
-      UpgradeNudgeGate.schedulePostCookNudge();
+      UpgradeNudgeGate.schedulePostCookNudge(_cookNudgeToken);
 
       // Verdict sheet — the definitive last screen (device-test round F3).
       // Shown only now, after every other post-cook sheet has already run,

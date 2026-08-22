@@ -13,6 +13,37 @@ fidelity.
 
 ---
 
+## 2026-08-23 — Dev entitlement fix + four follow-ups
+
+Full prompt and report: `docs/sessions/2026-08-23_dev-entitlement.md`.
+543 tests passing (528 baseline + 15 new), 44 analyze issues (unchanged).
+
+- **Entitlement is now a property of the ENVIRONMENT, not the build mode.**
+  `isPro()` bypassed only under `kDebugMode`, so the release-mode APK pointed
+  at dev — the only configuration Harris's phone runs — hit the free-tier caps
+  with no unlock path, the dev paywall redirect having already removed the
+  mock-purchase route. Now `kIsDevEnvironment || kDebugMode`; release env
+  unchanged. The decision is a pure `entitlementBypassFor(...)` so the matrix
+  is testable, plus a **gate-site census** that fails when a new `.isPro()`
+  caller appears. Tester-level bypass deliberately NOT added (RevenueCat build).
+- **Post-cook nudge is once per cook.** `UpgradeNudgeGate` now takes a token
+  minted once per Cook Mode session, so a resumed session or a re-run
+  completion sequence cannot turn one dinner into two sales sheets.
+- **Launcher label.** `AndroidManifest.xml` said `dreamflow` and iOS
+  `CFBundleDisplayName` said `Dreamflow` — export leftovers, and the app's
+  public name on the launcher. Both now "OptiMeal dev"; Android resolves it
+  through a Gradle manifest placeholder. GATED at "OptiMeal dev" for both
+  branches until trademark clearance.
+- **Fridge Clearer stage 1 now gets `recentDishTitles`**, closing the defect
+  found in the polish round. Real dev pair after the fix: **0 of 3 repeats**,
+  with RUN 2's prompt 2,920 tokens vs RUN 1's 2,800 — the exclusion block
+  visibly landing. Static-before-variable ordering preserved.
+- **Duck exempt from H3** as well as H1/H2 (Harris, 23 Aug): doneness on duck
+  is technique, not hazard. Duck mince unchanged at 74 °C — it is poultry and
+  comminuted, so the signed tie-break applies exactly as for chicken mince.
+
+---
+
 ## 2026-08-23 — Design QA polish round + safety matcher tightening + H12 ruling
 
 Full prompt and report: `docs/sessions/2026-08-23_design-qa-polish.md`.

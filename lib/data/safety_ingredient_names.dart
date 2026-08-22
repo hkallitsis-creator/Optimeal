@@ -16,10 +16,12 @@
 ///
 /// Also signed 2026-08-23, closing the last two open lines:
 ///
-///  1. **Duck whole muscle is EXEMPT from H1 and from H2's pink language** —
-///     breast, magret, leg, thigh, whole duck, confit. Served pink is safe;
-///     doneness on duck is technique, not hazard. **Duck mince stays in the
-///     comminuted group** and is still H2. Marked with [donenessExempt].
+///  1. **Duck whole muscle is EXEMPT from H1, H2's pink language, and H3's
+///     temperature floor** — breast, magret, leg, thigh, whole duck, confit.
+///     Served pink is safe; doneness on duck is technique, not hazard. The H3
+///     extension is Harris's 2026-08-23 ruling. **Duck mince stays in the
+///     comminuted group** and is still H2 and still 71 °C. Marked with
+///     [donenessExempt].
 ///  2. **The shrimp group sits at the fish 63 °C floor**, whole or minced:
 ///     shrimp, prawn, king prawn, tiger prawn, crevette, scampi, langoustine.
 ///     Bivalves stay INACTIVE — none of these terms is on the S1 someday list,
@@ -128,9 +130,10 @@ class SafetyIngredientName {
   /// Cured and ready to eat — excluded from H1. See the library doc.
   final bool curedReadyToEat;
 
-  /// Excluded from H1 despite being poultry or pork. SIGNED 2026-08-23 for
-  /// **duck whole muscle only**: served pink is safe, and doneness on duck is
-  /// technique rather than hazard.
+  /// Excluded from H1, H2's pink language **and H3's temperature floor**,
+  /// despite being poultry or pork. SIGNED 2026-08-23 for **duck whole muscle
+  /// only**: served pink is safe, and doneness on duck is technique rather
+  /// than hazard.
   ///
   /// Distinct from [curedReadyToEat], which is about a product that is never
   /// cooked at all. This is about a cut that is cooked and is correctly served
@@ -161,10 +164,20 @@ class SafetyIngredientName {
 
   /// Which signed H3 classes this name falls under. A name can carry two:
   /// chicken mince is poultry (74 °C) and comminuted (71 °C) at the same time.
+  ///
+  /// [donenessExempt] removes the **whole-muscle** class, so duck carries no
+  /// temperature floor either — extended from H1/H2 to H3 by Harris on
+  /// 2026-08-23, on the same reasoning: doneness on duck is technique, not
+  /// hazard, and a rule that flags a correctly-cooked duck breast at 57 °C is
+  /// a rule that teaches the cook to ignore temperature warnings.
+  ///
+  /// Duck **mince** is untouched: it is comminuted, and the comminuted class
+  /// is added independently of the exemption.
   Set<ProteinClass> get proteinClasses => {
-        if (poultry) ProteinClass.poultry,
+        if (poultry && !donenessExempt) ProteinClass.poultry,
         if (comminuted) ProteinClass.mincedOrSausage,
-        if (pork && !comminuted) ProteinClass.porkWholeMuscle,
+        if (pork && !comminuted && !donenessExempt)
+          ProteinClass.porkWholeMuscle,
         if (fish) ProteinClass.fish,
       };
 

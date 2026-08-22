@@ -62,10 +62,16 @@ void main() {
     final variable = _ideasVariablePrompt(ingredients, portions);
     final chef = ChefService();
 
+    // Mirrors RecentGenerationsService: the screen now records each idea it
+    // showed, so a second stage-1 call in the same session sees the first
+    // three and is told not to repeat them.
+    final seenTitles = <String>[];
+
     Future<List<FridgeIdea>?> runStageOne(String label) async {
       final userMessage = chef.buildUserMessage(
         userQuery: variable,
         forceJsonObject: true,
+        recentDishTitles: List<String>.from(seenTitles),
         staticPromptBlock: buildFridgeIdeasStaticPrompt(),
       );
       final res = await http.post(
@@ -102,6 +108,7 @@ void main() {
     _log('\n── RUN 1 ────────────────────────────────────────────');
     for (final i in first ?? const <FridgeIdea>[]) {
       _log('  • ${i.title}');
+      seenTitles.add(i.title);
     }
 
     // The user pressing back and then "Let's Cook" again.

@@ -49,6 +49,29 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Launcher label, resolved at build time from OPTIMEAL_ENV.
+        //
+        // The manifest hardcoded "dreamflow" — the Dreamflow export's own
+        // name — so every build Harris installed was called that on the
+        // launcher. It is not a placeholder anyone chose; it is a leftover.
+        //
+        // GATED: trademark clearance. **Both branches read "OptiMeal dev"
+        // today, on purpose.** The standing rule is no public branding on any
+        // name before CH+EU clearance, and the release branch is the one that
+        // would be public. When clearance lands, the prod branch — and only
+        // the prod branch — becomes the real name.
+        //
+        // Resolved from a Gradle property, NOT from --dart-define:
+        // dart-defines reach the Dart compiler and never reach Gradle, so the
+        // app's own OPTIMEAL_ENV cannot drive the manifest. A prod build that
+        // wants the prod label must pass -POPTIMEAL_ENV=prod as well. Until
+        // the gate opens that distinction is unobservable, since both strings
+        // are identical.
+        def optimealEnv = project.findProperty('OPTIMEAL_ENV') ?: 'dev'
+        manifestPlaceholders += [
+            optimealAppLabel: optimealEnv == 'prod' ? 'OptiMeal dev' : 'OptiMeal dev'
+        ]
     }
 
     buildTypes {

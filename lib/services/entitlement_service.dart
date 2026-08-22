@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:optimeal/config/app_environment.dart';
+
 /// RevenueCat entitlement identifier for Pro access. Must match the
 /// entitlement configured in the RevenueCat dashboard once a real project
 /// exists — see CLAUDE.md "Monetization / paywall tier structure".
@@ -49,17 +51,47 @@ class EntitlementService {
     }
   }
 
+  /// Whether entitlement is bypassed outright, before any store or mock
+  /// lookup. Pure, and parameterised, so the matrix that matters can actually
+  /// be tested — [kIsDevEnvironment] and [kDebugMode] are both compile-time
+  /// constants, so a test process cannot vary them.
+  ///
+  /// **Entitlement is a property of the ENVIRONMENT, not of the build mode.**
+  /// That distinction was not academic: a **release-mode** APK pointed at dev
+  /// — which is exactly what device testing uses, per the build/install pair
+  /// in CLAUDE.md — bypassed nothing, hit the free-tier caps, and had no way
+  /// out, because the dev paywall redirect had already removed the
+  /// mock-purchase path. Two weeks of device testing would have run into a
+  /// wall on day one.
+  ///
+  /// `kDebugMode` stays as an additional OR, never as the only path: a debug
+  /// build pointed at prod is still a developer's machine.
+  ///
+  /// Release environment behaviour is **unchanged** — both constants are
+  /// false there, so this folds away and the real checks below run.
+  @visibleForTesting
+  static bool entitlementBypassFor({
+    required bool isDevEnvironment,
+    required bool isDebugMode,
+  }) =>
+      isDevEnvironment || isDebugMode;
+
   /// True if the current user has active Pro entitlement.
   ///
-  /// Debug-build bypass (CLAUDE.md roadmap item 12): every caller of
-  /// `isPro()` already gates usage caps AND the paywall behind
-  /// `if (!isPro) { ... }` (Fridge Clearer weekly cap, Chef Harris chat cap,
-  /// Custom AI Recipe Creator's 2-free-lifetime limit, upgrade prompts) — so
-  /// short-circuiting to `true` here in `kDebugMode` transparently unlocks
-  /// all of them at once, with zero effect on release builds, since
-  /// `kDebugMode` is a compile-time constant that's `false` there.
+  /// Every caller already gates usage caps AND the paywall behind
+  /// `if (!isPro) { ... }` (Fridge Clearer weekly cap, Custom AI Recipe
+  /// Creator's free-lifetime limit, the post-cook upgrade nudge), so
+  /// short-circuiting here unlocks all of them at once. That is why this is
+  /// the only place the bypass lives — see
+  /// `test/services/entitlement_gate_test.dart`, which enumerates the gate
+  /// sites and fails when a new one appears that does not route through here.
   Future<bool> isPro() async {
-    if (kDebugMode) return true;
+    if (entitlementBypassFor(
+      isDevEnvironment: kIsDevEnvironment,
+      isDebugMode: kDebugMode,
+    )) {
+      return true;
+    }
     if (_hasRealKeys && _configured) {
       try {
         final info = await Purchases.getCustomerInfo();

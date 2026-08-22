@@ -992,6 +992,50 @@ void main() {
           reason: 'no cue injection anywhere on a duck recipe');
     });
 
+    test('duck whole muscle is exempt from H3 as well (23 Aug ruling)', () {
+      final duck = _recipe(
+        title: 'Seared duck breast',
+        ingredients: ['duck breast'],
+        steps: [
+          _step('Sear the duck breast',
+              minutes: 8,
+              bullets: ['until the internal temperature reaches 57°C']),
+        ],
+      );
+      expect(_findings(duck, SafetyRuleId.h3), isEmpty,
+          reason: 'doneness on duck is technique, not hazard');
+
+      // The control: the same sentence on chicken still flags at 74.
+      final chicken = _recipe(
+        title: 'Seared chicken breast',
+        ingredients: ['chicken breast'],
+        steps: [
+          _step('Sear the chicken breast',
+              minutes: 8,
+              bullets: ['until the internal temperature reaches 57°C']),
+        ],
+      );
+      final f = _findings(chicken, SafetyRuleId.h3);
+      expect(f, hasLength(1));
+      expect(f.single.detail, contains('74'));
+    });
+
+    test('duck carries no protein class, chicken carries poultry', () {
+      expect(proteinClassesIn('duck breast'), isEmpty);
+      expect(proteinClassesIn('magret'), isEmpty);
+      expect(proteinClassesIn('duck confit'), isEmpty);
+      expect(proteinClassesIn('chicken breast'), contains(ProteinClass.poultry));
+
+      // Duck mince keeps BOTH classes and therefore the poultry 74 °C floor,
+      // exactly like chicken mince. The exemption is for whole muscle only,
+      // and mincing is the thing that changes the hazard — surface becomes
+      // interior. Consistent with the signed poultry-mince tie-break.
+      expect(proteinClassesIn('duck mince'),
+          containsAll([ProteinClass.poultry, ProteinClass.mincedOrSausage]));
+      expect(governingProteinClass(proteinClassesIn('duck mince'))!.minimumCelsius,
+          74);
+    });
+
     test('duck mince is still comminuted, so still H2', () {
       expect(mentionsComminutedMeat('duck mince'), isTrue);
       final r = _recipe(

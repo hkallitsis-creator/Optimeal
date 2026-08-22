@@ -65,7 +65,7 @@ void main() {
   group('the gate', () {
     test('a scheduled nudge is consumable exactly once', () {
       expect(UpgradeNudgeGate.hasPendingPostCookNudge, isFalse);
-      UpgradeNudgeGate.schedulePostCookNudge();
+      UpgradeNudgeGate.schedulePostCookNudge('cook_a');
 
       expect(UpgradeNudgeGate.hasPendingPostCookNudge, isTrue);
       expect(UpgradeNudgeGate.consumePendingPostCookNudge(), isTrue);
@@ -80,7 +80,7 @@ void main() {
 
     test('a nudge scheduled during a cook survives until the cook ends', () {
       UpgradeNudgeGate.enterCookPath();
-      UpgradeNudgeGate.schedulePostCookNudge();
+      UpgradeNudgeGate.schedulePostCookNudge('cook_b');
 
       // Home would decline to consume it here, leaving it pending.
       expect(UpgradeNudgeGate.isCookPathActive, isTrue);

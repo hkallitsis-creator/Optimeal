@@ -281,11 +281,32 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
       unawaited(UsageCapService.instance
           .increment(UsageFeature.fridgeClearerGeneration));
 
+      // Variety pressure on stage 1, same list stage 2 already gets.
+      //
+      // Without it, back → "Let's Cook" — which is the ONLY escape from three
+      // ideas you do not like, since the signed flow has no regenerate button
+      // — re-ran at temperature 0.25 against a byte-identical prompt and
+      // returned near-identical dishes. Measured on dev before this change:
+      // two of the three ideas came back the same across a back-and-retry
+      // pair. That made the signed escape path a dead end in practice.
+      //
+      // Passed as `recentDishTitles`, which ChefService writes into the
+      // VARIABLE half of the message — after the whole static prefix, so the
+      // prompt-cache ordering rule is unaffected.
+      final recentCookHistory =
+          await CookSessionStorageService().loadCookHistory();
+      if (!mounted) return;
+      final recentDishTitles = [
+        ...RecentGenerationsService.instance.recent(),
+        ...recentCookHistory.map((e) => e.recipe.title),
+      ];
+
       final reply = await _chefService.askChefHarris(
         userQuery: _buildIdeasVariablePrompt(portions),
         staticPromptBlock: buildFridgeIdeasStaticPrompt(),
         profile: profile,
         forceJsonObject: true,
+        recentDishTitles: recentDishTitles,
         surface: kChefCallSurfaceFridgeIdeas,
       );
       if (!mounted) return;
@@ -296,6 +317,14 @@ class _FridgeClearerScreenState extends State<FridgeClearerScreen> {
         setState(() => _generationError =
             'Couldn\'t come up with ideas right now. Please try again.');
         return;
+      }
+
+      // Record the ideas themselves, not just cooked dishes: the whole point
+      // is that pressing back and asking again produces something new, and
+      // RecentGenerationsService is in-memory so it survives exactly as long
+      // as that matters.
+      for (final idea in ideas) {
+        RecentGenerationsService.instance.record(idea.title);
       }
 
       setState(() {

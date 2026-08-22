@@ -28,7 +28,8 @@
 /// be a sales sheet with no earned moment in front of it.
 abstract final class UpgradeNudgeGate {
   static bool _cookPathActive = false;
-  static bool _postCookNudgePending = false;
+  static String? _pendingToken;
+  static String? _lastHandledToken;
 
   /// True while the user is anywhere between pre-cook and the verdict.
   /// [UpgradePromptSheet.show] refuses outright while this holds.
@@ -43,23 +44,36 @@ abstract final class UpgradeNudgeGate {
   static void exitCookPath() => _cookPathActive = false;
 
   /// True when a post-cook nudge is owed and has not been shown yet.
-  static bool get hasPendingPostCookNudge => _postCookNudgePending;
+  static bool get hasPendingPostCookNudge => _pendingToken != null;
 
   /// Cook Mode records that this completion earned a nudge. Nothing is shown
   /// here — Home shows it, after the verdict's CTA has landed.
-  static void schedulePostCookNudge() => _postCookNudgePending = true;
+  ///
+  /// [token] identifies the **cook**, not the call, and is minted once per
+  /// Cook Mode session. Scheduling the same token twice is a no-op, so at
+  /// most one nudge is ever owed per cook however many times the completion
+  /// sequence runs — a resumed session, a rebuild, or a retried write cannot
+  /// turn one dinner into two sales sheets.
+  static void schedulePostCookNudge(String token) {
+    if (token == _lastHandledToken) return;
+    _pendingToken = token;
+  }
 
   /// Home takes the pending nudge, if there is one. Returns true exactly
-  /// once per scheduling, so a rebuild cannot show the sheet twice.
+  /// once per cook, so neither a rebuild nor a second cook of the same
+  /// session can show the sheet twice.
   static bool consumePendingPostCookNudge() {
-    if (!_postCookNudgePending) return false;
-    _postCookNudgePending = false;
+    final token = _pendingToken;
+    if (token == null) return false;
+    _pendingToken = null;
+    _lastHandledToken = token;
     return true;
   }
 
   /// Test seam. Not called by app code.
   static void resetForTest() {
     _cookPathActive = false;
-    _postCookNudgePending = false;
+    _pendingToken = null;
+    _lastHandledToken = null;
   }
 }

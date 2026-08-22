@@ -7,6 +7,64 @@ Read on request, not auto-loaded.
 
 ---
 
+## Entitlement is a property of the environment, not the build mode (23 August 2026)
+
+**Binding rule:** `EntitlementService.isPro()` returns entitled whenever the
+app's **environment** is dev — `kIsDevEnvironment`, from the `OPTIMEAL_ENV`
+define. `kDebugMode` survives as an additional OR, **never as the only path**.
+Release environment behaviour is unchanged.
+
+**Why this was urgent rather than tidy.** Device testing uses a **release-mode**
+APK pointed at dev — that is the build/install pair in CLAUDE.md, and it is the
+only configuration Harris's phone ever runs. `isPro()` bypassed only under
+`kDebugMode`, which is `false` in a release build. So that one configuration hit
+the free-tier caps (3 Fridge Clearer generations a week, 2 lifetime custom
+recipes) with **no unlock path at all**, because the dev paywall redirect had
+already removed the mock-purchase route. Two weeks of device-only testing would
+have stopped on day one.
+
+The decision lives in a pure, parameterised
+`EntitlementService.entitlementBypassFor(...)` because `kIsDevEnvironment` and
+`kDebugMode` are compile-time constants that a test process cannot vary; the
+four-cell matrix is asserted directly.
+
+**One chokepoint, and a census that keeps it that way.** All three gates —
+`_FridgeClearerScreenState`'s weekly cap, `_CustomAiRecipeCreatorSheetState`'s
+lifetime cap, and `_HomeDashboardScreenState`'s post-cook upgrade nudge —
+already funnel through `isPro()`. `test/services/entitlement_gate_test.dart`
+enumerates them by file and **fails when a new `.isPro()` caller appears**, so a
+future gate cannot quietly bypass the environment rule.
+
+**Not in scope, deliberately:** a tester/account-level bypass flag. That is
+deferred to the RevenueCat build.
+
+**Usage counters still increment in dev.** The caps do not *gate* anything
+there, but `UsageCapService.increment` still writes to `api_usage_daily`. Left
+alone: it is harmless, it keeps the dev counter data real, and suppressing it
+would mean a second environment branch in a second place.
+
+---
+
+## Duck is exempt from H3 as well as H1 and H2 (23 August 2026)
+
+**Binding rule:** duck **whole muscle** — breast, magret, leg, thigh, whole
+duck, confit — carries no H3 temperature floor, extending the same-day ruling
+that exempted it from H1's cue injection and H2's pink-language check.
+Doneness on duck is **technique, not hazard**.
+
+Implemented by having `SafetyIngredientName.donenessExempt` suppress the
+whole-muscle protein class, so an exempt name resolves to no class and H3 has
+nothing to compare against. A rule that flags a correctly-cooked duck breast at
+57 °C is a rule that teaches the cook to ignore temperature warnings, which
+costs more than it saves.
+
+**Duck mince is untouched and is 74 °C.** It is poultry *and* comminuted, so
+the signed poultry-mince tie-break applies exactly as it does to chicken mince
+— the exemption is for whole muscle, and mincing is precisely the thing that
+changes the hazard, since surface becomes interior.
+
+---
+
 ## H12 Fermentation — the ruling (21 August 2026)
 
 Source: strategy chat, signed by Harris. **Recorded here on 2026-08-23**; it
@@ -77,7 +135,8 @@ Signed with the list:
 **The last two open lines were signed the same day**, so nothing in this file
 is pending:
 
-1. **Duck whole muscle is EXEMPT from H1 and from H2's pink-language check** —
+1. **Duck whole muscle is EXEMPT from H1, from H2's pink-language check, and
+   — by the same-day extension recorded above — from H3's temperature floor** —
    breast, magret, leg, thigh, whole duck, confit. Served pink is safe, and
    doneness on duck is technique, not hazard. Implemented as
    `SafetyIngredientName.donenessExempt`, deliberately a separate flag from

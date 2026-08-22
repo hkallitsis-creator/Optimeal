@@ -5,7 +5,12 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Dreamflow</string>
+	<!-- GATED: trademark clearance. Same rule as the Android launcher label —
+	     no public branding on any name before CH+EU clearance, so this reads
+	     "OptiMeal dev" until the gate opens. Not env-resolved: iOS would need
+	     an xcconfig/scheme split, which is not worth building while both
+	     values would be the same string. Was "Dreamflow", an export leftover. -->
+	<string>OptiMeal dev</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

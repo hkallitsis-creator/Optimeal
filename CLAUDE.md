@@ -549,9 +549,15 @@ request or when a task needs the "why."
   also referenced from the Open Roadmap ("Save if you liked it" item) rather
   than restated there.
 - **Paywall**: `EntitlementService.isPro()` (`lib/services/entitlement_service.dart`)
-  returns `true` unconditionally whenever `kDebugMode` is true, before any
-  real check — a deliberate debug bypass, dead code in release builds, but
-  worth knowing when testing locally: usage-cap tracking is wired
+  returns `true` unconditionally whenever **`kIsDevEnvironment || kDebugMode`**,
+  before any real check. **Entitlement is a property of the ENVIRONMENT, not
+  the build mode (fixed 2026-08-23)** — it used to be `kDebugMode` alone, which
+  meant a *release-mode* APK pointed at dev, i.e. the only thing that ever runs
+  on Harris's phone, hit the free-tier caps with no unlock path. The decision is
+  a pure `entitlementBypassFor(...)` so the four-cell matrix is testable, and
+  `test/services/entitlement_gate_test.dart` enumerates every `.isPro()` caller
+  and fails when a new one appears. Usage counters still increment in dev; they
+  just gate nothing. Worth knowing when testing locally: usage-cap tracking is wired
   independently of this bypass (do not assume one implies the other still
   holds if either is touched again — this exact interaction broke tracking
   once, see `docs/CHANGELOG.md` 2026-08-13). In release builds, `isPro()`
@@ -712,6 +718,19 @@ introduced anywhere.
 - When a fix touches a Supabase Edge Function, give exact code plus explicit deployment steps and confirm the deploy actually happened — never assume it's live until confirmed via `supabase functions list` (check `version`/`updated_at`) or Harris's own confirmation.
 - When something seems like it "should already be fixed" per this document but live behavior contradicts it, verify the actual current source first — don't assume regression, and don't assume the documented fix is stale either. Check before concluding either way. (This exact convention is what caught the Pluralization Audit and the Design Polish backgroundColor batch both already being silently completed — see `docs/CHANGELOG.md`, 2026-08-17.)
 - Prefer running `flutter analyze` and any available tests after changes.
+- **Launcher label is build-resolved and gated (2026-08-23).** `AndroidManifest.xml`
+  hardcoded `android:label="dreamflow"` — the Dreamflow export's own name — so
+  every installed build was called that on the launcher; iOS `CFBundleDisplayName`
+  said `Dreamflow` too. Both now read **"OptiMeal dev"**. Android resolves it
+  through `manifestPlaceholders.optimealAppLabel` in `android/app/build.gradle`,
+  driven by the Gradle property `-POPTIMEAL_ENV`. **Note the seam**: a
+  `--dart-define` reaches the Dart compiler and never reaches Gradle, so the
+  app's own `OPTIMEAL_ENV` cannot drive the manifest — a prod build wanting a
+  prod label must pass `-POPTIMEAL_ENV=prod` as well. **Both branches are
+  "OptiMeal dev" today on purpose** (GATED: trademark clearance), so that
+  distinction is currently unobservable. iOS is a plain string, not
+  env-resolved — it would need an xcconfig/scheme split, not worth building
+  while both values are identical.
 - **Building and installing to a real device (learned 23 Aug, cost a wasted test round).** `flutter install` does **NOT** build — it pushes whatever APK already exists in `build/app/outputs/flutter-apk/`, silently, however stale. Running it alone once installed a build that was 16 commits old and looked like a pile of regressions. **The correct pair is always `flutter build apk --release` first, then `flutter install --release -d <deviceId>`.** Pass `-d` explicitly: with four devices attached (phone, Windows, Chrome, Edge) the bare command prompts and hangs a non-interactive shell. Note also that `flutter install` **uninstalls the old version first**, which wipes app data — SharedPreferences, the onboarding flag, and the anonymous Supabase session, so the next launch mints a **new `auth.uid()`** and prior dev data (saved recipes, planner rows, ledger events) is orphaned rather than gone.
 - **Live-testing convention**: run a single `flutter run -d chrome --web-port=8765` in the background, have Harris test in that one tab. After code changes, kill the process (`netstat -ano | findstr ":8765"` → `taskkill //PID <pid> //F`) and relaunch fresh on the same port rather than hot-reloading. Keep it to one running instance, same port, always — a second instance on a different port has caused real confusion (Harris testing a stale tab, wrongly concluding a fix hadn't landed).
 - No browser automation (`claude-in-chrome`) was available as of the last check — if it becomes available, that's strictly better for anything visual, but check rather than assuming it's still unavailable by default.
